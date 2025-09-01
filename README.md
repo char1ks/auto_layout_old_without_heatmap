@@ -1,3 +1,5 @@
+# ML Segmentation Pipeline
+
 ## Set up
 
 Install deps:  

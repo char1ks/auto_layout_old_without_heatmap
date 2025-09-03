@@ -7,12 +7,23 @@ Install deps:
 poetry config virtualenvs.in-project true --local
 poetry env use 3.11
 poetry install
+```  
 
-git clone https://github.com/haotian-liu/LLaVA.git
-cd LLaVA && pip install -e . && cd ..
+Or: 
+```sh
+pytnon3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+```  
 
-git clone https://github.com/facebookresearch/segment-anything-2.git
-cd segment-anything-2 && pip install -e . && cd ..
+Install dinov3:
+```sh
+УСТАНОВИТЬ DINOV3 (gh pull --> pip install -e .)
+
+```  
+
+```sh
+export PYTHONPATH=$PYTHONPATH:${PWD}/vendor/dinov3
 ```  
 
 Make examples directories:  
@@ -20,34 +31,17 @@ Make examples directories:
 mkdir -p models input output examples/positive examples/negative
 ```  
 
-## 🎯 ЗАПУСК АНАЛИЗА
+Copy dinov3 weights:  
+```sh
+cp ~/dinov3-weights/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth ~/.cache/torch/hub/checkpoints/
+```  
 
-### 🔥 Гибридный режим (LLaVA + SearchDet):
-```bash
-PYTHONPATH=. poetry run python hybrid_searchdet_pipeline.py \
-  --image input/test_metal.jpg \
-  --positive examples/positive \
-  --negative examples/negative \
-  --output output/
-```
+## Run  
 
-### ⚡ Только SearchDet (быстрее, меньше памяти):
-```bash
-PYTHONPATH=. poetry run python hybrid_searchdet_pipeline.py \
-  --image input/test_metal.jpg \
-  --positive examples/positive \
-  --negative examples/negative \
-  --output output/ \
-  --searchdet-only
-```
-
-### 📊 С Ground Truth для метрик:
-```bash
-PYTHONPATH=. poetry run python hybrid_searchdet_pipeline.py \
-  --image input/test_metal.jpg \
-  --positive examples/positive \
-  --negative examples/negative \
-  --output output/ \
-  --ground-truth ground_truth_mask.png \
-  --searchdet-only
-```
+```sh
+!python -m searchdet_pipeline.cli.detect detect foto00117.jpg.png \
+    --positive examples/positive/ \
+    --output output/ \
+    --dinov3-backbone vit7b16 \
+    --vit-pooling cls 
+```  

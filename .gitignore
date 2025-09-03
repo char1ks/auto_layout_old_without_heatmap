@@ -145,3 +145,8 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json 
+
+.local/
+
+vendor/dinov3/.git/
+vendor/dinov3/.github/

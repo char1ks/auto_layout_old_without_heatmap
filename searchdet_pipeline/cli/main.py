@@ -16,6 +16,7 @@ except ImportError:
         PipelineProcessor = None
         Config = None
         DEFAULT_CONFIG = None
+
 def create_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
@@ -34,6 +35,7 @@ def create_parser() -> argparse.ArgumentParser:
     from .detect import _add_detect_arguments
     _add_detect_arguments(detect_parser)
     return parser
+
 def main():
     """Основная функция CLI."""
     print("🚀 ЗАПУСК МОДУЛЬНОГО SEARCHDET ПАЙПЛАЙНА")
@@ -64,3 +66,5 @@ def main():
             traceback.print_exc()
         return 1
 
+if __name__=="__main__":
+    main()

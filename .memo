@@ -1,0 +1,5 @@
+python -m searchdet_pipeline.cli.main detect .local/examples_new/details/examples/1.jpg \
+    --positive .local/examples_new/details/positive/ \
+    --output output/ \
+    --dinov3-backbone vit7b16 \
+    --vit-pooling cls

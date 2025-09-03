@@ -48,12 +48,11 @@ def _to_pil_any(x: object) -> Image.Image:
 try:
     from dinov3.hub import backbones as dino_backbones
 except ImportError:
-
     project_root = Path(__file__).resolve().parent.parent.parent
-    dinov3_repo_path = project_root
+    dinov3_repo_path = project_root / "vendor"
     if str(dinov3_repo_path) not in sys.path:
         sys.path.insert(0, str(dinov3_repo_path))
-    inner_dinov3_path = project_root / 'dinov3'
+    inner_dinov3_path = dinov3_repo_path / 'dinov3'
     if str(inner_dinov3_path) not in sys.path:
         sys.path.insert(0, str(inner_dinov3_path))
     from dinov3.hub import backbones as dino_backbones

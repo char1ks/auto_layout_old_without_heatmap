@@ -31,7 +31,10 @@ def create_parser() -> argparse.ArgumentParser:
         help='Детекция объектов на одном изображении',
         description='Выполняет детекцию объектов на указанном изображении'
     )
-    from .detect import _add_detect_arguments
+    try:
+        from .detect import _add_detect_arguments
+    except ImportError:
+        from searchdet_pipeline.cli.detect import _add_detect_arguments
     _add_detect_arguments(detect_parser)
     return parser
 def main():
@@ -48,7 +51,10 @@ def main():
     
     try:
         if args.command == 'detect':
-            from .detect import execute_detect
+            try:
+                from .detect import execute_detect
+            except ImportError:
+                from searchdet_pipeline.cli.detect import execute_detect
             return execute_detect(args)
         else:
             print(f"❌ Неизвестная команда: {args.command}")
@@ -63,4 +69,9 @@ def main():
             import traceback
             traceback.print_exc()
         return 1
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
 

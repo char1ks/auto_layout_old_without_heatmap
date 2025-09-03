@@ -106,6 +106,45 @@ def _agg_scores(scores: np.ndarray, aggregation: str, topk: int = 3) -> np.ndarr
     else:
         raise ValueError(f'Unknown aggregation: {aggregation}')
 
+
+def _safe_get_int(d: Dict[str, Any], key: str, default: int) -> int:
+    v = (d or {}).get(key, default)
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+
+def _safe_get_float(d: Dict[str, Any], key: str, default: float) -> float:
+    v = (d or {}).get(key, default)
+    if v is None:
+        return default
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def _safe_get_bool(d: Dict[str, Any], key: str, default: bool) -> bool:
+    v = (d or {}).get(key, default)
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return v
+    # Handle common string cases
+    if isinstance(v, str):
+        lv = v.strip().lower()
+        if lv in ("1", "true", "yes", "y", "on"): return True
+        if lv in ("0", "false", "no", "n", "off"): return False
+        # fallback
+        return default
+    try:
+        return bool(v)
+    except Exception:
+        return default
+
 class ScoreCalculator:
     """
     Главные отличия от старой логики:
@@ -131,22 +170,22 @@ class ScoreCalculator:
             if params is None:
                 params = {}
             self.config = ScoringConfig(
-                min_pos_score=float(params.get('min_pos_score', 0.62)),      # в КОСИНУСАХ
-                decision_threshold=float(params.get('decision_threshold', 0.06)),  # тоже в косинусах
-                class_separation=float(params.get('class_separation', 0.04)),     # разница с 2-м лучшим
-                neg_cap=float(params.get('neg_cap', 0.90)),                  # ограничение сверху для neg_for_decision
-                topk=int(params.get('topk', 5)),
-                consensus_k=int(params.get('consensus_k', 0)),
-                consensus_thr=float(params.get('consensus_thr', 0.45)),       # ПРИНИМАЕМ 0..1, ниже переведём в косинус
-                adaptive_ratio=float(params.get('adaptive_ratio', 0.85)),     # оставлено для совместимости (ViT не нужен)
-                adaptive_diff_floor=float(params.get('adaptive_diff_floor', 0.04)),
-                adaptive_trigger_pos_range=float(params.get('adaptive_trigger_pos_range', 0.20)),
-                adaptive_trigger_neg_range=float(params.get('adaptive_trigger_neg_range', 0.20)),
-                margin=float(params.get('score_margin', 0.00)),               # дополнительный сдвиг порога diff
-                ratio=float(params.get('score_ratio', 1.01)),                 # p/(neg+eps) — оставлено
-                confidence=float(params.get('score_confidence', 0.60)),       # min визуальной уверенности (на вывод)
-                allow_unknown=bool(params.get('allow_unknown', True)),
-                verbose=bool(params.get('verbose', True))
+                min_pos_score=_safe_get_float(params, 'min_positive_score', _safe_get_float(params, 'min_pos_score', 0.62)),      # в КОСИНУСАХ
+                decision_threshold=_safe_get_float(params, 'decision_threshold', 0.06),  # тоже в косинусах
+                class_separation=_safe_get_float(params, 'class_separation', 0.04),     # разница с 2-м лучшим
+                neg_cap=_safe_get_float(params, 'neg_cap', 0.90),                  # ограничение сверху для neg_for_decision
+                topk=_safe_get_int(params, 'topk', 5),
+                consensus_k=_safe_get_int(params, 'consensus_k', 0),
+                consensus_thr=_safe_get_float(params, 'consensus_thr', 0.45),       # ПРИНИМАЕМ 0..1, ниже переведём в косинус
+                adaptive_ratio=_safe_get_float(params, 'adaptive_ratio', 0.85),     # оставлено для совместимости (ViT не нужен)
+                adaptive_diff_floor=_safe_get_float(params, 'adaptive_diff_floor', 0.04),
+                adaptive_trigger_pos_range=_safe_get_float(params, 'adaptive_trigger_pos_range', 0.20),
+                adaptive_trigger_neg_range=_safe_get_float(params, 'adaptive_trigger_neg_range', 0.20),
+                margin=_safe_get_float(params, 'score_margin', 0.00),               # дополнительный сдвиг порога diff
+                ratio=_safe_get_float(params, 'score_ratio', 1.01),                 # p/(neg+eps) — оставлено
+                confidence=_safe_get_float(params, 'score_confidence', 0.50),       # min визуальной уверенности (на вывод)
+                allow_unknown=_safe_get_bool(params, 'allow_unknown', True),
+                verbose=_safe_get_bool(params, 'verbose', True)
             )
 
         # alias для краткости
@@ -174,7 +213,8 @@ class ScoreCalculator:
         #   'max'       — как в тестовом скрипте (рекомендуется)
         #   'mean_topk' — среднее по top-k (k = self.topk)
         #   'mean'      — среднее по всем positive
-        self.pos_agg = str((params or {}).get('pos_agg', getattr(detector, 'pos_agg', 'max'))).lower()
+        # Убираем зависимость от неопределённого 'detector'
+        self.pos_agg = str((((params or {}).get('positive_aggregation')) or ((params or {}).get('pos_agg')) or 'max')).lower()
         if self.verbose:
             print(f"   ⚙️ POS_AGG_MODE = {self.pos_agg}")
 

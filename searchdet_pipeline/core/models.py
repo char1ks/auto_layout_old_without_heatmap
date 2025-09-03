@@ -148,6 +148,16 @@ class DetectorConfig:
     device: str = "auto"  # "auto", "cuda", "cpu"
     half_precision: bool = False
     
+    # Доп. параметры совместимости (используются в детекторе)
+    sam_model: Optional[str] = None  # тип/weights модели SAM-HQ (например, 'vit_l')
+    sam_encoder: str = "vit_l"
+    fastsam_model: Optional[str] = None
+    fastsam_device: Optional[str] = None
+    dinov3_ckpt: Optional[str] = None
+    loader: str = "timm"  # загрузчик моделей DINOv3: 'timm' или 'hub'
+    repo_dir: Optional[str] = None  # локальный путь к репозиторию для hub-загрузчика
+    overlay_alpha: float = 0.5
+    
     # Параметры бэкенда сегментации
     segmentation_backend: str = "sam"  # "sam", "fastsam", "heatmap"
     heatmap_threshold: float = 0.5  # Пороговое значение для heatmap бэкенда
@@ -214,46 +224,44 @@ class DetectorConfig:
     square_similarity_iou_threshold: float = 0.94
     rectangle_use_silhouette: bool = True
     hole_area_ratio_threshold: float = 0.03
-    
-    # Режимы работы
+
+    # Режимы и ограничения
     defect_mode: bool = False
     positive_as_query_masks: bool = True
     min_mask_area: int = 100
     max_embedding_size: Optional[int] = None
+
+    # Совместимость: алиас для feat_short_side
+    @property
+    def feat_short_side(self) -> Optional[int]:
+        return self.feature_short_side
+
+    @feat_short_side.setter
+    def feat_short_side(self, value: Optional[int]) -> None:
+        self.feature_short_side = value
+
+    # Утилиты
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'DetectorConfig':
+        """Создание конфигурации из словаря с поддержкой синонимов полей."""
+        data = dict(config_dict or {})
+        # Поддержка синонимов: feat_short_side -> feature_short_side
+        if 'feature_short_side' not in data and 'feat_short_side' in data:
+            data['feature_short_side'] = data['feat_short_side']
+        # Фильтрация только известных полей
+        valid_fields = {field_name for field_name in cls.__dataclass_fields__}
+        filtered = {k: v for k, v in data.items() if k in valid_fields}
+        return cls(**filtered)
     
-    def __post_init__(self):
-        """Валидация конфигурации после инициализации."""
-        try:
-            self.device = ModelValidator.validate_device(self.device)
-            
-            ModelValidator.validate_confidence_threshold(self.min_confidence, "min_confidence")
-            ModelValidator.validate_confidence_threshold(self.fastsam_confidence, "fastsam_confidence")
-            ModelValidator.validate_confidence_threshold(self.fastsam_iou, "fastsam_iou")
-            ModelValidator.validate_confidence_threshold(self.nms_iou, "nms_iou")
-            ModelValidator.validate_confidence_threshold(self.score_confidence, "score_confidence")
-            ModelValidator.validate_confidence_threshold(self.decision_threshold, "decision_threshold")
-            ModelValidator.validate_confidence_threshold(self.adaptive_ratio, "adaptive_ratio")
-            
-            if not 0.0 <= self.max_area_fraction <= 1.0:
-                raise ValidationError(f"max_area_fraction должен быть в диапазоне [0, 1], получен {self.max_area_fraction}")
-            if self.min_area_fraction >= self.max_area_fraction:
-                raise ValidationError("min_area_fraction должен быть меньше max_area_fraction")
-            
-            ModelValidator.validate_positive_integer(self.fastsam_image_size, "fastsam_image_size", 1)
-            ModelValidator.validate_positive_integer(self.max_masks, "max_masks", 1)
-            ModelValidator.validate_positive_integer(self.topk, "topk", 1)
-            if self.feature_short_side is not None:
-                ModelValidator.validate_positive_integer(self.feature_short_side, "feature_short_side", 1)
-            
-            if self.sam_model_path is not None:
-                ModelValidator.validate_model_path(self.sam_model_path, required=False)
-            if self.fastsam_model_path is not None:
-                ModelValidator.validate_model_path(self.fastsam_model_path, required=False)
-            if self.dinov3_checkpoint_path is not None:
-                ModelValidator.validate_model_path(self.dinov3_checkpoint_path, required=False)
-                
-        except ValidationError as e:
-            raise ValueError(str(e)) from e
+    def to_dict(self) -> Dict[str, Any]:
+        """Преобразование конфигурации в словарь."""
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+    
+    def update(self, **kwargs) -> 'DetectorConfig':
+        """Обновление конфигурации с новыми значениями."""
+        base = self.to_dict()
+        base.update(kwargs or {})
+        return self.from_dict(base)
 
 
 @dataclass
@@ -278,8 +286,8 @@ class BatchProcessingConfig:
 
 
 @dataclass
-class DetectorConfig:
-    """Централизованная конфигурация для SearchDetDetector."""
+class LegacyDetectorConfig:
+    """Централизованная конфигурация для SearchDetDetector (устаревшая)."""
     
     # Основные параметры
     device: str = "auto"
@@ -327,19 +335,15 @@ class DetectorConfig:
     overlay_alpha: float = 0.5
     
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> 'DetectorConfig':
-        """Создание конфигурации из словаря."""
-        # Фильтруем только известные поля
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'LegacyDetectorConfig':
         valid_fields = {field.name for field in cls.__dataclass_fields__.values()}
-        filtered_dict = {k: v for k, v in config_dict.items() if k in valid_fields}
+        filtered_dict = {k: v for k, v in (config_dict or {}).items() if k in valid_fields}
         return cls(**filtered_dict)
     
     def to_dict(self) -> Dict[str, Any]:
-        """Преобразование в словарь."""
         return {field.name: getattr(self, field.name) for field in self.__dataclass_fields__.values()}
     
-    def update(self, **kwargs) -> 'DetectorConfig':
-        """Обновление конфигурации с новыми значениями."""
+    def update(self, **kwargs) -> 'LegacyDetectorConfig':
         config_dict = self.to_dict()
         config_dict.update(kwargs)
         return self.from_dict(config_dict)

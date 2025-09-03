@@ -8,11 +8,7 @@ poetry config virtualenvs.in-project true --local
 poetry env use 3.11
 poetry install
 
-git clone https://github.com/haotian-liu/LLaVA.git
-cd LLaVA && pip install -e . && cd ..
-
-git clone https://github.com/facebookresearch/segment-anything-2.git
-cd segment-anything-2 && pip install -e . && cd ..
+# Установка зависимостей выполняется автоматически через pip install -r requirements.txt
 ```  
 
 Make examples directories:  
@@ -22,9 +18,9 @@ mkdir -p models input output examples/positive examples/negative
 
 ## 🎯 ЗАПУСК АНАЛИЗА
 
-### 🔥 Гибридный режим (LLaVA + SearchDet):
+### 🔥 Режим SearchDet:
 ```bash
-PYTHONPATH=. poetry run python hybrid_searchdet_pipeline.py \
+python -m searchdet_pipeline.cli.detect \
   --image input/test_metal.jpg \
   --positive examples/positive \
   --negative examples/negative \
@@ -33,7 +29,7 @@ PYTHONPATH=. poetry run python hybrid_searchdet_pipeline.py \
 
 ### ⚡ Только SearchDet (быстрее, меньше памяти):
 ```bash
-PYTHONPATH=. poetry run python hybrid_searchdet_pipeline.py \
+python -m searchdet_pipeline.cli.detect \
   --image input/test_metal.jpg \
   --positive examples/positive \
   --negative examples/negative \
@@ -43,7 +39,7 @@ PYTHONPATH=. poetry run python hybrid_searchdet_pipeline.py \
 
 ### 📊 С Ground Truth для метрик:
 ```bash
-PYTHONPATH=. poetry run python hybrid_searchdet_pipeline.py \
+python -m searchdet_pipeline.cli.detect \
   --image input/test_metal.jpg \
   --positive examples/positive \
   --negative examples/negative \

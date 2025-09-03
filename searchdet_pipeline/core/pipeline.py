@@ -37,7 +37,23 @@ class PipelineProcessor:
                       positive_dir: Optional[str] = None,
                       negative_dir: Optional[str] = None,
                       output_dir: Optional[str] = None,
+                      use_heatmap: bool = False,
+                      use_enhanced_heatmap: bool = False,
                       **kwargs) -> Dict[str, Any]:
+        """Обработка одного изображения.
+        
+        Args:
+            image_path: Путь к изображению
+            positive_dir: Директория с положительными примерами
+            negative_dir: Директория с отрицательными примерами
+            output_dir: Директория для сохранения результатов
+            use_heatmap: Использовать heatmap режим вместо SAM
+            use_enhanced_heatmap: Использовать улучшенную обработку heatmap с пиксельным биннингом
+            **kwargs: Дополнительные параметры
+            
+        Returns:
+            Словарь с результатами обработки
+        """
         if not self._check_initialization():
             return self._create_error_result("Пайплайн не инициализирован")
         
@@ -46,9 +62,19 @@ class PipelineProcessor:
             return self._create_error_result(validation_error)
         
         try:
-            result = self.detector.find_present_elements(
-                image_path, positive_dir, negative_dir, output_dir
-            )
+            if use_enhanced_heatmap:
+                result = self.detector.find_present_elements_with_enhanced_heatmap(
+                    image_path, positive_dir, negative_dir, output_dir
+                )
+            elif use_heatmap:
+                result = self.detector.find_present_elements_with_heatmap(
+                    image_path, positive_dir, negative_dir, output_dir,
+                    use_heatmap_masks=kwargs.get('use_heatmap_masks', True)
+                )
+            else:
+                result = self.detector.find_present_elements(
+                    image_path, positive_dir, negative_dir, output_dir
+                )
             return result
             
         except Exception as e:
@@ -58,7 +84,23 @@ class PipelineProcessor:
                      positive_dir: Optional[str] = None,
                      negative_dir: Optional[str] = None,
                      output_base_dir: Optional[str] = None,
+                     use_heatmap: bool = False,
+                     use_enhanced_heatmap: bool = False,
                      **kwargs) -> List[Dict[str, Any]]:
+        """Пакетная обработка изображений.
+        
+        Args:
+            image_paths: Список путей к изображениям
+            positive_dir: Директория с положительными примерами
+            negative_dir: Директория с отрицательными примерами
+            output_base_dir: Директория для сохранения результатов
+            use_heatmap: Использовать heatmap режим
+            use_enhanced_heatmap: Использовать улучшенную обработку heatmap с пиксельным биннингом
+            **kwargs: Дополнительные параметры
+            
+        Returns:
+            Список словарей с результатами обработки
+        """
         if not self._check_initialization():
             error_result = self._create_error_result("Пайплайн не инициализирован")
             return [error_result] * len(image_paths)
@@ -74,18 +116,86 @@ class PipelineProcessor:
             return [error_result] * len(image_paths)
         
         try:
-            results = self.detector.detect_batch(
-                image_paths, positive_dir, negative_dir, output_base_dir
-            )
-            return results
+            if use_enhanced_heatmap:
+                results = []
+                for image_path in image_paths:
+                    result = self.detector.find_present_elements_with_enhanced_heatmap(
+                        image_path, positive_dir, negative_dir, output_base_dir
+                    )
+                    results.append(result)
+                return results
+            elif use_heatmap:
+                results = []
+                for image_path in image_paths:
+                    result = self.detector.find_present_elements_with_heatmap(
+                        image_path, positive_dir, negative_dir, output_base_dir,
+                        use_heatmap_masks=kwargs.get('use_heatmap_masks', True)
+                    )
+                    results.append(result)
+                return results
+            else:
+                results = self.detector.detect_batch(
+                    image_paths, positive_dir, negative_dir, output_base_dir
+                )
+                return results
             
         except Exception as e:
             error_result = self._create_error_result(f"Ошибка пакетной обработки: {e}")
             return [error_result] * len(image_paths)
     
+    def process_single_with_heatmap(self, image_path: str,
+                                   positive_dir: Optional[str] = None,
+                                   negative_dir: Optional[str] = None,
+                                   output_dir: Optional[str] = None,
+                                   use_heatmap_masks: bool = True,
+                                   **kwargs) -> Dict[str, Any]:
+        """Обработка одного изображения с использованием heatmap режима.
+        
+        Args:
+            image_path: Путь к изображению
+            positive_dir: Директория с положительными примерами
+            negative_dir: Директория с отрицательными примерами
+            output_dir: Директория для сохранения результатов
+            use_heatmap_masks: Генерировать маски из heatmap или использовать SAM
+            **kwargs: Дополнительные параметры
+            
+        Returns:
+            Словарь с результатами обработки включая heatmap
+        """
+        if not self._check_initialization():
+            return self._create_error_result("Пайплайн не инициализирован")
+        
+        validation_error = self._validate_inputs(image_path, positive_dir, negative_dir)
+        if validation_error:
+            return self._create_error_result(validation_error)
+        
+        try:
+            result = self.detector.find_present_elements_with_heatmap(
+                image_path, positive_dir, negative_dir, output_dir, use_heatmap_masks
+            )
+            return result
+            
+        except Exception as e:
+            return self._create_error_result(f"Ошибка обработки с heatmap: {e}")
+    
     def quick_detect(self, image_path: str, examples_dir: str, 
-                    output_dir: Optional[str] = None) -> Dict[str, Any]:
+                    output_dir: Optional[str] = None,
+                    use_heatmap: bool = False) -> Dict[str, Any]:
+        """Быстрая детекция с использованием одной директории примеров.
+        
+        Args:
+            image_path: Путь к изображению
+            examples_dir: Директория с примерами
+            output_dir: Директория для сохранения результатов
+            use_heatmap: Использовать heatmap режим
+            
+        Returns:
+            Словарь с результатами детекции
+        """
         examples_path = Path(examples_dir)
+        
+        if not examples_path.exists():
+            return self._create_error_result(f"Директория примеров не найдена: {examples_dir}")
         
         positive_dir = None
         negative_dir = None
@@ -102,7 +212,7 @@ class PipelineProcessor:
         elif (examples_path / "neg").exists():
             negative_dir = str(examples_path / "neg")
         
-        return self.process_single(image_path, positive_dir, negative_dir, output_dir)
+        return self.process_single(image_path, positive_dir, negative_dir, output_dir, use_heatmap=use_heatmap)
     
     def get_pipeline_info(self) -> Dict[str, Any]:
         info = {

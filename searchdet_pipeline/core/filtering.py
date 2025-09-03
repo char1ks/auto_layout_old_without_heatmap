@@ -10,11 +10,11 @@ class MaskFilter:
         if params is None:
             params = {}
         
-        self.min_area_frac = params.get('min_area_frac', 0.03)
-        self.max_area_frac = params.get('max_area_frac', 0.90)
-        self.perfect_rectangle_iou = params.get('perfect_rectangle_iou', 0.99)
-        self.containment_iou = params.get('containment_iou', 0.95)
-        self.border_ban = params.get('border_ban', True)
+        self.min_area_frac = params.get('min_area_frac', 0.002)
+        self.max_area_frac = params.get('max_area_frac', 0.95)
+        self.perfect_rectangle_iou = params.get('perfect_rectangle_iou', 0.95)
+        self.containment_iou = params.get('containment_iou', 0.70)
+        self.border_ban = params.get('border_ban', False)
         self.border_width = params.get('border_width', 2)
         
         self.enable_mask_correction = params.get('enable_mask_correction', True)
@@ -62,7 +62,9 @@ class MaskFilter:
         print(f"🔗 Объединение перекрывающихся масок: {initial_mask_count} → {len(masks)}")
         initial_mask_count = len(masks)
         
+        before_size_filter = len(masks)
         masks, small_count, big_count = self._filter_by_size(masks, image_np.shape)
+        print(f"📏 Фильтр по размеру (только max={self.max_area_frac:.3f}): {before_size_filter} → {len(masks)} (слишком больших={big_count})")
         
         # Применяем коррекцию масок (быстрая версия)
         if self.enable_mask_correction:
@@ -75,18 +77,15 @@ class MaskFilter:
         h, w = image_shape[:2]
         total_pixels = h * w
         
-        min_area_abs = self.min_area_frac * total_pixels
         max_area_abs = self.max_area_frac * total_pixels
         
         filtered_masks = []
-        small_count = 0
+        small_count = 0  # Всегда 0, так как не фильтруем по минимальному размеру
         big_count = 0
         
         for mask_dict in masks:
             area = mask_dict.get('area', 0)
-            if area < min_area_abs:
-                small_count += 1
-            elif area > max_area_abs:
+            if area > max_area_abs:
                 big_count += 1
             else:
                 filtered_masks.append(mask_dict)
@@ -360,8 +359,9 @@ class MaskFilter:
         border_width = self.border_width
         ban_border = self.border_ban
         
-        if not ban_border:
-            print(f"🖼️ Обработка границ отключена: {len(masks)} → {len(masks)}")
+        # Если фильтр отключен или border_width равен 0, пропускаем все маски
+        if not ban_border or border_width <= 0:
+            print(f"🖼️ Обработка границ отключена (ban_border={ban_border}, border_width={border_width}): {len(masks)} → {len(masks)}")
             return masks
         
         filtered_masks = []

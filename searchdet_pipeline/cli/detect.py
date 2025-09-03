@@ -111,6 +111,9 @@ def _add_detect_arguments(parser: argparse.ArgumentParser):
     parser.add_argument('--verbose', '-v', action='store_true', help='Подробный вывод')
     parser.add_argument('--quiet', '-q', action='store_true', help='Минимальный вывод')
     parser.add_argument('--defect', action='store_true', help='Включить режим поиска дефектов (beta)')
+    parser.add_argument('--use-heatmap', action='store_true', help='Использовать heatmap режим вместо SAM/FastSAM для генерации масок')
+    parser.add_argument('--use-heatmap-masks', action='store_true', default=True, help='Генерировать маски из heatmap (по умолчанию: True)')
+    parser.add_argument('--no-heatmap-masks', dest='use_heatmap_masks', action='store_false', help='Использовать SAM даже в heatmap режиме')
 
 def execute_detect(args) -> int:
     print("\n" + "="*70)
@@ -164,7 +167,7 @@ def execute_detect(args) -> int:
         if hasattr(args, 'score_confidence') and args.score_confidence is not None:
             detector_params['score_confidence'] = args.score_confidence
         if hasattr(args, 'min_pos_score') and getattr(args, 'min_pos_score', None) is not None:
-            detector_params['min_pos_score'] = args.min_pos_score
+            detector_params['min_positive_score'] = args.min_pos_score
         if hasattr(args, 'decision_threshold') and getattr(args, 'decision_threshold', None) is not None:
             detector_params['decision_threshold'] = args.decision_threshold
         if hasattr(args, 'adaptive_ratio') and getattr(args, 'adaptive_ratio', None) is not None:
@@ -174,7 +177,7 @@ def execute_detect(args) -> int:
         if hasattr(args, 'topk') and getattr(args, 'topk', None) is not None:
             detector_params['topk'] = args.topk
         if hasattr(args, 'pos_agg') and getattr(args, 'pos_agg', None) is not None:
-            detector_params['pos_agg'] = args.pos_agg
+            detector_params['positive_aggregation'] = args.pos_agg
         
         # DINOv3 параметры
         if hasattr(args, 'dinov3_backbone') and args.dinov3_backbone:
@@ -263,15 +266,31 @@ def execute_detect(args) -> int:
         print("5️⃣ Создание: detector = SearchDetDetector(**params)")
         detector = SearchDetDetector(**detector_params)
         
-        print("6️⃣ Вызов: detector.find_present_elements()")
-        print("   ↳ Это запустит весь пайплайн из hybrid_searchdet_pipeline.py:")
-        print("   ↳ _load_example_images() → _generate_sam_masks() → _filter_*() → _extract_mask_embeddings() → _score_masks()")
-        result = detector.find_present_elements(
-            args.image,
-            args.positive,
-            args.negative,
-            args.output if hasattr(args, 'output') and args.output else "output"
-        )
+        # Проверяем режим работы
+        use_heatmap = getattr(args, 'use_heatmap', False)
+        use_heatmap_masks = getattr(args, 'use_heatmap_masks', True)
+        
+        if use_heatmap:
+            print("6️⃣ Вызов: detector.find_present_elements_with_heatmap() [HEATMAP РЕЖИМ]")
+            print("   ↳ Это запустит heatmap пайплайн:")
+            print("   ↳ _load_example_images() → HeatmapGenerator → BinningProcessor → (опционально маски из heatmap)")
+            result = detector.find_present_elements_with_heatmap(
+                args.image,
+                args.positive,
+                args.negative,
+                args.output if hasattr(args, 'output') and args.output else "output",
+                use_heatmap_masks=use_heatmap_masks
+            )
+        else:
+            print("6️⃣ Вызов: detector.find_present_elements() [СТАНДАРТНЫЙ SAM РЕЖИМ]")
+            print("   ↳ Это запустит весь пайплайн из hybrid_searchdet_pipeline.py:")
+            print("   ↳ _load_example_images() → _generate_sam_masks() → _filter_*() → _extract_mask_embeddings() → _score_masks()")
+            result = detector.find_present_elements(
+                args.image,
+                args.positive,
+                args.negative,
+                args.output if hasattr(args, 'output') and args.output else "output"
+            )
         _print_result(result, args)
         if 'success' in result:
             return 0 if result['success'] else 1

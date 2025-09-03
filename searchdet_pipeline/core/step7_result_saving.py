@@ -15,9 +15,37 @@ class ResultSaver:
         self.overlay_alpha = overlay_alpha
         self.colors = self._generate_colors()
     
+    def _safe_draw_contours(self, image: np.ndarray, contours: list, 
+                           contour_idx: int = -1, color: tuple = (0, 255, 0), 
+                           thickness: int = 2) -> np.ndarray:
+        """Безопасная отрисовка контуров с проверкой на пустые контуры"""
+        if contours is None or len(contours) == 0:
+            return image
+        
+        # Фильтруем валидные контуры - проверяем что контур не пустой и имеет достаточно точек
+        valid_contours = []
+        for c in contours:
+            if c is not None and len(c) > 0:
+                # Проверяем что контур имеет правильную форму и достаточно точек
+                if isinstance(c, np.ndarray) and c.size > 0:
+                    # Убеждаемся что контур имеет минимум 3 точки для отрисовки
+                    if len(c) >= 3:
+                        valid_contours.append(c)
+        
+        if not valid_contours:
+            return image
+            
+        try:
+            cv2.drawContours(image, valid_contours, contour_idx, color, thickness)
+        except Exception as e:
+            print(f"   ⚠️ Ошибка при отрисовке контуров: {e}")
+        
+        return image
+    
     def save_all_results(self, image: np.ndarray, final_masks: List[Dict[str, Any]],
                         output_dir: str, image_name: str,
-                        pipeline_config: Optional[Dict] = None) -> Dict[str, str]:
+                        pipeline_config: Optional[Dict] = None,
+                        heatmap: Optional[np.ndarray] = None) -> Dict[str, str]:
         print("\n🔄 ЭТАП 7: СОХРАНЕНИЕ РЕЗУЛЬТАТОВ")
         print("=" * 60)
         
@@ -27,10 +55,14 @@ class ResultSaver:
         
         saved_files = {}
         
+        # Сохраняем heatmap всегда, если она передана
+        if heatmap is not None:
+            saved_files.update(self._save_heatmap(heatmap, image, result_dir))
+        
         if not final_masks:
             print("   ⚠️ Нет детекций для сохранения")
             # Сохраняем только исходное изображение и пустые аннотации
-            saved_files = self._save_empty_results(image, result_dir, image_name, pipeline_config)
+            saved_files = {**saved_files, **self._save_empty_results(image, result_dir, image_name, pipeline_config)}
         else:
             print(f"   💾 Сохранение {len(final_masks)} детекций...")
             
@@ -128,51 +160,32 @@ class ResultSaver:
             
             # Создаём цветную маску
             mask_colored = np.zeros_like(result)
-            mask_colored[segmentation] = color
+            # Убеждаемся, что segmentation - boolean массив
+            seg_bool = segmentation.astype(bool) if segmentation.dtype != bool else segmentation
+            mask_colored[seg_bool] = color
             
             # Накладываем с прозрачностью
             result = cv2.addWeighted(result, 1 - self.overlay_alpha, 
                                    mask_colored, self.overlay_alpha, 0)
             
-            # Рисуем контур
-            contours, _ = cv2.findContours(
+            # Рисуем контур (совместимость с разными версиями OpenCV)
+            contours_result = cv2.findContours(
                 segmentation.astype(np.uint8), 
                 cv2.RETR_EXTERNAL, 
                 cv2.CHAIN_APPROX_SIMPLE
             )
-            cv2.drawContours(result, contours, -1, color, 2)
-            
-            # Рисуем bbox
-            x, y, w, h = bbox
-            cv2.rectangle(result, (x, y), (x + w, y + h), color, 2)
-            
-            # Добавляем текст с классом и confidence
-            text = f"{cls}: {confidence:.2f}"
-            (text_w, text_h), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            
-            # Рисуем подложку для текста, проверяя границы
-            y_text = max(text_h + 5, y)  # Убедимся, что текст не выходит за верхнюю границу
-            text_bg_rect = (x, y_text - text_h - 5, text_w, text_h + 5)
-            
-            # Проверяем, что координаты не отрицательные
-            if text_bg_rect[1] >= 0 and text_bg_rect[0] >= 0 and text_bg_rect[2] > 0 and text_bg_rect[3] > 0:
-                # Проверяем, что не выходим за границы изображения
-                max_h, max_w = result.shape[:2]
-                if (text_bg_rect[1] + text_bg_rect[3] <= max_h and 
-                    text_bg_rect[0] + text_bg_rect[2] <= max_w):
-                    sub_img = result[text_bg_rect[1]:text_bg_rect[1]+text_bg_rect[3], 
-                                     text_bg_rect[0]:text_bg_rect[0]+text_bg_rect[2]]
-                    black_rect = np.zeros(sub_img.shape, dtype=np.uint8)
-                    res = cv2.addWeighted(sub_img, 0.5, black_rect, 0.5, 1.0)
-                    result[text_bg_rect[1]:text_bg_rect[1]+text_bg_rect[3], 
-                           text_bg_rect[0]:text_bg_rect[0]+text_bg_rect[2]] = res
-
-            # Рисуем текст
-            cv2.putText(result, text, (x, max(y, text_h + 5) - 5), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            if len(contours_result) == 3:
+                # OpenCV 3.x возвращает image, contours, hierarchy
+                _, contours, _ = contours_result
+            else:
+                # OpenCV 4.x возвращает contours, hierarchy
+                contours, _ = contours_result
+            # Безопасная отрисовка контуров
+            self._safe_draw_contours(mask_colored, contours, -1, color, 2)
+            result = cv2.addWeighted(result, 1, mask_colored, 0.4, 0)
         
         return result
-    
+
     def _create_contours_visualization(self, image: np.ndarray,
                                      masks: List[Dict[str, Any]]) -> np.ndarray:
         result = cv2.cvtColor(image, cv2.COLOR_RGB2BGR).copy()
@@ -191,20 +204,31 @@ class ResultSaver:
             segmentation = mask['segmentation']
             
             # Добавляем полупрозрачную заливку
-            overlay[segmentation] = color
+            # Убеждаемся, что segmentation - boolean массив
+            seg_bool = segmentation.astype(bool) if segmentation.dtype != bool else segmentation
+            overlay[seg_bool] = color
             
-            # Находим и рисуем контуры
-            contours, _ = cv2.findContours(
+            # Находим и рисуем контуры (совместимость с разными версиями OpenCV)
+            result_contours = cv2.findContours(
                 segmentation.astype(np.uint8),
                 cv2.RETR_EXTERNAL,
                 cv2.CHAIN_APPROX_SIMPLE
             )
-            cv2.drawContours(result, contours, -1, color, 3)
+            if len(result_contours) == 3:
+                # OpenCV 3.x возвращает image, contours, hierarchy
+                _, contours, _ = result_contours
+            else:
+                # OpenCV 4.x возвращает contours, hierarchy
+                contours, _ = result_contours
+            # Безопасная отрисовка контуров
+            self._safe_draw_contours(result, contours, -1, color, 3)
             
             # Добавляем подпись с классом
-            if contours:
+            # Получаем валидные контуры для подписи
+            valid_contours = [c for c in contours if len(c) > 0] if contours else []
+            if valid_contours:
                 # Находим центр контура для размещения текста
-                M = cv2.moments(contours[0])
+                M = cv2.moments(valid_contours[0])
                 if M["m00"] != 0:
                     cx = int(M["m10"] / M["m00"])
                     cy = int(M["m01"] / M["m00"])
@@ -231,7 +255,9 @@ class ResultSaver:
             cls = mask.get('class', 'unknown')
             color = class_colors[cls]
             segmentation = mask['segmentation']
-            semantic_mask[segmentation] = color
+            # Убеждаемся, что segmentation - boolean массив
+            seg_bool = segmentation.astype(bool) if segmentation.dtype != bool else segmentation
+            semantic_mask[seg_bool] = color
         
         return semantic_mask
     
@@ -245,19 +271,32 @@ class ResultSaver:
         
         for i, mask in enumerate(masks):
             segmentation = mask['segmentation']
-            confidence = mask['confidence']
+            confidence = mask.get('confidence', 1.0)  # Используем значение по умолчанию
             
+            # Проверяем что segmentation не пустая
+            if segmentation is None or not hasattr(segmentation, 'shape'):
+                print(f"     ⚠️ Пропускаем маску {i}: пустая segmentation")
+                continue
+                
             # Конвертируем boolean маску в uint8
-            mask_img = (segmentation * 255).astype(np.uint8)
+            try:
+                mask_img = (segmentation * 255).astype(np.uint8)
+            except Exception as e:
+                print(f"     ⚠️ Ошибка конвертации маски {i}: {e}")
+                continue
             
             # Сохраняем маску
             mask_filename = f"mask_{i:03d}_conf_{confidence:.3f}.png"
             mask_path = masks_dir / mask_filename
-            cv2.imwrite(str(mask_path), mask_img)
             
-            saved_files[f'mask_{i}'] = str(mask_path)
+            try:
+                cv2.imwrite(str(mask_path), mask_img)
+                saved_files[f'mask_{i}'] = str(mask_path)
+            except Exception as e:
+                print(f"     ⚠️ Ошибка сохранения маски {i}: {e}")
+                continue
         
-        print(f"     ✅ Сохранено {len(masks)} отдельных масок")
+        print(f"     ✅ Сохранено {len(saved_files)} отдельных масок")
         return saved_files
     
     def _save_total_mask(self, masks: List[Dict[str, Any]], image_shape: tuple,
@@ -348,14 +387,21 @@ class ResultSaver:
             bbox = mask['bbox']
             
             # Конвертируем маску в полигон (список координат контура)
-            contours, _ = cv2.findContours(
+            # Совместимость с разными версиями OpenCV
+            result_contours = cv2.findContours(
                 segmentation.astype(np.uint8),
                 cv2.RETR_EXTERNAL,
                 cv2.CHAIN_APPROX_SIMPLE
             )
+            if len(result_contours) == 3:
+                # OpenCV 3.x возвращает image, contours, hierarchy
+                _, contours, _ = result_contours
+            else:
+                # OpenCV 4.x возвращает contours, hierarchy
+                contours, _ = result_contours
             
             # Берём самый большой контур
-            if contours:
+            if contours is not None and len(contours) > 0:
                 largest_contour = max(contours, key=cv2.contourArea)
                 polygon = largest_contour.reshape(-1, 2).tolist()
             else:
@@ -433,3 +479,65 @@ class ResultSaver:
             summary_lines.append(f"   • {file_type}: {Path(file_path).name}")
         
         return "\n".join(summary_lines)
+
+    def _save_heatmap(self, heatmap: np.ndarray, image: np.ndarray, result_dir: Path) -> Dict[str, str]:
+        saved = {}
+        try:
+            # Универсальная конвертация в numpy
+            if 'torch' in str(type(heatmap)):
+                try:
+                    heat = heatmap.detach().cpu().numpy()
+                except Exception:
+                    heat = np.array(heatmap)
+            else:
+                heat = np.array(heatmap)
+            heat = np.squeeze(heat)
+            if heat.ndim != 2:
+                print(f"   ⚠️ Heatmap имеет неожиданную форму: {heat.shape}, пропускаю сохранение визуализаций heatmap")
+                # Всё равно попробуем сохранить raw
+                raw_path = result_dir / "heatmap_raw.npy"
+                np.save(str(raw_path), heat)
+                saved['heatmap_raw'] = str(raw_path)
+                return saved
+
+            # Сохранение raw
+            raw_path = result_dir / "heatmap_raw.npy"
+            np.save(str(raw_path), heat)
+            saved['heatmap_raw'] = str(raw_path)
+
+            # Нормализация в [0,255]
+            h_min, h_max = float(np.min(heat)), float(np.max(heat))
+            denom = (h_max - h_min) if (h_max - h_min) > 1e-12 else 1.0
+            heat_norm = (heat - h_min) / denom
+            heat_u8 = (heat_norm * 255.0).clip(0, 255).astype(np.uint8)
+
+            # Маленькая картинка (ориг. размер heatmap)
+            small_gray_path = result_dir / "heatmap_small_gray.png"
+            cv2.imwrite(str(small_gray_path), heat_u8)
+            saved['heatmap_small_gray'] = str(small_gray_path)
+
+            small_color = cv2.applyColorMap(heat_u8, cv2.COLORMAP_JET)
+            small_color_path = result_dir / "heatmap_small_color.png"
+            cv2.imwrite(str(small_color_path), small_color)
+            saved['heatmap_small_color'] = str(small_color_path)
+
+            # Ресайз до размера изображения
+            H, W = image.shape[:2]
+            resized = cv2.resize(heat_u8, (W, H), interpolation=cv2.INTER_CUBIC)
+            resized_color = cv2.applyColorMap(resized, cv2.COLORMAP_JET)
+            resized_gray_path = result_dir / "heatmap_resized_gray.png"
+            cv2.imwrite(str(resized_gray_path), resized)
+            saved['heatmap_resized_gray'] = str(resized_gray_path)
+            resized_color_path = result_dir / "heatmap_resized_color.png"
+            cv2.imwrite(str(resized_color_path), resized_color)
+            saved['heatmap_resized_color'] = str(resized_color_path)
+
+            # Overlay на исходное изображение
+            img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            overlay = cv2.addWeighted(img_bgr, 0.5, resized_color, 0.5, 0)
+            overlay_path = result_dir / "heatmap_overlay.png"
+            cv2.imwrite(str(overlay_path), overlay)
+            saved['heatmap_overlay'] = str(overlay_path)
+        except Exception as e:
+            print(f"   ❌ Ошибка при сохранении heatmap: {e}")
+        return saved

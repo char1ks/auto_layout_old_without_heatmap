@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from PIL import Image
 import numpy as np
 from typing import Any, Dict, Optional
+import re
+import math
 
 
 try:
@@ -59,11 +61,14 @@ except ImportError:
 
 
 class DinoV3Encoder:
-    def __init__(self, backbone_name='vitb16', device='cpu', ckpt_path=None):
+    def __init__(self, backbone_name='vitb16', device='cpu', ckpt_path=None, half_precision: bool = False, vit_pooling: str = 'cls', loader: str = 'hub', repo_dir: Optional[str] = None):
         self.device = torch.device(device if (device == "cpu" or torch.cuda.is_available()) else "cpu")
     
-        self.half = False
-        self.pooling = "cls"
+        # Configure runtime options from passed parameters
+        self.half = bool(half_precision)
+        self.pooling = str(vit_pooling or "cls").lower()
+        self.loader = loader
+        self.repo_dir = repo_dir
         self.is_vit = True
 
     
@@ -121,7 +126,24 @@ class DinoV3Encoder:
         backbone_fn = getattr(dino_backbones, fn_name)
         print(f"🔧 DINOv3: используем архитектуру {fn_name}")
 
-    
+        # Попробуем автоматически найти локальный checkpoint в кэше torch, если явный путь не задан
+        if not ckpt_path:
+            cached_path = self._find_cached_dinov3_ckpt(fn_name)
+            if cached_path is not None:
+                ckpt_path = str(cached_path)
+                print(f"🔧 DINOv3: найден локальный checkpoint в cache: {ckpt_path}")
+            else:
+                # Если для выбранной архитектуры чекпоинта нет, но есть другой локальный чекпоинт,
+                # допускаем оффлайн-фоллбэк: переключаемся на архитектуру найденного локального веса
+                any_arch, any_path = self._find_any_cached_dinov3_ckpt()
+                if any_arch and any_path:
+                    print(f"🔧 DINOv3: локальные веса обнаружены для {any_arch}, переключаемся с {fn_name} → {any_arch} для оффлайн-режима")
+                    fn_name = any_arch
+                    backbone_fn = getattr(dino_backbones, fn_name)
+                    self.is_vit = not fn_name.startswith('dinov3_convnext')
+                    ckpt_path = str(any_path)
+
+        
         if ckpt_path:
             print(f"🔧 DINOv3: загружаем checkpoint из {ckpt_path}")
             self.model = backbone_fn(pretrained=False).to(self.device)
@@ -237,203 +259,269 @@ class DinoV3Encoder:
                     z = z.flatten(1)
             else:
                 # непонятный dict -> сваливаемся в mean по всем тензорам
-                vs = []
+                z = None
                 for v in feats.values():
-                    if torch.is_tensor(v):
+                    if isinstance(v, torch.Tensor):
                         vv = v
-                        if vv.ndim == 4: vv = vv.mean(dim=(2,3))
-                        if vv.ndim == 3: vv = vv.mean(dim=1)
-                        if vv.ndim == 2: vs.append(vv)
-                z = torch.stack(vs, dim=0).mean(dim=0) if vs else None
+                        if vv.ndim == 4:
+                            vv = vv.mean(dim=(2,3))
+                        elif vv.ndim == 3:
+                            vv = vv[:, 0, :]
+                        elif vv.ndim == 2:
+                            pass
+                        else:
+                            vv = vv.flatten(1)
+                        z = vv if z is None else (z + vv) / 2
+                if z is None:
+                    raise ValueError("Unsupported feats dict content")
         else:
             z = feats
+            if z.ndim == 4:
+                z = z.mean(dim=(2,3))
+            elif z.ndim == 3:
+                z = z[:, 0, :]
+            elif z.ndim == 2:
+                pass
+            else:
+                z = z.flatten(1)
+        return z
 
-        if not torch.is_tensor(z):
-            raise RuntimeError("DINOv3: не удалось извлечь вектор признаков из forward_features()")
+    def _find_cached_dinov3_ckpt(self, fn_name: str) -> Optional[Path]:
+        """Ищет локальный checkpoint для конкретной архитектуры в кэше torch hub."""
+        try:
+            import torch.hub as th
+            hub_dir = Path(th.get_dir()) / "checkpoints"
+        except Exception:
+            hub_dir = Path.home() / ".cache" / "torch" / "hub" / "checkpoints"
+        if not hub_dir.exists():
+            return None
+        # Наиболее точное соответствие: dinov3_<arch>_pretrain*.pth
+        exact = sorted(hub_dir.glob(f"{fn_name}_pretrain*.pth"))
+        if exact:
+            return exact[-1]
+        # Иногда в именах лишние суффиксы/префиксы
+        short = fn_name.replace("dinov3_", "")
+        variants = []
+        variants += sorted(hub_dir.glob(f"dinov3_{short}_pretrain*.pth"))
+        variants += sorted(hub_dir.glob(f"*{fn_name}*pretrain*.pth"))
+        variants += sorted(hub_dir.glob(f"*{short}*pretrain*.pth"))
+        return variants[-1] if variants else None
 
-        if z.ndim == 4:  # [B,C,H,W]
-            z = z.mean(dim=(2,3))
-        elif z.ndim == 3:  # [B,T,D]
-            z = z[:, 0, :] if pooling == "cls" else z[:, 1:, :].mean(dim=1)
-        elif z.ndim == 1:
-            z = z[None, :]
-        return z  # [B,D]
+    def _find_any_cached_dinov3_ckpt(self) -> tuple[Optional[str], Optional[Path]]:
+        """Ищет любой локальный dinov3 checkpoint в кэше и возвращает (fn_name, path)."""
+        try:
+            import torch.hub as th
+            hub_dir = Path(th.get_dir()) / "checkpoints"
+        except Exception:
+            hub_dir = Path.home() / ".cache" / "torch" / "hub" / "checkpoints"
+        if not hub_dir.exists():
+            return (None, None)
+        # Ищем файлы вида dinov3_*_pretrain*.pth
+        for p in sorted(hub_dir.glob("dinov3_*_pretrain*.pth")):
+            m = re.search(r"(dinov3_[^/\\]+?)_pretrain", p.name)
+            if m:
+                arch = m.group(1)
+                if hasattr(dino_backbones, arch):
+                    return (arch, p)
+        return (None, None)
 
-    # безопасный препроцесс
+    @staticmethod
+    def _pick_feature(feats: Any, pooling: str = "cls") -> torch.Tensor:
+        """
+        Возвращает тензор [B,D] из разных форматов, которые выдают ViT/ConvNeXt в DINOv3.
+        Порядок приоритета:
+          - dict['x_norm_clstoken'] (готовый cls)
+          - dict['x_prenorm'][:,0]  (cls до головы)
+          - dict['x_norm_patchtokens'].mean(dim=1) (mean по патчам)
+          - dict['x'] (на всякий случай)
+          - просто тензор (если не dict)
+        """
+        if isinstance(feats, dict):
+            if 'x_norm_clstoken' in feats:
+                z = feats['x_norm_clstoken']           # [B,D]
+            elif 'x_prenorm' in feats:
+                z = feats['x_prenorm']
+                if z.ndim == 3:                        # [B,T,D]
+                    z = z[:, 0, :]                     # cls
+            elif 'x_norm_patchtokens' in feats:
+                z = feats['x_norm_patchtokens']        # [B,T,D]
+                if z.ndim == 3:
+                    z = z[:, 1:, :].mean(dim=1) if z.shape[1] > 1 else z[:, 0, :]
+            elif 'x' in feats:
+                z = feats['x']
+                if z.ndim == 4:                        # ConvNeXt [B,C,H,W]
+                    z = z.mean(dim=(2,3))
+                elif z.ndim == 3:                      # [B,T,D]
+                    z = z[:, 0, :] if pooling == "cls" else z[:, 1:, :].mean(dim=1)
+                elif z.ndim == 2:
+                    pass
+                else:
+                    z = z.flatten(1)
+            else:
+                # непонятный dict -> сваливаемся в mean по всем тензорам
+                z = None
+                for v in feats.values():
+                    if isinstance(v, torch.Tensor):
+                        vv = v
+                        if vv.ndim == 4:
+                            vv = vv.mean(dim=(2,3))
+                        elif vv.ndim == 3:
+                            vv = vv[:, 0, :]
+                        elif vv.ndim == 2:
+                            pass
+                        else:
+                            vv = vv.flatten(1)
+                        z = vv if z is None else (z + vv) / 2
+                if z is None:
+                    raise ValueError("Unsupported feats dict content")
+        else:
+            z = feats
+            if z.ndim == 4:
+                z = z.mean(dim=(2,3))
+            elif z.ndim == 3:
+                z = z[:, 0, :]
+            elif z.ndim == 2:
+                pass
+            else:
+                z = z.flatten(1)
+        return z
+
     @torch.no_grad()
     def _prep(self, img_pil):
-        x = self.transform(img_pil).unsqueeze(0)         # [1,3,H,W]
-        x = x.to(self.device, dtype=torch.float32)
-        return x
+        x = _to_pil_any(img_pil)
+        return self.transform(x).unsqueeze(0).to(self.device)
 
     @torch.no_grad()
     def _prep_tensor(self, img_pil: Image.Image) -> torch.Tensor:
-        """PIL -> (1,3,H,W) на правильном device и с dtype модели."""
-        print(f"   🔍 ДИАГНОСТИКА _prep_tensor: PIL размер = {img_pil.size}")
-        
-        x = self.transform(img_pil).unsqueeze(0)            # float32 CPU
-        
-        # Диагностика после трансформации
-        x_has_nan = torch.isnan(x).any()
-        x_has_inf = torch.isinf(x).any()
-        x_min, x_max = x.min().item(), x.max().item()
-        print(f"   🔍 ДИАГНОСТИКА _prep_tensor: После transform {x.shape}, NaN={x_has_nan}, Inf={x_has_inf}, min={x_min:.4f}, max={x_max:.4f}")
-        
-        x = x.to(self.device)
-        wanted_dtype = next(self.model.parameters()).dtype
-        if x.dtype != wanted_dtype:
-            x = x.to(dtype=wanted_dtype)             # выравниваем precision с моделью
-        return x
+        x = _to_pil_any(img_pil)
+        return self.transform(x).unsqueeze(0).to(self.device)
 
     @torch.no_grad()
     def _forward_safe(self, x: torch.Tensor) -> torch.Tensor:
-        """Единый путь извлечения признаков -> L2-норм (B,D), float32 CPU."""
-        # Диагностика входного тензора
-        x_has_nan = torch.isnan(x).any()
-        x_has_inf = torch.isinf(x).any()
-        x_min, x_max = x.min().item(), x.max().item()
-        print(f"   🔍 ДИАГНОСТИКА _forward_safe: Входной тензор {x.shape}, NaN={x_has_nan}, Inf={x_has_inf}, min={x_min:.4f}, max={x_max:.4f}")
-        
-        if x_has_nan or x_has_inf:
-            print(f"   ❌ ДИАГНОСТИКА: Входной тензор содержит NaN/Inf, заменяем на нули")
-            x = torch.zeros_like(x)
-        
-        feats = self.model.forward_features(x)
-        
-        # Диагностика выхода модели
-        print(f"   🔍 ДИАГНОСТИКА: model.forward_features вернул тип = {type(feats)}")
-        if isinstance(feats, dict):
-            print(f"   🔍 ДИАГНОСТИКА: Ключи в feats = {list(feats.keys())}")
-            for k, v in feats.items():
-                if isinstance(v, torch.Tensor):
-                    v_has_nan = torch.isnan(v).any()
-                    v_has_inf = torch.isinf(v).any()
-                    print(f"   🔍 ДИАГНОСТИКА: feats['{k}'] shape={v.shape}, NaN={v_has_nan}, Inf={v_has_inf}")
-        elif isinstance(feats, torch.Tensor):
-            feats_has_nan = torch.isnan(feats).any()
-            feats_has_inf = torch.isinf(feats).any()
-            print(f"   🔍 ДИАГНОСТИКА: feats tensor shape={feats.shape}, NaN={feats_has_nan}, Inf={feats_has_inf}")
-        
-        if hasattr(self.model, "forward_head"):
-            z = self.model.forward_head(feats, pre_logits=True)
-        else:
-            t = feats["x"] if isinstance(feats, dict) and "x" in feats else feats
-            # Безопасная проверка типа перед обращением к ndim
-            if isinstance(t, dict):
-                # Если t все еще словарь, попробуем извлечь тензор
-                if "x_norm_clstoken" in t:
-                    z = t["x_norm_clstoken"]
-                elif "x_norm_patchtokens" in t:
-                    z = t["x_norm_patchtokens"][:, 0]  # Берем первый токен
-                else:
-                    # Берем первое значение из словаря, которое является тензором
-                    tensor_values = [v for v in t.values() if isinstance(v, torch.Tensor)]
-                    if tensor_values:
-                        z = tensor_values[0]
-                        if z.ndim == 3:
-                            z = z[:, 0]  # Берем CLS токен
-                        elif z.ndim > 2:
-                            z = z.flatten(1)
-                    else:
-                        # Fallback: создаем нулевой тензор
-                        z = torch.zeros((x.shape[0], 768), device=x.device, dtype=x.dtype)
-            elif hasattr(t, 'ndim'):
-                if t.ndim == 4:      # (B,C,H,W) ConvNeXt
-                    z = t.mean(dim=(2, 3))
-                elif t.ndim == 3:    # (B,T,D) ViT
-                    z = t[:, 0]
-                else:                # (B,D)
-                    z = t.flatten(1)
-            else:
-                # Fallback для неизвестных типов
-                z = torch.zeros((x.shape[0], 768), device=x.device, dtype=x.dtype)
-
-        # Диагностика z после извлечения
-        z_has_nan = torch.isnan(z).any()
-        z_has_inf = torch.isinf(z).any()
-        print(f"   🔍 ДИАГНОСТИКА: z после извлечения shape={z.shape}, NaN={z_has_nan}, Inf={z_has_inf}")
-        
-        z = z.float()
-        # запомним размерность один раз
-        if not hasattr(self, "feat_dim"):
-            self.feat_dim = int(z.shape[-1])
-
-        # Диагностика до нормализации
-        z_norm_before = torch.norm(z, dim=-1)
-        print(f"   🔍 ДИАГНОСТИКА DINOv3: Норма до нормализации = {z_norm_before.item():.8f}")
-        
-        z = F.normalize(z, dim=-1, eps=1e-6)
-        
-        # Диагностика после нормализации
-        z_norm_after = torch.norm(z, dim=-1)
-        print(f"   🔍 ДИАГНОСТИКА DINOv3: Норма после нормализации = {z_norm_after.item():.8f}")
-        
-        return z.cpu()
+        dtype = self._compute_dtype()
+        x = x.to(self.device, non_blocking=True)
+        try:
+            with torch.autocast(device_type=self.device.type, dtype=dtype, enabled=(dtype==torch.float16)):
+                feats = self.model(x)
+        except Exception:
+            feats = self.model(x)
+        return self._pick_feature(feats, pooling=self.pooling)
 
     @torch.no_grad()
     def _forward_features_safe(self, x: torch.Tensor) -> torch.Tensor:
+        dtype = self._compute_dtype()
+        x = x.to(self.device, non_blocking=True)
+        try:
+            with torch.autocast(device_type=self.device.type, dtype=dtype, enabled=(dtype==torch.float16)):
+                feats = self.model.forward_features(x)
+        except Exception:
+            feats = self.model.forward_features(x)
+        return self._pick_feature(feats, pooling=self.pooling)
+
+    @torch.no_grad()
+    def extract_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Извлекает полные признаки (cls_token + patch_features) из тензора.
+        
+        Args:
+            x: Тензор изображений [B, C, H, W]
+            
+        Returns:
+            torch.Tensor: Полные признаки [B, num_tokens, dim]
         """
-        Жёсткий fp32-путь + санация NaN. При NaN на GPU — повторяем на CPU.
-        Дополнительно: если норма признака близка к нулю при CLS-пулинге —
-        пробуем альтернативный MEAN-пулинг по патчам и выбираем наиболее информативный.
-        Возвращает [D] (для одного изображения).
-        """
-        # Первый прогон на текущем девайсе в float32 без autocast
-        self.model.float().eval()
-        x = x.to(self.device, dtype=torch.float32)
-
-        feats = self.model.forward_features(x)
-
-        # Извлекаем признак CLS и альтернативный MEAN без повторного forward
-        z_cls = self._pick_feature(feats, pooling="cls")  # [1,D]
-        z_mean = self._pick_feature(feats, pooling="mean")  # [1,D]
-
-        # Проверим на NaN/Inf
-        need_cpu_retry = (not torch.isfinite(z_cls).all()) or (not torch.isfinite(z_mean).all())
-        if need_cpu_retry:
-            # повтор на CPU → float32
-            cpu = torch.device("cpu")
-            self.model = self.model.to(cpu, dtype=torch.float32).eval()
-            x_cpu = x.to(cpu, dtype=torch.float32)
-            feats = self.model.forward_features(x_cpu)
-            z_cls = self._pick_feature(feats, pooling="cls")
-            z_mean = self._pick_feature(feats, pooling="mean")
-
-        # финальная санация
-        z_cls = torch.nan_to_num(z_cls, nan=0.0, posinf=0.0, neginf=0.0).float()
-        z_mean = torch.nan_to_num(z_mean, nan=0.0, posinf=0.0, neginf=0.0).float()
-
-        # Посчитаем нормы до нормализации и выведем диагностику
-        n_cls = torch.norm(z_cls, dim=-1).item()
-        n_mean = torch.norm(z_mean, dim=-1).item()
-        print(f"   🔍 DINOv3: нормы до нормализации — CLS={n_cls:.6f}, MEAN={n_mean:.6f}")
-
-        # Выбираем тот, у которого норма выше и не является около-нулевой
-        eps = 1e-6
-        if (n_cls < eps) and (n_mean >= eps):
-            print("   ⚠️ DINOv3: CLS-норма ~0, используем MEAN-пулинг")
-            z = z_mean
-        elif (n_mean < eps) and (n_cls >= eps):
-            z = z_cls
+        dtype = self._compute_dtype()
+        x = x.to(self.device, non_blocking=True)
+        try:
+            with torch.autocast(device_type=self.device.type, dtype=dtype, enabled=(dtype==torch.float16)):
+                feats = self.model.forward_features(x)
+        except Exception:
+            feats = self.model.forward_features(x)
+        
+        # Возвращаем полные признаки без обработки через _pick_feature
+        if isinstance(feats, dict):
+            if 'x_prenorm' in feats:
+                return feats['x_prenorm']  # [B, num_tokens, dim]
+            elif 'x' in feats:
+                return feats['x']  # [B, num_tokens, dim]
+            else:
+                # Fallback: берем первый тензор подходящей формы
+                for v in feats.values():
+                    if isinstance(v, torch.Tensor) and v.ndim == 3:
+                        return v
+                raise ValueError("Не удалось найти подходящие признаки в dict")
         else:
-            # Если оба валидны — берем с большей нормой; если оба ~0 — возьмём CLS (дальше обнулится после проверки)
-            z = z_cls if n_cls >= n_mean else z_mean
+            return feats  # Предполагаем, что это уже тензор [B, num_tokens, dim]
 
-        # L2-норма (если z ~ 0, останется нулевым вектором — это обработаем выше по стеку)
-        z = torch.nn.functional.normalize(z, dim=-1)
-        return z[0]  # [D]
+    @torch.no_grad()
+    def extract_cls_and_patches(self, x: torch.Tensor):
+        """Возвращает (cls_tokens [B,D], patch_tokens [B, Tpatch, D]) без не-пространственных токенов.
+        Сначала пытаемся использовать ключи x_norm_clstoken/x_norm_patchtokens, иначе отделяем патчи эвристикой.
+        """
+        dtype = self._compute_dtype()
+        x = x.to(self.device, non_blocking=True)
+        try:
+            with torch.autocast(device_type=self.device.type, dtype=dtype, enabled=(dtype==torch.float16)):
+                feats = self.model.forward_features(x)
+        except Exception:
+            feats = self.model.forward_features(x)
+
+        # Предпочтительный путь: готовые ключи для CLS и патчей
+        if isinstance(feats, dict) and ('x_norm_clstoken' in feats and 'x_norm_patchtokens' in feats):
+            cls = feats['x_norm_clstoken']            # [B,D]
+            patches = feats['x_norm_patchtokens']     # [B,T,D] только пространственные патчи
+            return cls, patches
+
+        # Фоллбек: берем общий тензор токенов
+        if isinstance(feats, dict):
+            if 'x_prenorm' in feats:
+                tokens = feats['x_prenorm']           # [B,T,D]
+            elif 'x' in feats and isinstance(feats['x'], torch.Tensor) and feats['x'].ndim == 3:
+                tokens = feats['x']
+            else:
+                tokens = None
+                for v in feats.values():
+                    if isinstance(v, torch.Tensor) and v.ndim == 3:
+                        tokens = v
+                        break
+                if tokens is None:
+                    raise ValueError("Не удалось извлечь последовательность токенов вида [B,T,D] из выходов DINOv3")
+        else:
+            tokens = feats  # уже тензор [B,T,D]
+
+        # Разделяем CLS и остальные токены
+        cls = tokens[:, 0, :]
+        seq_no_cls = tokens[:, 1:, :]
+
+        # Определим число патч-токенов по входным размерам и размеру патча модели
+        patch_size = None
+        if hasattr(self.model, 'patch_embed') and hasattr(self.model.patch_embed, 'patch_size'):
+            p = self.model.patch_embed.patch_size
+            if isinstance(p, (tuple, list)):
+                patch_size = int(p[0])
+            else:
+                patch_size = int(p)
+        if not patch_size or patch_size <= 0:
+            patch_size = 16  # разумный дефолт для ViT/16
+
+        H, W = int(x.shape[-2]), int(x.shape[-1])
+        grid_h, grid_w = H // patch_size, W // patch_size
+        num_patches = int(grid_h * grid_w)
+
+        # Убираем возможные register tokens: оставляем ровно num_patches пространственных токенов
+        if seq_no_cls.shape[1] >= num_patches:
+            # В DINOv3 регистры обычно следуют после патчей → берём первые num_patches
+            patches = seq_no_cls[:, :num_patches, :]
+        else:
+            patches = seq_no_cls
+
+        # На всякий случай обрежем до идеального квадрата
+        t = patches.shape[1]
+        side = int(math.sqrt(t))
+        patches = patches[:, : side * side, :]
+
+        return cls, patches
 
     @torch.no_grad()
     def encode(self, img_pil) -> np.ndarray:
         x = self._prep(img_pil)
-        z = self._forward_features_safe(x)               # [D], float32
-        v = z.detach().cpu().numpy().astype(np.float32)
-
-        # второй уровень проверки
-        if not np.isfinite(v).all():
-            v = np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-        # если норма вдруг ~0 (редко) — вернём нулевой вектор (лучше, чем NaN)
-        n = np.linalg.norm(v)
-        if not np.isfinite(n) or n < 1e-6:
-            v = np.zeros_like(v, dtype=np.float32)
-        return v
+        z = self._forward_safe(x)
+        return z.detach().cpu().numpy()[0]

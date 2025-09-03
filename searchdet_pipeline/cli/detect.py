@@ -264,34 +264,31 @@ def execute_detect(args) -> int:
         })
         
         print("5️⃣ Создание: detector = SearchDetDetector(**params)")
+        # ---
         detector = SearchDetDetector(**detector_params)
+        pos_by_class, neg_imgs = detector.read_reference_images(args.positive, args.negative)
+        input_img = detector.read_input_img(args.image)
+        # ---
+
+        detector.set_references(pos_by_class, neg_imgs)
         
-        # Проверяем режим работы
-        use_heatmap = getattr(args, 'use_heatmap', False)
-        use_heatmap_masks = getattr(args, 'use_heatmap_masks', True)
+        # # Проверяем режим работы
+        # use_heatmap = getattr(args, 'use_heatmap', False)
+        # use_heatmap_masks = getattr(args, 'use_heatmap_masks', True)
         
-        if use_heatmap:
-            print("6️⃣ Вызов: detector.find_present_elements_with_heatmap() [HEATMAP РЕЖИМ]")
-            print("   ↳ Это запустит heatmap пайплайн:")
-            print("   ↳ _load_example_images() → HeatmapGenerator → BinningProcessor → (опционально маски из heatmap)")
-            result = detector.find_present_elements_with_heatmap(
-                args.image,
-                args.positive,
-                args.negative,
-                args.output if hasattr(args, 'output') and args.output else "output",
-                use_heatmap_masks=use_heatmap_masks
-            )
-        else:
-            print("6️⃣ Вызов: detector.find_present_elements() [СТАНДАРТНЫЙ SAM РЕЖИМ]")
-            print("   ↳ Это запустит весь пайплайн из hybrid_searchdet_pipeline.py:")
-            print("   ↳ _load_example_images() → _generate_sam_masks() → _filter_*() → _extract_mask_embeddings() → _score_masks()")
-            result = detector.find_present_elements(
-                args.image,
-                args.positive,
-                args.negative,
-                args.output if hasattr(args, 'output') and args.output else "output"
-            )
+        print("6️⃣ Вызов: detector.find_present_elements() [СТАНДАРТНЫЙ SAM РЕЖИМ]")
+        print("   ↳ Это запустит весь пайплайн из hybrid_searchdet_pipeline.py:")
+        print("   ↳ _load_example_images() → _generate_sam_masks() → _filter_*() → _extract_mask_embeddings() → _score_masks()")
+        # --- CORE METHOD TO CALL
+        result = detector.find_present_elements(input_img)
+        # ---
         _print_result(result, args)
+        detector.save_results(
+            input_img,
+            result["masks"], 
+            args.image,
+            args.output if hasattr(args, 'output') and args.output else "output",
+        ) 
         if 'success' in result:
             return 0 if result['success'] else 1
         else:

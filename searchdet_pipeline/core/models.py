@@ -159,7 +159,7 @@ class DetectorConfig:
     overlay_alpha: float = 0.5
     
     # Параметры бэкенда сегментации
-    segmentation_backend: str = "sam"  # "sam", "fastsam", "heatmap"
+    segmentation_backend: str = "fastsam"  # "sam", "fastsam", "heatmap"
     heatmap_threshold: float = 0.5  # Пороговое значение для heatmap бэкенда
     
     # Параметры моделей

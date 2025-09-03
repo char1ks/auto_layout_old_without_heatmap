@@ -30,8 +30,10 @@ from ..utils.validation import ImageValidator, DirectoryValidator, ValidationErr
 import torch
 from .models import MaskBackend, BackboneType
 
+from searchdet_pipeline.detector_base import DetectorBase
 
-class SearchDetDetector:
+
+class SearchDetDetector(DetectorBase):
     
     def __init__(self, config: Optional[DetectorConfig] = None, **kwargs: Any) -> None:
         if not SEARCHDET_AVAILABLE:
@@ -70,16 +72,17 @@ class SearchDetDetector:
             print(f"🔧 DINOv2 бэкенд: используется собственный размер модели")
         print(f"🔧 Выбран SAM энкодер: {self.sam_encoder}")
         self.searchdet_resnet, self.searchdet_layer, self.searchdet_transform, self.searchdet_sam = init_searchdet()
-        if not self.backbone.startswith('dinov2'):
-            import torchvision.transforms as transforms
-            feat_short_side = int(os.getenv('SEARCHDET_FEAT_SHORT_SIDE', '384'))
-            self.searchdet_transform = transforms.Compose([
-                transforms.Resize(feat_short_side),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ])
-        else:
-            self.searchdet_transform = None
+        # TODO: (@gas) why it's needed? Drop if not used
+        # if not self.backbone.startswith('dinov2'):
+        #     import torchvision.transforms as transforms
+        #     feat_short_side = int(os.getenv('SEARCHDET_FEAT_SHORT_SIDE', '384'))
+        #     self.searchdet_transform = transforms.Compose([
+        #         transforms.Resize(feat_short_side),
+        #         transforms.ToTensor(),
+        #         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        #     ])
+        # else:
+        #     self.searchdet_transform = None
         # Инициализируем MaskGenerator для FastSAM бэкенда
         # Фильтруем параметры, которые уже передаются явно, чтобы избежать дублирования ключей
         generator_params = {
@@ -144,471 +147,11 @@ class SearchDetDetector:
         self.heatmap_generator = HeatmapGenerator(self.dinov3_encoder)
         self.binning_processor = BinningProcessor(self.dinov3_encoder)
         self.enhanced_heatmap_processor = EnhancedHeatmapProcessor(self.dinov3_encoder)
-        
 
-    def set_references(self, image_path: Union[str, Path], positive_dir: Union[str, Path], 
-                      negative_dir: Optional[Union[str, Path]] = None) -> None:
-        try:
-            ImageValidator.validate_image_path(str(image_path))
-            DirectoryValidator.validate_input_directory(str(positive_dir))
-            if negative_dir:
-                DirectoryValidator.validate_input_directory(str(negative_dir))
-        except ValidationError as e:
-            raise ValidationError(f"Ошибка валидации референсных данных: {e}")
-            
-        raise NotImplementedError("Метод set_references еще не реализован")
-    
-    def find_present_elements_with_heatmap(self, image_path: Union[str, Path], positive_dir: Union[str, Path], 
-                                         negative_dir: Optional[Union[str, Path]] = None, 
-                                         output_dir: str = "output",
-                                         use_heatmap_masks: bool = True) -> Dict[str, Any]:
-        """Поиск элементов с использованием heatmap и binning вместо SAM масок.
-        
-        Args:
-            image_path: Путь к анализируемому изображению
-            positive_dir: Директория с положительными примерами
-            negative_dir: Директория с отрицательными примерами (опционально)
-            output_dir: Директория для сохранения результатов
-            use_heatmap_masks: Использовать маски из хитмапы вместо SAM
-            
-        Returns:
-            Словарь с найденными элементами и масками
-        """
-        try:
-            validate_processing_pipeline_inputs(
-                image_path=str(image_path),
-                positive_dir=str(positive_dir),
-                negative_dir=str(negative_dir) if negative_dir else None,
-                output_dir=output_dir
-            )
-        except ValidationError as e:
-            raise ValidationError(f"Ошибка валидации входных данных: {e}")
-        
-        print(f"🔍 Анализ с heatmap: {image_path}" + "="*60)
-        print("🔄 ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ HEATMAP PIPELINE:")
-        print("=" * 80)
-        
+        self.class_pos, self.q_neg = None, None
+
+    def read_reference_images(self, positive_dir: Union[str, Path], negative_dir: Optional[Union[str, Path]] = None) -> Tuple[Dict[str, List[Image.Image]], List[Image.Image]]:
         timing_info: Dict[str, float] = {}
-        t_total = time.time()
-        
-        # Загрузка изображения
-        t_loading = time.time()
-        img_bgr = cv2.imread(str(image_path))
-        if img_bgr is None:
-            raise FileNotFoundError(f"Не удалось загрузить изображение: {image_path}")
-        image_np = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        image_pil = Image.fromarray(image_np.astype(np.uint8))
-        timing_info['image_loading'] = time.time() - t_loading
-        image_name = Path(image_path).name
-        
-        # Загрузка примеров
-        print("1️⃣ Шаг 1: Загрузка positive/negative примеров")
-        t_examples = time.time()   
-        pos_by_class = self._load_positive_by_class(positive_dir)
-        if len(pos_by_class) == 0:
-            print("   ❌ Нет положительных примеров — прекращаем.")
-            # Сохраним хотя бы heatmap, если она будет сгенерирована далее
-            return {"found_elements": [], "masks": []}
-        
-        total_pos = sum(len(v) for v in pos_by_class.values())
-        neg_imgs = self._load_example_images(negative_dir) if negative_dir else []
-        timing_info['examples_loading'] = time.time() - t_examples
-        print(f"   📁 Positive: {total_pos} в {len(pos_by_class)} классах\t📁 Negative: {len(neg_imgs)}")
-        
-        # Генерация хитмапы
-        print("2️⃣ Шаг 2: Генерация heatmap с помощью DINOv3")
-        t_heatmap = time.time()
-        
-        # Собираем все положительные изображения
-        all_positive_images = []
-        for class_images in pos_by_class.values():
-            all_positive_images.extend(class_images)
-        
-        # Генерируем хитмапу
-        heatmap = self.heatmap_generator.generate_heatmap(
-            input_image=image_pil,
-            positive_images=all_positive_images,
-            negative_images=neg_imgs
-        )
-        timing_info['heatmap_generation'] = time.time() - t_heatmap
-        print(f"   📊 Heatmap сгенерирована: {heatmap.shape}")
-        
-        if use_heatmap_masks:
-            # Генерация масок из хитмапы
-            print("3️⃣ Шаг 3: Генерация масок из heatmap")
-            t_mask_gen = time.time()
-            # Получаем размер исходного изображения
-            image_height, image_width = image_np.shape[:2]
-            print(f"   📐 Размер исходного изображения: {image_width}x{image_height}")
-            
-            masks = self.binning_processor.generate_masks_from_heatmap(
-                heatmap=heatmap,
-                threshold=0.3,  # Понижен порог для захвата оранжево-желтых зон
-                min_area=50,    # Уменьшена минимальная площадь
-                target_size=(image_height, image_width)
-            )
-            timing_info['mask_generation'] = time.time() - t_mask_gen
-            print(f"   📊 Сгенерировано масок из heatmap: {len(masks)}")
-        else:
-            # Используем обычную генерацию масок SAM
-            print("3️⃣ Шаг 3: Генерация масок через SAM/FastSAM")
-            t_masks = time.time()
-            masks = self.mask_generator.generate(image_np)
-            timing_info['mask_generation'] = time.time() - t_masks
-            print(f"   📊 Сгенерировано масок SAM: {len(masks)}")
-        
-        if not masks:
-            print("   ❌ Нет масок для обработки.")
-            # Всегда сохраняем heatmap, даже если масок нет
-            _saved = self.result_saver.save_all_results(
-                image_np,
-                [],
-                output_dir,
-                image_name,
-                pipeline_config={"backend": "heatmap_binning"},
-                heatmap=heatmap
-            )
-            return {"found_elements": [], "masks": [], "saved_files": _saved, "heatmap": heatmap, "output_directory": output_dir}
-        
-        # Фильтрация масок
-        print("4️⃣ Шаг 4: Фильтрация масок")
-        t_filtering = time.time()
-        masks = self.mask_filter.apply_all_filters(masks, image_np)
-        timing_info['mask_filtering'] = time.time() - t_filtering
-        
-        if not masks:
-            print("   ❌ Нет валидных масок после фильтров.")
-            # Всегда сохраняем heatmap, даже если масок нет
-            _saved = self.result_saver.save_all_results(
-                image_np,
-                [],
-                output_dir,
-                image_name,
-                pipeline_config={"backend": "heatmap_binning"},
-                heatmap=heatmap
-            )
-            return {"found_elements": [], "masks": [], "saved_files": _saved, "heatmap": heatmap, "output_directory": output_dir}
-        
-        # Binning процесс
-        print("5️⃣ Шаг 5: Binning процесс для детекции концептов")
-        t_binning = time.time()
-        
-        selected_mask_indices, all_masks = self.binning_processor.process_with_binning(
-            input_image=image_pil,
-            positive_images=all_positive_images,
-            negative_images=neg_imgs,
-            masks=masks
-        )
-        timing_info['binning_process'] = time.time() - t_binning
-        
-        # Определяем формат возвращаемых данных: индексы или маски
-        is_index_list = len(selected_mask_indices) == 0 or isinstance(selected_mask_indices[0], (int, np.integer))
-        total_candidates = len(masks)
-        print(f"   📊 Выбрано масок после binning: {len(selected_mask_indices)} из {total_candidates}")
-        
-        if not selected_mask_indices:
-            print("   ❌ Нет масок после binning процесса.")
-            # Всегда сохраняем heatmap, даже если выбранных масок нет
-            _saved = self.result_saver.save_all_results(
-                image_np,
-                [],
-                output_dir,
-                image_name,
-                pipeline_config={"backend": "heatmap_binning"},
-                heatmap=heatmap
-            )
-            return {"found_elements": [], "masks": [], "saved_files": _saved, "heatmap": heatmap, "output_directory": output_dir}
-        
-        # Формирование результатов
-        print("6️⃣ Шаг 6: Формирование результатов")
-        t_result = time.time()
-        
-        found = []
-        result_masks = []
-        H, W = image_np.shape[:2]
-        
-        if is_index_list:
-            # Старый путь: получены индексы исходных масок
-            for mask_idx in selected_mask_indices:
-                if mask_idx >= len(masks):
-                    continue
-                mask_dict = masks[mask_idx].copy()
-                class_name = list(pos_by_class.keys())[0] if pos_by_class else "detected"
-                mask_dict['confidence'] = 0.8
-                mask_dict['class'] = class_name
-                if 'area' not in mask_dict and 'segmentation' in mask_dict:
-                    mask_dict['area'] = int(np.sum(mask_dict['segmentation']))
-                bx = mask_dict.get('bbox', [0,0,0,0])
-                if len(bx) == 4 and (bx[2] <= W and bx[3] <= H):
-                    x1, y1, w, h = bx
-                    bbox_xyxy = [int(x1), int(y1), int(x1 + w), int(y1 + h)]
-                else:
-                    bbox_xyxy = [int(bx[0]), int(bx[1]), int(bx[2]), int(bx[3])]
-                found.append({
-                    'mask': mask_dict,
-                    'confidence': float(mask_dict['confidence']),
-                    'bbox': mask_dict['bbox'],
-                    'class': class_name
-                })
-                result_masks.append(mask_dict)
-        else:
-            # Новый путь: получены готовые маски, созданные пиксельным биннингом
-            for mask_dict in selected_mask_indices:
-                if not isinstance(mask_dict, dict) or 'segmentation' not in mask_dict:
-                    continue
-                class_name = list(pos_by_class.keys())[0] if pos_by_class else "detected"
-                mask_dict = mask_dict.copy()
-                mask_dict['confidence'] = 0.8
-                mask_dict['class'] = class_name
-                if 'area' not in mask_dict:
-                    mask_dict['area'] = int(np.sum(mask_dict['segmentation']))
-                if 'bbox' not in mask_dict:
-                    ys, xs = np.where(mask_dict['segmentation'])
-                    if xs.size and ys.size:
-                        x_min, x_max = int(xs.min()), int(xs.max())
-                        y_min, y_max = int(ys.min()), int(ys.max())
-                        mask_dict['bbox'] = [x_min, y_min, x_max - x_min + 1, y_max - y_min + 1]
-                    else:
-                        mask_dict['bbox'] = [0, 0, 0, 0]
-                found.append({
-                    'mask': mask_dict,
-                    'confidence': float(mask_dict['confidence']),
-                    'bbox': mask_dict['bbox'],
-                    'class': class_name
-                })
-                result_masks.append(mask_dict)
-        
-        timing_info['result_formatting'] = time.time() - t_result
-        
-        # Сохранение результатов
-        print("7️⃣ Шаг 7: Сохранение результатов")
-        t_saving = time.time()
-        saved_files = self.result_saver.save_all_results(
-            image_np,
-            result_masks,
-            output_dir,
-            image_name,
-            pipeline_config={"backend": "heatmap_binning"},
-            heatmap=heatmap
-        )
-        timing_info['result_saving'] = time.time() - t_saving
-        
-        total_time = time.time() - t_total
-        timing_info['total_time'] = total_time
-        
-        print(f"🎯 Найдено элементов: {len(found)}")
-        print(f"⏱️ Общее время: {total_time:.2f} сек")
-        print(f"💾 Результаты сохранены в: {output_dir}")
-        print(f"📁 Сохранено файлов: {len(saved_files)}")
-        self._print_timing_statistics(timing_info)
-        
-        return {
-            "found_elements": found, 
-            "masks": result_masks,
-            "timing_info": timing_info,
-            "output_directory": output_dir,
-            "saved_files": saved_files,
-            "heatmap": heatmap
-        }
-    
-    def find_present_elements_with_enhanced_heatmap(self, image_path: Union[str, Path], positive_dir: Union[str, Path], 
-                                                   negative_dir: Optional[Union[str, Path]] = None, 
-                                                   output_dir: str = "output") -> Dict[str, Any]:
-        """Поиск элементов с улучшенной обработкой heatmap и пиксельным биннингом."""
-        try:
-            validate_processing_pipeline_inputs(
-                image_path=str(image_path),
-                positive_dir=str(positive_dir),
-                negative_dir=str(negative_dir) if negative_dir else None,
-                output_dir=output_dir
-            )
-        except ValidationError as e:
-            raise ValidationError(f"Ошибка валидации входных данных: {e}")
-        
-        print(f"🔍 Улучшенный анализ с heatmap: {image_path}" + "="*60)
-        print("🔄 ДЕТАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ ENHANCED HEATMAP PIPELINE:")
-        print("=" * 80)
-        
-        timing_info: Dict[str, float] = {}
-        t_total = time.time()
-        
-        # Шаг 1: Загрузка изображения
-        print("1️⃣ Шаг 1: Загрузка изображения")
-        t_loading = time.time()
-        img_bgr = cv2.imread(str(image_path))
-        if img_bgr is None:
-            raise FileNotFoundError(f"Не удалось загрузить изображение: {image_path}")
-        image_np = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        image_name = Path(image_path).stem
-        timing_info['image_loading'] = time.time() - t_loading
-        
-        # Шаг 2: Загрузка примеров
-        print("2️⃣ Шаг 2: Загрузка positive/negative примеров")
-        t_examples = time.time()
-        pos_by_class = self._load_positive_by_class(positive_dir)
-        if len(pos_by_class) == 0:
-            print("   ❌ Нет положительных примеров — прекращаем.")
-            return {"found_elements": [], "masks": []}
-        
-        total_pos = sum(len(v) for v in pos_by_class.values())
-        neg_imgs = self._load_example_images(negative_dir) if negative_dir else []
-        timing_info['examples_loading'] = time.time() - t_examples
-        print(f"   📁 Positive: {total_pos} в {len(pos_by_class)} классах\t📁 Negative: {len(neg_imgs)}")
-        
-        # Шаг 3: Генерация heatmap
-        print("3️⃣ Шаг 3: Генерация heatmap с DINOv3")
-        t_heatmap = time.time()
-        
-        # Преобразуем изображение в PIL формат
-        image_pil = Image.fromarray(image_np.astype(np.uint8))
-        
-        # Собираем все положительные изображения
-        all_positive_images = []
-        for class_images in pos_by_class.values():
-            all_positive_images.extend(class_images)
-        
-        heatmap = self.heatmap_generator.generate_heatmap(
-            input_image=image_pil,
-            positive_images=all_positive_images,
-            negative_images=neg_imgs
-        )
-        timing_info['heatmap_generation'] = time.time() - t_heatmap
-        print(f"   🔥 Heatmap размер: {heatmap.shape}, min: {heatmap.min():.3f}, max: {heatmap.max():.3f}")
-        
-        # Шаг 4: Улучшенная обработка heatmap
-        print("4️⃣ Шаг 4: Улучшенная обработка heatmap с пиксельным биннингом")
-        t_enhanced = time.time()
-        
-        # Преобразуем положительные примеры в PIL формат
-        positive_images = []
-        for class_name, class_images in pos_by_class.items():
-            for img in class_images:
-                if isinstance(img, np.ndarray):
-                    positive_images.append(Image.fromarray(img.astype(np.uint8)))
-                else:
-                    positive_images.append(img)
-        
-        # Преобразуем отрицательные примеры в PIL формат
-        negative_images = []
-        for img in neg_imgs:
-            if isinstance(img, np.ndarray):
-                negative_images.append(Image.fromarray(img.astype(np.uint8)))
-            else:
-                negative_images.append(img)
-        
-        cleaned_heatmap, zone_masks = self.enhanced_heatmap_processor.process_enhanced_heatmap(
-            image_pil, positive_images, negative_images, 
-            save_cleaned_heatmap=True, output_dir=output_dir
-        )
-        timing_info['enhanced_processing'] = time.time() - t_enhanced
-        
-        print(f"   ✨ Получено {len(zone_masks)} зон после улучшенной обработки")
-        
-        # Шаг 6: Обработка масок и скоринг
-        print("6️⃣ Шаг 6: Обработка масок и скоринг")
-        t_scoring = time.time()
-        
-        found = []
-        result_masks = []
-        
-        for i, mask_dict in enumerate(zone_masks):
-            # zone_masks уже в формате SAM, используем их напрямую
-            
-            # Извлекаем эмбеддинги для маски
-            image_pil = Image.fromarray(image_np.astype(np.uint8))
-            try:
-                mask_vecs = self.embedding_extractor.extract_mask_embeddings(image_pil, [mask_dict])
-                if mask_vecs.shape[0] > 0:
-                    # Вычисляем скоры для всех классов
-                    class_scores = self.score_calculator.calculate_scores(
-                        mask_vecs, pos_by_class, neg_imgs
-                    )
-                    
-                    # Находим лучший класс
-                    best_class = None
-                    best_score = -1
-                    for class_name, scores in class_scores.items():
-                        if len(scores) > 0 and scores[0] > best_score:
-                            best_score = scores[0]
-                            best_class = class_name
-                    
-                    if best_class and best_score > 0.5:  # Порог для принятия
-                        found.append({
-                            'class': best_class,
-                            'score': best_score,
-                            'mask_index': i
-                        })
-                        
-                        mask_dict.update({
-                            'class': best_class,
-                            'score': best_score,
-                            'mask_index': i
-                        })
-                        result_masks.append(mask_dict)
-                        
-            except Exception as e:
-                print(f"   ⚠️ Ошибка обработки маски {i}: {e}")
-                continue
-        
-        timing_info['scoring'] = time.time() - t_scoring
-        
-        # Шаг 7: Сохранение результатов
-        print("7️⃣ Шаг 7: Сохранение результатов")
-        t_saving = time.time()
-        saved_files = self.result_saver.save_all_results(
-            image_np,
-            result_masks,
-            output_dir,
-            image_name,
-            pipeline_config={"backend": "enhanced_heatmap"},
-            heatmap=cleaned_heatmap
-        )
-        timing_info['result_saving'] = time.time() - t_saving
-        
-        total_time = time.time() - t_total
-        timing_info['total_time'] = total_time
-        
-        print(f"🎯 Найдено элементов: {len(found)}")
-        print(f"⏱️ Общее время: {total_time:.2f} сек")
-        print(f"💾 Результаты сохранены в: {output_dir}")
-        print(f"📁 Сохранено файлов: {len(saved_files)}")
-        self._print_timing_statistics(timing_info)
-        
-        return {
-            "found_elements": found, 
-            "masks": result_masks,
-            "timing_info": timing_info,
-            "output_directory": output_dir,
-            "saved_files": saved_files,
-            "heatmap": cleaned_heatmap,
-            "zone_masks": zone_masks
-        }
-    
-    def find_present_elements(self, image_path: Union[str, Path], positive_dir: Union[str, Path], 
-                             negative_dir: Optional[Union[str, Path]] = None, 
-                             output_dir: str = "output") -> Dict[str, Any]:
-        try:
-            validate_processing_pipeline_inputs(
-                image_path=str(image_path),
-                positive_dir=str(positive_dir),
-                negative_dir=str(negative_dir) if negative_dir else None,
-                output_dir=output_dir
-            )
-        except ValidationError as e:
-            raise ValidationError(f"Ошибка валидации входных данных: {e}")
-        
-        print(f"🔍 Модульный анализ: {image_path}" + "="*60)
-        print("🔄 ДЕТАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ МОДУЛЬНОГО PIPELINE:")
-        print("=" * 80)
-        print("8️⃣ searchdet_pipeline/core/detector.py → find_present_elements()")
-        timing_info: Dict[str, float] = {}
-        t_total = time.time()
-        t_loading = time.time()
-        img_bgr = cv2.imread(str(image_path))
-        if img_bgr is None:
-            raise FileNotFoundError(f"Не удалось загрузить изображение: {image_path}")
-        image_np = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        timing_info['image_loading'] = time.time() - t_loading
         print("9️⃣ Шаг 1: _load_example_images() - загрузка positive/negative примеров")
         t_examples = time.time()   
         pos_by_class = self._load_positive_by_class(positive_dir)
@@ -619,6 +162,23 @@ class SearchDetDetector:
         neg_imgs = self._load_example_images(negative_dir) if negative_dir else []
         timing_info['examples_loading'] = time.time() - t_examples
         print(f"   📁 Positive: {total_pos} в {len(pos_by_class)} классах	📁 Negative: {len(neg_imgs)}")
+        return pos_by_class, neg_imgs
+
+    def set_references(self, pos_by_class: Dict[str, List[Image.Image]], neg_imgs: List[Image.Image]) -> None:
+        timing_info: Dict[str, float] = {}
+        t_embeddings = time.time()
+        print("1️⃣3️⃣ Шаг 9: EmbeddingExtractor.build_queries_multiclass() - эмбеддинги примеров по классам")
+        self.class_pos, self.q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs, pos_as_query_masks=False)
+        timing_info['embedding_extraction'] = time.time() - t_embeddings 
+         
+    def find_present_elements(self, image_np: np.ndarray, output_dir: str = "output") -> Dict[str, Any]:
+        print("🔄 ДЕТАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ МОДУЛЬНОГО PIPELINE:")
+        print("=" * 80)
+        print("8️⃣ searchdet_pipeline/core/detector.py → find_present_elements()")
+        timing_info: Dict[str, float] = {}
+        t_total = time.time()
+        t_loading = time.time()
+        timing_info['image_loading'] = time.time() - t_loading
         print("🔟 Шаг 2: MaskGenerator.generate() - генерация масок через SAM/FastSAM")
         t_masks = time.time()
         masks = self.mask_generator.generate(image_np)
@@ -631,9 +191,8 @@ class SearchDetDetector:
             print("   ❌ Нет валидных масок после фильтров.")
             return {"found_elements": [], "masks": []}
         print("1️⃣2️⃣ Шаг 8: EmbeddingExtractor.extract_mask_embeddings() - эмбеддинги масок")
-        t_embeddings = time.time()
         image_pil = Image.fromarray(image_np.astype(np.uint8))
-        
+ 
         print(f"   🔍 ДИАГНОСТИКА: Начинаем обработку {len(masks)} масок")
         try:
             mask_vecs = self.embedding_extractor.extract_mask_embeddings(image_pil, masks)
@@ -665,17 +224,14 @@ class SearchDetDetector:
             traceback.print_exc()
             return {"found_elements": [], "masks": []}
         print(f"   📊 Масок с валидными векторами: {mask_vecs.shape[0]}")
-        print("1️⃣3️⃣ Шаг 9: EmbeddingExtractor.build_queries_multiclass() - эмбеддинги примеров по классам")
-        class_pos, q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs, pos_as_query_masks=False)
-        timing_info['embedding_extraction'] = time.time() - t_embeddings
 
         online_negatives = None
         # Если нет явных негативных примеров, используем онлайн-негативы
-        if q_neg is None or q_neg.shape[0] == 0:
+        if self.q_neg is None or self.q_neg.shape[0] == 0:
             print("   ⚠️ Нет явных негативных примеров, генерируем онлайн-негативы...")
             
             # 1. Собрать все позитивные запросы в один тензор
-            pos_queries_tensors = [torch.from_numpy(v) for v in class_pos.values() if v.shape[0] > 0]
+            pos_queries_tensors = [torch.from_numpy(v) for v in self.class_pos.values() if v.shape[0] > 0]
 
             if not pos_queries_tensors:
                 print("   ❌ Нет эмбеддингов для positive-классов, невозможно сгенерировать онлайн-негативы.")
@@ -710,13 +266,12 @@ class SearchDetDetector:
         t_scoring = time.time()
         decisions, _ = self.score_calculator.score_multiclass(
             mask_vecs, 
-            class_pos, 
-            q_neg,
+            self.class_pos, 
+            self.q_neg,
             online_negatives=online_negatives
         )
         timing_info['scoring_and_decisions'] = time.time() - t_scoring
         t_result = time.time()
-        found = []
         result_masks = []
         candidates = []
         H, W = image_np.shape[:2]
@@ -771,15 +326,21 @@ class SearchDetDetector:
                 'confidence': float(e['confidence']),
                 'class': e.get('class')
             }
-            found.append({
-                'mask': mask_dict,
-                'confidence': float(e['confidence']),
-                'bbox': bbox_xywh,
-                'class': e.get('class')
-            })
             result_masks.append(mask_dict)
         timing_info['result_formatting'] = time.time() - t_result
+        total_time = time.time() - t_total
+        timing_info['total_time'] = total_time
+        print(f"🎯 Принято масок: {len(result_masks)} (после правил и NMS)")
+        print(f"⏱️ Общее время: {total_time:.2f} сек")
+        self._print_timing_statistics(timing_info)
+        return {
+            "masks": result_masks,
+            "timing_info": timing_info,
+        }
+
+    def save_results(self, image_np: np.ndarray, result_masks: List, image_path: str | Path, output_dir: str = "output") -> Dict[str, str]:
         print("1️⃣5️⃣ Шаг 11: ResultSaver.save_all_results() - сохранение файлов")
+        timing_info: Dict[str, float] = {}
         t_saving = time.time()
         image_name = Path(image_path).name
         # NOTE: (@gas) later will be moved from here - store operations will be happening in parallel without blocking inference
@@ -791,20 +352,8 @@ class SearchDetDetector:
             pipeline_config={"backend": self.mask_backend}
         )
         timing_info['result_saving'] = time.time() - t_saving
-        total_time = time.time() - t_total
-        timing_info['total_time'] = total_time
-        print(f"🎯 Принято масок: {len(found)} (после правил и NMS)")
-        print(f"⏱️ Общее время: {total_time:.2f} сек")
         print(f"💾 Результаты сохранены в: {output_dir}")
         print(f"📁 Сохранено файлов: {len(saved_files)}")
-        self._print_timing_statistics(timing_info)
-        return {
-            "found_elements": found, 
-            "masks": result_masks,
-            "timing_info": timing_info,
-            "output_directory": output_dir,
-            "saved_files": saved_files
-        }
 
     def _mask_iou(self, mask_a, mask_b):
         """Быстрое вычисление IoU для масок."""

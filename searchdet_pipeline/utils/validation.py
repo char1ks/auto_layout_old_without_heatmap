@@ -320,12 +320,14 @@ def validate_processing_pipeline_inputs(image_path: Union[str, Path],
     ImageValidator.validate_image_content(image_path)
     
     # Валидация директорий с примерами
-    positive_dir = DirectoryValidator.validate_input_directory(positive_dir, required=False)
-    negative_dir = DirectoryValidator.validate_input_directory(negative_dir, required=False)
+    if positive_dir is not None:
+        positive_dir = DirectoryValidator.validate_input_directory(positive_dir, required=False)
+    if negative_dir is not None:
+        negative_dir = DirectoryValidator.validate_input_directory(negative_dir, required=False)
     
-    # Проверка наличия хотя бы одной директории с примерами
-    if positive_dir is None and negative_dir is None:
-        raise ValidationError("Должна быть указана хотя бы одна директория с примерами (positive или negative)")
+    # # Проверка наличия хотя бы одной директории с примерами
+    # if positive_dir is None and negative_dir is None:
+    #     raise ValidationError("Должна быть указана хотя бы одна директория с примерами (positive или negative)")
     
     # Валидация выходной директории
     if output_dir is None:

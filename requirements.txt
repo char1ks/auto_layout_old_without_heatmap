@@ -69,4 +69,4 @@ langchain==0.3.27
 langchain-community==0.3.29
 langchain-core==0.3.75
 langchain-text-splitters==0.3.11
-
+scikit-image==0.25.2                      

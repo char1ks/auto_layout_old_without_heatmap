@@ -25,27 +25,10 @@ PYTHONPATH=. python searchdet_pipeline/test_app.py
 
 # ----------
 
-# PYTHONPATH=. python searchdet_pipeline/test_app.py \
-#   --pos ".local/examples_new/details/positive/" \
-#   --infer ".local/examples_new/details/examples/1.jpg"
-
 PYTHONPATH=. python searchdet_pipeline/test_app.py \
   --pos-dir ".local/examples_new/details/positive" \
   --infer ".local/examples_new/details/examples/1.jpg"
 
-# 1) Positives as class->files, negatives as folder, infer from files
-python test_app.py \
-  --pos "1=/path/to/cls1/a.jpg,/path/to/cls1/b.png" \
-  --pos "2=/path/to/cls2_dir" \
-  --neg "/path/to/neg_dir" \
-  --infer "/path/to/infer1.jpg,/path/to/infer_dir"
 
-# 2) Positives from a root dir with subfolders per class, no negatives, infer 5 randoms
-python test_app.py \
-  --pos-dir "/data/positives_root" \
-  --infer-count 5
-
-# 3) Just negatives & infer files
-python test_app.py \
-  --neg "/data/neg1.jpg,/data/neg2.png" \
-  --infer "/data/test1.png,/data/test2.png"
+# port forwarding for testing on a client machine
+ssh -C -L 8000:localhost:8000 synetra@46.146.213.13

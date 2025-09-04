@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Tuple
 
-from fastapi import FastAPI, File, Form, UploadFile, Request, Response, HTTPException, Depends
+from fastapi import FastAPI, File, UploadFile, Request, Response, HTTPException, Depends
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -167,7 +167,7 @@ def mask_to_polygons(mask_2d, min_area: int = 3):
             continue
         # Optional simplification (tune epsilon):
         peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.01 * peri, True)
+        approx = cv2.approxPolyDP(cnt, 0.001 * peri, True)
         pts = [[int(p[0][0]), int(p[0][1])] for p in approx]
         if pts:
             polys.append(pts)
@@ -187,6 +187,7 @@ def to_python(obj):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     mask_size = int(os.getenv("DETECTOR_MASK_SIZE", "32"))
+
     # app.state.detector = MockDetector(mask_size=mask_size)
 
     detector_params = {

@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw
 from typing import Dict, List, Optional, Tuple, Any
 import base64
 import json
+import math
 
 # Server configuration
 HOST = os.getenv("HOST", "127.0.0.1")
@@ -80,34 +81,52 @@ def draw_bbox_on_image(image: Image.Image, bbox: Tuple[int, int, int, int], colo
     draw.rectangle(bbox, outline=color, width=width)
     return img_copy
 
+def xywh_to_xyxy(bbox_xywh: Tuple[int, int, int, int]) -> Tuple[int, int, int, int]:
+    """Convert bbox from xywh format to xyxy format"""
+    x, y, w, h = bbox_xywh
+    return (x, y, x + w, y + h)
+
 def draw_polygons_on_image(image: Image.Image, polygons: List[List[List[int]]], 
-                          bboxes: List[Tuple[int, int, int, int]] = None, 
+                          bboxes_xywh: List[Tuple[int, int, int, int]] = None, 
                           class_ids: List[str] = None) -> Image.Image:
-    img_copy = image.copy()
-    draw = ImageDraw.Draw(img_copy)
+    img_copy = image.copy().convert('RGBA')
     
-    colors = ["red", "blue", "green", "orange", "purple", "cyan", "magenta", "yellow"]
+    # Create overlay for transparent fills
+    overlay = Image.new('RGBA', img_copy.size, (0, 0, 0, 0))
+    draw_overlay = ImageDraw.Draw(overlay)
+    draw_main = ImageDraw.Draw(img_copy)
+    
+    colors_rgb = [(255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 165, 0), 
+                  (128, 0, 128), (0, 255, 255), (255, 0, 255), (255, 255, 0)]
+    colors_str = ["red", "blue", "green", "orange", "purple", "cyan", "magenta", "yellow"]
     
     for idx, polygon_list in enumerate(polygons):
-        color = colors[idx % len(colors)]
+        color_rgb = colors_rgb[idx % len(colors_rgb)]
+        color_str = colors_str[idx % len(colors_str)]
         
-        # Draw polygons
+        # Draw polygons with transparent fill
         for polygon in polygon_list:
             if len(polygon) >= 3:
                 points = [(p[0], p[1]) for p in polygon]
-                draw.polygon(points, outline=color, width=2, fill=None)
+                # Fill with transparent color (30% opacity)
+                fill_color = color_rgb + (77,)  # 77 = 30% of 255
+                draw_overlay.polygon(points, fill=fill_color, outline=None)
+                # Draw outline
+                draw_main.polygon(points, outline=color_str, width=2, fill=None)
         
-        # Draw bounding boxes if provided
-        if bboxes and idx < len(bboxes):
-            bbox = bboxes[idx]
-            draw.rectangle(bbox, outline=color, width=3)
-        
-        # Draw class labels if provided
-        if class_ids and idx < len(class_ids) and bboxes and idx < len(bboxes):
-            x1, y1, x2, y2 = bboxes[idx]
-            draw.text((x1, y1-20), f"Class: {class_ids[idx]}", fill=color)
+        # Draw bounding boxes if provided (convert from xywh to xyxy)
+        if bboxes_xywh and idx < len(bboxes_xywh):
+            bbox_xyxy = xywh_to_xyxy(bboxes_xywh[idx])
+            draw_main.rectangle(bbox_xyxy, outline=color_str, width=3)
+            
+            # Draw class labels if provided
+            if class_ids and idx < len(class_ids):
+                x1, y1, x2, y2 = bbox_xyxy
+                draw_main.text((x1, y1-20), f"{class_ids[idx]}", fill=color_str)
     
-    return img_copy
+    # Composite the overlay onto the main image
+    img_copy = Image.alpha_composite(img_copy, overlay)
+    return img_copy.convert('RGB')
 
 # Global client instance
 client = APIClient(BASE_URL, USERNAME, PASSWORD)
@@ -118,15 +137,84 @@ training_state = {
     "ready_for_inference": False
 }
 
+def create_training_grid() -> Optional[Image.Image]:
+    """Create a grid display of all training images"""
+    if not training_state["images"]:
+        return None
+    
+    # Collect all images with their class labels
+    all_images = []
+    for class_id, images in training_state["images"].items():
+        for img in images:
+            all_images.append((img, class_id))
+    
+    if not all_images:
+        return None
+    
+    # Calculate grid dimensions
+    total_images = len(all_images)
+    cols = min(4, total_images)  # Max 4 columns
+    rows = math.ceil(total_images / cols)
+    
+    # Thumbnail size
+    thumb_size = 128
+    padding = 10
+    label_height = 20
+    
+    # Create grid image
+    grid_width = cols * (thumb_size + padding) + padding
+    grid_height = rows * (thumb_size + label_height + padding) + padding
+    
+    grid_img = Image.new('RGB', (grid_width, grid_height), color='white')
+    
+    for idx, (img, class_id) in enumerate(all_images):
+        row = idx // cols
+        col = idx % cols
+        
+        # Calculate position
+        x = col * (thumb_size + padding) + padding
+        y = row * (thumb_size + label_height + padding) + padding
+        
+        # Create thumbnail
+        thumb = img.copy()
+        thumb.thumbnail((thumb_size, thumb_size), Image.Resampling.LANCZOS)
+        
+        # Center the thumbnail in the allocated space
+        thumb_w, thumb_h = thumb.size
+        thumb_x = x + (thumb_size - thumb_w) // 2
+        thumb_y = y + (thumb_size - thumb_h) // 2
+        
+        # Paste thumbnail
+        grid_img.paste(thumb, (thumb_x, thumb_y))
+        
+        # Add class label
+        draw = ImageDraw.Draw(grid_img)
+        label_x = x + thumb_size // 2
+        label_y = y + thumb_size + 5
+        
+        # Get text size for centering
+        try:
+            bbox = draw.textbbox((0, 0), class_id)
+            text_width = bbox[2] - bbox[0]
+            label_x = label_x - text_width // 2
+        except:
+            # Fallback for older PIL versions
+            pass
+        
+        draw.text((label_x, label_y), class_id, fill='black')
+    
+    return grid_img
+
 def check_server_status():
     if client.health_check():
         return "✅ Server is running"
     else:
         return "❌ Server is not accessible"
 
-def add_training_image(image, class_id, bbox_data):
+def add_training_image(image, class_id, bbox_str):
+    """Add training image using coordinate input"""
     if image is None or not class_id.strip():
-        return "Please provide both an image and class ID", None, training_state["images"]
+        return "Please provide both an image and class ID", None, "No training images", None
     
     class_id = class_id.strip()
     
@@ -138,6 +226,16 @@ def add_training_image(image, class_id, bbox_data):
     
     if isinstance(pil_image, np.ndarray):
         pil_image = Image.fromarray(pil_image)
+    
+    # Parse bbox coordinates
+    bbox_data = None
+    if bbox_str.strip():
+        try:
+            coords = [int(x.strip()) for x in bbox_str.split(",")]
+            if len(coords) == 4:
+                bbox_data = coords
+        except ValueError:
+            pass
     
     # If bbox is provided, crop the image
     cropped_image = pil_image
@@ -162,7 +260,10 @@ def add_training_image(image, class_id, bbox_data):
     for cid, imgs in training_state["images"].items():
         summary += f"- Class '{cid}': {len(imgs)} images\n"
     
-    return f"Added image for class '{class_id}'", display_image, summary
+    # Create training grid
+    grid_image = create_training_grid()
+    
+    return f"Added image for class '{class_id}'", display_image, summary, grid_image
 
 def send_training_data():
     if not training_state["images"]:
@@ -179,7 +280,7 @@ def send_training_data():
         
         if success:
             training_state["ready_for_inference"] = True
-            return "✅ Training data sent successfully! You can now proceed to inference.", True
+            return "✅ Training data sent successfully!", True
         else:
             return "❌ Failed to send training data to server", False
     except Exception as e:
@@ -188,12 +289,9 @@ def send_training_data():
 def clear_training_data():
     training_state["images"].clear()
     training_state["ready_for_inference"] = False
-    return "Training data cleared", False, "No training images"
+    return "Training data cleared", False, "No training images", None, None
 
 def perform_inference(image):
-    if not training_state["ready_for_inference"]:
-        return "Please complete the training step first", None
-    
     if image is None:
         return "Please provide an image for inference", None
     
@@ -235,16 +333,18 @@ def perform_inference(image):
             if "bbox" in mask:
                 bbox = mask["bbox"]
                 if len(bbox) == 4:
+                    # bbox is in xywh format
                     all_bboxes.append(tuple(map(int, bbox)))
                 else:
                     all_bboxes.append((0, 0, 10, 10))
             else:
                 all_bboxes.append((0, 0, 10, 10))
             
-            class_id = mask.get("class_id", mask.get("category_id", "unknown"))
+            # Extract class from different possible field names
+            class_id = mask.get("class", mask.get("class_id", mask.get("category_id", "unknown")))
             all_class_ids.append(str(class_id))
         
-        # Draw results on image
+        # Draw results on image (bboxes are in xywh format)
         result_image = draw_polygons_on_image(
             pil_image, all_polygons, all_bboxes, all_class_ids
         )
@@ -252,9 +352,16 @@ def perform_inference(image):
         # Create result summary
         summary = f"Found {len(masks)} detection(s):\n"
         for i, mask in enumerate(masks):
-            class_id = mask.get("class_id", mask.get("category_id", "unknown"))
+            # Extract class from different possible field names
+            class_id = mask.get("class", mask.get("class_id", mask.get("category_id", "unknown")))
             score = mask.get("score", mask.get("confidence", "N/A"))
-            summary += f"- Detection {i+1}: Class {class_id}, Score: {score}\n"
+            bbox = mask.get("bbox", [])
+            bbox_str = f"[{','.join(map(str, bbox))}]" if bbox else "N/A"
+            
+            summary += f"- Detection {i+1}:\n"
+            summary += f"  Class: {class_id}\n"
+            summary += f"  Score: {score}\n"
+            summary += f"  Bbox (xywh): {bbox_str}\n"
         
         return summary, result_image
         
@@ -278,7 +385,7 @@ def create_interface():
         gr.Markdown("## Step 1: Training Data")
         
         with gr.Row():
-            with gr.Column():
+            with gr.Column(scale=1):
                 training_image = gr.Image(label="Upload Training Image", type="pil")
                 class_id_input = gr.Textbox(label="Class ID", placeholder="Enter class identifier")
                 
@@ -288,10 +395,14 @@ def create_interface():
                 
                 add_btn = gr.Button("Add Training Image", variant="primary")
                 
-            with gr.Column():
+            with gr.Column(scale=1):
                 preview_image = gr.Image(label="Preview (with bbox if specified)", interactive=False)
                 add_status = gr.Textbox(label="Status", interactive=False)
                 training_summary = gr.Textbox(label="Training Data Summary", interactive=False, lines=5)
+                
+            with gr.Column(scale=1):
+                training_grid = gr.Image(label="Training Images Grid", interactive=False)
+                gr.Markdown("**All images added for training**")
         
         with gr.Row():
             send_btn = gr.Button("Send Training Data to Server", variant="primary")
@@ -299,21 +410,10 @@ def create_interface():
             training_status = gr.Textbox(label="Training Status", interactive=False)
             inference_ready = gr.State(False)
         
-        def add_with_bbox(image, class_id, bbox_str):
-            bbox_data = None
-            if bbox_str.strip():
-                try:
-                    coords = [int(x.strip()) for x in bbox_str.split(",")]
-                    if len(coords) == 4:
-                        bbox_data = coords
-                except ValueError:
-                    pass
-            return add_training_image(image, class_id, bbox_data)
-        
         add_btn.click(
-            fn=add_with_bbox,
+            fn=add_training_image,
             inputs=[training_image, class_id_input, bbox_input],
-            outputs=[add_status, preview_image, training_summary]
+            outputs=[add_status, preview_image, training_summary, training_grid]
         )
         
         send_btn.click(
@@ -321,13 +421,19 @@ def create_interface():
             outputs=[training_status, inference_ready]
         )
         
+        def clear_training_data():
+            training_state["images"].clear()
+            training_state["ready_for_inference"] = False
+            return "Training data cleared", False, "No training images", None, None
+        
         clear_btn.click(
             fn=clear_training_data,
-            outputs=[training_summary, inference_ready, training_status]
+            outputs=[training_status, inference_ready, training_summary, preview_image, training_grid]
         )
         
         # Step 2: Inference
         gr.Markdown("## Step 2: Inference")
+        gr.Markdown("💡 **Note**: You can run inference even without training in this session - the server may already have training data loaded from previous sessions.")
         
         with gr.Row():
             with gr.Column():

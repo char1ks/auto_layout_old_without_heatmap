@@ -8,12 +8,7 @@ from pathlib import Path
 from PIL import Image
 from typing import Dict, List, Optional, Union, Any, Tuple
 sys.path.append('./searchdet-main')
-try:
-    from mask_withsearch import initialize_sam as init_searchdet
-    SEARCHDET_AVAILABLE = True
-except Exception as e:
-    print(f"⚠️ SearchDet недоступен: {e}")
-    SEARCHDET_AVAILABLE = False
+from mask_withsearch import initialize_sam as init_searchdet
 from .mask_generation import MaskGenerator
 from .filtering import MaskFilter  
 from .embeddings import EmbeddingExtractor
@@ -25,6 +20,7 @@ from .dinov3_encoder import DinoV3Encoder
 from .heatmap_generator import HeatmapGenerator
 from .binning_processor import BinningProcessor
 from .enhanced_heatmap_processor import EnhancedHeatmapProcessor
+from .fastsam_integration import FastSAMHeatmapProcessor
 from .models import DetectorConfig, ProcessingResult, MaskData, DetectionResult
 from ..utils.validation import ImageValidator, DirectoryValidator, ValidationError, validate_processing_pipeline_inputs
 import torch
@@ -34,11 +30,7 @@ from searchdet_pipeline.detector_base import DetectorBase
 
 
 class SearchDetDetector(DetectorBase):
-    
     def __init__(self, config: Optional[DetectorConfig] = None, **kwargs: Any) -> None:
-        if not SEARCHDET_AVAILABLE:
-            raise RuntimeError("SearchDet не найден")
-        
         if config is None:
             self.config = DetectorConfig.from_dict(kwargs)
         else:
@@ -148,7 +140,16 @@ class SearchDetDetector(DetectorBase):
         self.binning_processor = BinningProcessor(self.dinov3_encoder)
         self.enhanced_heatmap_processor = EnhancedHeatmapProcessor(self.dinov3_encoder)
 
+        fastsam_model_instance = getattr(self.mask_generator, '_fastsam_model', None)
+        self.fastsam_processor = FastSAMHeatmapProcessor(
+            heatmap_generator=self.heatmap_generator, 
+            fastsam_model=fastsam_model_instance,
+            embedding_extractor=self.embedding_extractor,
+            score_calculator=self.score_calculator,
+        )
+
         self.class_pos, self.q_neg = None, None
+        self.neg_imgs = None
 
     def read_reference_images(self, positive_dir: Union[str, Path], negative_dir: Optional[Union[str, Path]] = None) -> Tuple[Dict[str, List[Image.Image]], List[Image.Image]]:
         timing_info: Dict[str, float] = {}
@@ -160,6 +161,7 @@ class SearchDetDetector(DetectorBase):
             return {"found_elements": [], "masks": []}
         total_pos = sum(len(v) for v in pos_by_class.values())
         neg_imgs = self._load_example_images(negative_dir) if negative_dir else []
+        self.neg_imgs = neg_imgs # TODO: (@gas) remove from here after figuring out heatmaps integration
         timing_info['examples_loading'] = time.time() - t_examples
         print(f"   📁 Positive: {total_pos} в {len(pos_by_class)} классах	📁 Negative: {len(neg_imgs)}")
         return pos_by_class, neg_imgs
@@ -171,7 +173,7 @@ class SearchDetDetector(DetectorBase):
         self.class_pos, self.q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs, pos_as_query_masks=False)
         timing_info['embedding_extraction'] = time.time() - t_embeddings 
          
-    def find_present_elements(self, image_np: np.ndarray, output_dir: str = "output") -> Dict[str, Any]:
+    def find_present_elements(self, image_np: np.ndarray) -> Dict[str, Any]:
         print("🔄 ДЕТАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ МОДУЛЬНОГО PIPELINE:")
         print("=" * 80)
         print("8️⃣ searchdet_pipeline/core/detector.py → find_present_elements()")
@@ -336,6 +338,100 @@ class SearchDetDetector(DetectorBase):
         return {
             "masks": result_masks,
             "timing_info": timing_info,
+        }
+
+    def find_present_elements_with_fastsam_integration(self, image_np: np.ndarray)-> Dict[str, Any]:
+        timing_info: Dict[str, float] = {}
+        t_total = time.time()
+        image_pil = Image.fromarray(image_np)
+
+        t_heatmap =time.time()
+
+        all_positive_images = []
+        for class_images in self.class_pos.values():
+            all_positive_images.extend(class_images)
+
+        heatmap = self.heatmap_generator.generate_heatmap(
+            input_image=image_pil, 
+            positive_images=all_positive_images, 
+            negative_images=self.neg_imgs,
+        )
+        timing_info['heatmap_generation'] = time.time()-t_heatmap
+        print (f"   📊 Heatmap сгенерирована: {heatmap.shape}")
+
+        print ("3️⃣ Шаг 3: FastSAM интеграция с heatmap")
+        t_fastsam =time.time()
+
+        fastsam_masks = self.fastsam_processor.process_image(
+            image=image_pil, 
+            pos_by_class=self.class_pos, 
+            heatmap=heatmap, 
+            neg_imgs=self.neg_imgs, 
+            skip_scoring_for_hotspot_masks=self.config.skip_scoring_for_hotspot_masks,
+        )
+        timing_info['fastsam_integration'] = time.time()-t_fastsam
+
+        if fastsam_masks is None:
+            fastsam_masks = []
+            print ("   ⚠️ FastSAM вернул None, используем пустой список")
+
+        print (f"   🎯 FastSAM сгенерировал {len(fastsam_masks)} финальных масок")
+
+        if not fastsam_masks :
+            print ("   ❌ Нет FastSAM масок для обработки.")
+            return {"masks": [], "timing_info": timing_info }
+
+        print ("4️⃣ Шаг 4: Формирование результатов")
+        t_result =time.time()
+
+        result_masks = []
+
+        for mask_item in fastsam_masks :
+            if isinstance(mask_item, torch.Tensor):
+                seg = (mask_item.detach().cpu().numpy()>0.5).astype(bool)
+                ys , xs = np.where(seg)
+                if xs.size and ys.size :
+                    x_min , x_max = int(xs.min()), int(xs.max())
+                    y_min , y_max = int(ys.min()), int(ys.max())
+                    bbox = [x_min, y_min, x_max - x_min + 1, y_max - y_min + 1]
+                else :
+                    bbox = [0, 0, 0, 0]
+                class_name = list(self.class_pos.keys())[0] if self.class_pos else "detected"
+                md = {'segmentation': seg, 'bbox': bbox, 'area': int(seg.sum()), 'confidence': 0.9, 'class': class_name}
+                result_masks.append(md)
+            elif isinstance(mask_item, dict) and 'segmentation' in mask_item:
+                class_name = list(self.class_pos.keys())[0] if self.class_pos else "detected"
+                md = mask_item.copy()
+                md['confidence'] =float(md.get('confidence', 0.9))
+                md['class'] = md.get('class', class_name)
+                if 'area' not in md:
+                    md['area'] = int(np.sum(md['segmentation']))
+                if 'bbox' not in md:
+                    seg = md['segmentation']
+                    ys , xs = np.where(seg)
+                    if xs.size and ys.size:
+                        x_min, x_max = int(xs.min()), int(xs.max())
+                        y_min, y_max = int(ys.min()), int(ys.max())
+                        md['bbox'] = [x_min, y_min, x_max-x_min+1, y_max-y_min+1]
+                    else:
+                        md['bbox'] = [0, 0, 0, 0]
+                result_masks.append(md)
+            else:
+                continue
+
+        timing_info['result_formatting'] = time.time()-t_result
+
+        total_time = time.time()-t_total
+        timing_info['total_time'] = total_time
+
+        print (f"🎯 Найдено FastSAM элементов: {len(md)}")
+        print (f"⏱️ Общее время: {total_time:.2f} сек")
+        self._print_timing_statistics(timing_info)
+
+        return {
+            "masks": result_masks,
+            "timing_info": timing_info, 
+            "heatmap": heatmap,
         }
 
     def save_results(self, image_np: np.ndarray, result_masks: List, image_path: str | Path, output_dir: str = "output") -> Dict[str, str]:

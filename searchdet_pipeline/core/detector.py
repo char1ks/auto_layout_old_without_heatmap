@@ -63,59 +63,48 @@ class SearchDetDetector(DetectorBase):
         else:
             print(f"🔧 DINOv2 бэкенд: используется собственный размер модели")
         print(f"🔧 Выбран SAM энкодер: {self.sam_encoder}")
+
         self.searchdet_resnet, self.searchdet_layer, self.searchdet_transform, self.searchdet_sam = init_searchdet()
-        # TODO: (@gas) why it's needed? Drop if not used
-        # if not self.backbone.startswith('dinov2'):
-        #     import torchvision.transforms as transforms
-        #     feat_short_side = int(os.getenv('SEARCHDET_FEAT_SHORT_SIDE', '384'))
-        #     self.searchdet_transform = transforms.Compose([
-        #         transforms.Resize(feat_short_side),
-        #         transforms.ToTensor(),
-        #         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        #     ])
-        # else:
-        #     self.searchdet_transform = None
+        if not self .backbone .startswith ('dinov2'):
+            import torchvision .transforms as transforms
+            feat_short_side_env =os .getenv ('SEARCHDET_FEAT_SHORT_SIDE','384')
+            if feat_short_side_env =='None'or feat_short_side_env =='none'or feat_short_side_env is None :
+                feat_short_side =384
+            else :
+                feat_short_side =int (feat_short_side_env )
+            self.searchdet_transform = transforms.Compose(
+                [
+                    transforms.Resize(feat_short_side),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean =[0.485 ,0.456 ,0.406 ],std =[0.229 ,0.224 ,0.225 ]),
+                ]
+            )
+        else :
+            self.searchdet_transform = None
+
+
         # Инициализируем MaskGenerator для FastSAM бэкенда
-        # Фильтруем параметры, которые уже передаются явно, чтобы избежать дублирования ключей
-        generator_params = {
-            k: v for k, v in self.params.items()
-            if k not in {"mask_backend", "device", "fastsam_model", "fastsam_device", "sam_generator"}
+        generator_params ={
+            k :v for k ,v in self .params .items ()
+            if k not in {"mask_backend","device","fastsam_model","fastsam_device","sam_generator","mask_resize_long_side"}
         }
         self.mask_generator = MaskGenerator(
             mask_backend=self.mask_backend,
             device=self.device,
             fastsam_model=self.config.fastsam_model,
-            fastsam_device=self.config.fastsam_device or self.device,
+            fastsam_device=self.config.fastsam_device or self.device, 
             sam_generator=None,
-            **generator_params
+            **generator_params,
         )
         
         # Создаем универсальный SAMPredictor с поддержкой разных бэкендов
-        # По умолчанию используем SAM, но можно переключиться на FastSAM или heatmap
-        segmentation_backend = getattr(self.config, 'segmentation_backend', 'sam')
-        
-        if segmentation_backend == 'sam':
-            self.sam_predictor = SAMPredictor(
-                sam_model=self.searchdet_sam,
-                backend_type="sam"
-            )
-        elif segmentation_backend == 'fastsam':
-            self.sam_predictor = SAMPredictor(
-                backend_type="fastsam",
-                mask_generator=self.mask_generator
-            )
-        elif segmentation_backend == 'heatmap':
+        segmentation_backend = getattr(self.config, 'segmentation_backend', 'fastsam')
+        if segmentation_backend =='fastsam':
+            self.sam_predictor = SAMPredictor(backend_type="fastsam", mask_generator=self.mask_generator)
+        elif segmentation_backend =='heatmap':
             heatmap_threshold = getattr(self.config, 'heatmap_threshold', 0.5)
-            self.sam_predictor = SAMPredictor(
-                backend_type="heatmap",
-                threshold=heatmap_threshold
-            )
-        else:
-            # Fallback к оригинальному SAM
-            self.sam_predictor = SAMPredictor(
-                sam_model=self.searchdet_sam,
-                backend_type="sam"
-            )
+            self.sam_predictor = SAMPredictor(backend_type="heatmap", threshold=heatmap_threshold)
+
         self.mask_filter = MaskFilter(self.params)
         self.embedding_extractor = EmbeddingExtractor(
             backbone_name=self.config.dinov3_backbone,
@@ -123,7 +112,6 @@ class SearchDetDetector(DetectorBase):
             ckpt_path=self.config.dinov3_ckpt
         )
         self.score_calculator = ScoreCalculator(self.params)
-        self.result_saver = ResultSaver(self.config.overlay_alpha)
         
         self.dinov3_encoder = DinoV3Encoder(
             backbone_name=self.config.dinov3_backbone,
@@ -134,12 +122,11 @@ class SearchDetDetector(DetectorBase):
             loader=self.config.loader,
             repo_dir=self.config.repo_dir
         )
-        
-        # Инициализация компонентов для heatmap и binning
-        self.heatmap_generator = HeatmapGenerator(self.dinov3_encoder)
-        self.binning_processor = BinningProcessor(self.dinov3_encoder)
-        self.enhanced_heatmap_processor = EnhancedHeatmapProcessor(self.dinov3_encoder)
 
+        optimal_size = 512 # TODO: (@gas) move to config
+        self.heatmap_generator = HeatmapGenerator(self.dinov3_encoder, resize_size=optimal_size, crop_images=False)
+        self.binning_processor = BinningProcessor(self.dinov3_encoder, concept_threshold=1)
+        self.enhanced_heatmap_processor = EnhancedHeatmapProcessor(self.dinov3_encoder, resize_size=optimal_size)
         fastsam_model_instance = getattr(self.mask_generator, '_fastsam_model', None)
         self.fastsam_processor = FastSAMHeatmapProcessor(
             heatmap_generator=self.heatmap_generator, 
@@ -148,8 +135,15 @@ class SearchDetDetector(DetectorBase):
             score_calculator=self.score_calculator,
         )
 
+        self._performance_mode = False
+        self._last_processing_time = 0.0
+        self._target_processing_time = 0.1
+
         self.class_pos, self.q_neg = None, None
-        self.neg_imgs = None
+        self.neg_imgs, self.all_positive_images = None, None
+
+        # NOTE: (@gas) only for cli usage
+        self.result_saver = ResultSaver(self.config.overlay_alpha)
 
     def read_reference_images(self, positive_dir: Union[str, Path], negative_dir: Optional[Union[str, Path]] = None) -> Tuple[Dict[str, List[Image.Image]], List[Image.Image]]:
         timing_info: Dict[str, float] = {}
@@ -161,7 +155,6 @@ class SearchDetDetector(DetectorBase):
             return {"found_elements": [], "masks": []}
         total_pos = sum(len(v) for v in pos_by_class.values())
         neg_imgs = self._load_example_images(negative_dir) if negative_dir else []
-        self.neg_imgs = neg_imgs # TODO: (@gas) remove from here after figuring out heatmaps integration
         timing_info['examples_loading'] = time.time() - t_examples
         print(f"   📁 Positive: {total_pos} в {len(pos_by_class)} классах	📁 Negative: {len(neg_imgs)}")
         return pos_by_class, neg_imgs
@@ -170,6 +163,13 @@ class SearchDetDetector(DetectorBase):
         timing_info: Dict[str, float] = {}
         t_embeddings = time.time()
         print("1️⃣3️⃣ Шаг 9: EmbeddingExtractor.build_queries_multiclass() - эмбеддинги примеров по классам")
+        # TODO: (@gas) remove from here after figuring out heatmaps integration (images needed by the `heatmap_generator`)
+        all_positive_images = []
+        for class_images in pos_by_class.values():
+            all_positive_images.extend(class_images)
+        self.neg_imgs = neg_imgs 
+        self.all_positive_images = all_positive_images
+        # 
         self.class_pos, self.q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs, pos_as_query_masks=False)
         timing_info['embedding_extraction'] = time.time() - t_embeddings 
 
@@ -352,13 +352,9 @@ class SearchDetDetector(DetectorBase):
 
         t_heatmap =time.time()
 
-        all_positive_images = []
-        for class_images in self.class_pos.values():
-            all_positive_images.extend(class_images)
-
         heatmap = self.heatmap_generator.generate_heatmap(
             input_image=image_pil, 
-            positive_images=all_positive_images, 
+            positive_images=self.all_positive_images, 
             negative_images=self.neg_imgs,
         )
         timing_info['heatmap_generation'] = time.time()-t_heatmap

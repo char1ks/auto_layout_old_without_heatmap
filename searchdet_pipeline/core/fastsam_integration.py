@@ -171,56 +171,71 @@ class FastSAMHeatmapProcessor :
             print (f"❌ Ошибка в быстрой обработке: {e}")
             return []
 
-    def process_image (self ,image :Image .Image ,pos_by_class :Dict [str ,np .ndarray ],heatmap :Optional [torch .Tensor ]=None ,neg_imgs :np .ndarray =None ,heatmap_threshold :float =0.5 ,crop_padding :int =20 ,min_overlap_ratio :float =0.8 ,skip_scoring_for_hotspot_masks :bool =False )->List [torch .Tensor ]:
-
-        try :
+    def process_image(
+        self, 
+        image: Image.Image,
+        pos_by_class: Dict[str, np.ndarray],
+        heatmap: Optional[torch.Tensor] = None,
+        neg_imgs: np.ndarray = None,
+        heatmap_threshold: float = 0.5,
+        crop_padding: int = 20,
+        min_overlap_ratio: float = 0.8,
+        skip_scoring_for_hotspot_masks: bool = False,
+    ) -> List[torch.Tensor]:
+        try:
             if heatmap is None :
                 print ("⚠️ Heatmap не предоставлена, генерируем заглушку...")
-                heatmap =torch .rand (image .size [1 ]//8 ,image .size [0 ]//8 )
+                heatmap = torch.rand(image.size[1]//8, image.size[0]//8)
 
             print ("✂️ Кропинг горячей области...")
-            cropped_image ,crop_box =crop_heatmap_region (
-            image ,heatmap ,threshold =heatmap_threshold ,padding =crop_padding
+            cropped_image, crop_box = crop_heatmap_region(
+                image, heatmap, threshold=heatmap_threshold, padding=crop_padding,
             )
 
             print (f"🔍 Применение FastSAM к кропнутой области {crop_box}...")
-            fastsam_masks =self ._generate_fastsam_masks (cropped_image )
+            fastsam_masks = self._generate_fastsam_masks(cropped_image)
 
             if not fastsam_masks :
                 print ("⚠️ FastSAM не сгенерировал маски, используем fallback")
-                fastsam_masks =self ._generate_fallback_masks (cropped_image )
+                fastsam_masks = self._generate_fallback_masks(cropped_image)
 
             print (f"🔗 Мердж {len(fastsam_masks)} FastSAM масок с горячей зоной...")
-            merged_masks =merge_masks_with_heatmap (
-            fastsam_masks ,heatmap .cpu (),crop_box ,image .size ,min_overlap_ratio =min_overlap_ratio
+            merged_masks = merge_masks_with_heatmap(
+                fastsam_masks, heatmap.cpu(), crop_box, image.size, min_overlap_ratio=min_overlap_ratio,
             )
 
-            if merged_masks and pos_by_class is not None :
+            if merged_masks and pos_by_class is not None:
                 if skip_scoring_for_hotspot_masks :
-                    print (f"🎯 Пропуск скоринга для {len(merged_masks)} масок из горячих зон")
+                    print(f"🎯 Пропуск скоринга для {len(merged_masks)} масок из горячих зон")
 
                     scoring_decisions =[]
-                    for i in range (len (merged_masks )):
-                        scoring_decisions .append ({'accepted':True ,'class':'hotspot_mask','pos':1.0 ,'neg':0.0 ,'diff':1.0 ,'mask_index':i})
-                    scored_masks =merged_masks
-                    print (f"✅ Все {len(scored_masks)} масок из горячих зон приняты без скоринга")
+                    for i in range(len(merged_masks)):
+                        scoring_decisions.append({'accepted':True ,'class':'hotspot_mask','pos':1.0 ,'neg':0.0 ,'diff':1.0 ,'mask_index':i})
+                    scored_masks = merged_masks
+                    print(f"✅ Все {len(scored_masks)} масок из горячих зон приняты без скоринга")
                     return scored_masks
                 else :
-                    print (f"📊 Применение скоринга к {len(merged_masks)} финальным маскам...")
-                    scoring_decisions ,scored_masks =self .score_fastsam_masks (image =image ,masks =merged_masks ,pos_by_class =pos_by_class ,neg_imgs =neg_imgs ,skip_scoring =False)
+                    print(f"📊 Применение скоринга к {len(merged_masks)} финальным маскам...")
+                    scoring_decisions, scored_masks= self.score_fastsam_masks(
+                        image=image,
+                        masks=merged_masks,
+                        pos_by_class=pos_by_class,
+                        neg_imgs=neg_imgs,
+                        skip_scoring=False,
+                    )
 
-                    if scored_masks :
-                        print (f"✅ Финальный результат: {len(scored_masks)} масок прошли скоринг")
+                    if scored_masks:
+                        print(f"✅ Финальный результат: {len(scored_masks)} масок прошли скоринг")
                         return scored_masks
-                    else :
-                        print ("⚠️ Ни одна маска не прошла скоринг")
+                    else:
+                        print("⚠️ Ни одна маска не прошла скоринг")
                         return []
-            else :
-                print (f"✅ Финальный результат: {len(merged_masks)} масок после мерджа (без скоринга)")
+            else:
+                print(f"✅ Финальный результат: {len(merged_masks)} масок после мерджа (без скоринга)")
                 return merged_masks
 
-        except Exception as e :
-            print (f"❌ Ошибка в process_image: {e}")
+        except Exception as e:
+            print(f"❌ Ошибка в process_image: {e}")
             return []
 
     def _generate_fastsam_masks_fast (self ,cropped_image :Image .Image )->List [torch .Tensor ]:

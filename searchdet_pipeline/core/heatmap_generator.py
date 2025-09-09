@@ -303,7 +303,7 @@ class HeatmapGenerator :
 
         heatmap = self._adaptive_normalize_heatmap(heatmap)
         heatmap = self._apply_morphological_filtering(heatmap)
-        if self .enable_expansion :
+        if self.enable_expansion:
             heatmap = self.expand_hot_zones(heatmap, expansion_factor=2.5, dilation_iterations=4)
         return heatmap
 
@@ -774,7 +774,7 @@ cropped_image :Image .Image ,debug_dir :str ="debug_crops")->str :
     print (f"   📁 Отладочная информация сохранена в {debug_dir}/")
     return viz_path
 
-def _save_fastsam_overlay_details (overlay_masks ,image_size ,bbox ):
+def _save_fastsam_overlay_details(overlay_masks ,image_size ,bbox):
 
     import json
     import os
@@ -807,74 +807,75 @@ def _save_fastsam_overlay_details (overlay_masks ,image_size ,bbox ):
 
     print (f"   💾 Сохранена информация о {len(overlay_masks)} масках в {filepath}")
 
-def merge_masks_with_heatmap (fastsam_masks :List [torch .Tensor ],
-heatmap :torch .Tensor ,
-bbox :Tuple [int ,int ,int ,int ],
-image_size :Tuple [int ,int ],
-min_overlap_ratio :float =0.5 )->List [torch .Tensor ]:
+def merge_masks_with_heatmap(
+    fastsam_masks: List[torch.Tensor],
+    heatmap: torch.Tensor,
+    bbox: Tuple[int, int, int, int],
+    image_size: Tuple[int, int],
+    min_overlap_ratio: float = 0.5,
+)->List[torch.Tensor]:
+    img_w ,img_h = image_size
+    x1, y1, x2, y2 = bbox
 
-    img_w ,img_h =image_size
-    x1 ,y1 ,x2 ,y2 =bbox
+    hot_mask = (heatmap>0.5).float()
+    hot_mask_resized = F.interpolate(hot_mask.unsqueeze(0).unsqueeze(0), size=(img_h, img_w), mode='nearest').squeeze(0).squeeze(0)
 
-    hot_mask =(heatmap >0.5 ).float ()
-    hot_mask_resized =F .interpolate (hot_mask .unsqueeze (0 ).unsqueeze (0 ),size =(img_h ,img_w ),mode ='nearest').squeeze (0 ).squeeze (0 )
-
-    filtered_masks =[]
-    overlay_masks =[]
+    filtered_masks = []
+    # overlay_masks = []
 
     print (f"   🔍 Анализ перекрытия {len(fastsam_masks)} FastSAM масок с heatmap...")
 
-    for i ,mask in enumerate (fastsam_masks ):
+    for i, mask in enumerate(fastsam_masks):
+        full_mask = torch.zeros((img_h, img_w), device=mask.device, dtype=mask.dtype)
+        # mask_h, mask_w = mask.shape[-2:]
+        crop_h, crop_w = y2-y1, x2-x1
 
-        full_mask =torch .zeros ((img_h ,img_w ),device =mask .device ,dtype =mask .dtype )
+        if mask.dim() == 2:
+            mask_resized = F.interpolate(
+                mask.unsqueeze(0).unsqueeze(0),
+                size=(crop_h, crop_w),
+                mode='nearest',
+            ).squeeze(0).squeeze(0)
+        else:
+            mask_resized = F.interpolate (
+                mask.unsqueeze(0) if mask.dim()==3 else mask,
+                size=(crop_h, crop_w),
+                mode='nearest',
+            ).squeeze(0)
+            if mask_resized.dim() == 3:
+                mask_resized = mask_resized[0]
 
-        mask_h ,mask_w =mask .shape [-2 :]
-        crop_h ,crop_w =y2 -y1 ,x2 -x1
+        full_mask[y1:y2, x1:x2] = mask_resized
 
-        if mask .dim ()==2 :
-            mask_resized =F .interpolate (
-            mask .unsqueeze (0 ).unsqueeze (0 ),
-            size =(crop_h ,crop_w ),
-            mode ='nearest'
-            ).squeeze (0 ).squeeze (0 )
-        else :
-            mask_resized =F .interpolate (
-            mask .unsqueeze (0 )if mask .dim ()==3 else mask ,
-            size =(crop_h ,crop_w ),
-            mode ='nearest'
-            ).squeeze (0 )
-            if mask_resized .dim ()==3 :
-                mask_resized =mask_resized [0 ]
+        # merged_mask = full_mask * hot_mask_resized # TODO: (@gas) CHECK
+        binary_full = (full_mask > 0.5).float()
+        binary_hot = (hot_mask_resized > 0.0).float() # NOTE: (@gas) since it should be -1,1; if not - change.
+        merged_mask = binary_full * binary_hot
 
-        full_mask [y1 :y2 ,x1 :x2 ]=mask_resized
+        mask_area = torch.sum(binary_full).float()
+        overlap_area = torch.sum(merged_mask > 0.5).float()
 
-        merged_mask =full_mask *hot_mask_resized
-
-        mask_area =torch .sum (full_mask >0.5 ).float ()
-        overlap_area =torch .sum (merged_mask >0.5 ).float ()
-
-        if mask_area >0 :
-            overlap_ratio =overlap_area /mask_area
-
-            overlay_masks .append ((i ,mask ,float (overlap_ratio )))
-
-            if overlap_ratio >=min_overlap_ratio :
-
-                filtered_masks .append (full_mask )
+        if mask_area > 0:
+            overlap_ratio = overlap_area / mask_area
+            # overlay_masks.append((i, mask, float(overlap_ratio )))
+            if overlap_ratio >= min_overlap_ratio:
+                # filtered_masks.append(full_mask)
+                filtered_masks.append(binary_full)
                 print (f"   ✅ Маска {i}: перекрытие {overlap_ratio:.3f} >= {min_overlap_ratio} - принята")
             else :
                 print (f"   ❌ Маска {i}: перекрытие {overlap_ratio:.3f} < {min_overlap_ratio} - отклонена")
 
-    overlay_50_masks =[(idx ,mask ,ratio )for idx ,mask ,ratio in overlay_masks if ratio >=0.5 ]
-    if overlay_50_masks :
-        try :
-            _save_fastsam_overlay_details (overlay_50_masks ,image_size ,bbox )
-        except Exception as e :
-            print (f"   ⚠️ Ошибка сохранения overlay_details: {e}")
+    # NOTE: (@gas) uncomment for debebugging (it takes time to dump)
+    # overlay_50_masks =[(idx ,mask ,ratio )for idx ,mask ,ratio in overlay_masks if ratio >=0.5 ]
+    # if overlay_50_masks :
+    #     try :
+    #         _save_fastsam_overlay_details (overlay_50_masks ,image_size ,bbox )
+    #     except Exception as e :
+    #         print (f"   ⚠️ Ошибка сохранения overlay_details: {e}")
 
-    if len (filtered_masks )>1 :
+    if len(filtered_masks) > 1:
         print (f"   🔗 Объединение {len(filtered_masks)} масок по IoU...")
-        merged_masks =merge_overlapping_masks (filtered_masks ,iou_threshold =0.3 )
+        merged_masks = merge_overlapping_masks(filtered_masks, iou_threshold=0.3)
         print (f"   📊 Результат: {len(fastsam_masks)} -> {len(filtered_masks)} -> {len(merged_masks)} масок")
         return merged_masks
     else :

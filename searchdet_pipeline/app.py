@@ -159,6 +159,10 @@ def init_detector_v2() -> DetectorBase:
         'max_image_size': 512,
         'downscale_quality': 'bilinear',
         'use_fastsam_with_heatmap': True,
+        'use_heatmap_sam_hybrid': True,
+        'heatmap_sam_threshold': 0.7,
+        'sam_refinement_enabled': True,
+        'max_hotspots_for_sam': 10,
     }
     return SearchDetDetector(**detector_params)
 

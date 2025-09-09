@@ -156,12 +156,12 @@ class DetectorConfig :
     heatmap_extent_max :float =1.0
     heatmap_max_masks :int =5
 
-    use_heatmap_sam_hybrid :bool =False
-    heatmap_sam_threshold :float =0.7
-    sam_refinement_enabled :bool =True
-    max_hotspots_for_sam :int =10
-    use_hotspots :bool =True
-    point_prompts :bool =True
+    use_heatmap_sam_hybrid: bool = False
+    heatmap_sam_threshold: float = 0.7
+    sam_refinement_enabled: bool = True
+    max_hotspots_for_sam: int = 10
+    use_hotspots: bool = True
+    point_prompts: bool = True
 
     use_hotspot_fastsam :bool =True
     max_hotspots_for_fastsam :int =8

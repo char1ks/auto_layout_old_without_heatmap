@@ -172,8 +172,13 @@ class SearchDetDetector(DetectorBase):
         print("1️⃣3️⃣ Шаг 9: EmbeddingExtractor.build_queries_multiclass() - эмбеддинги примеров по классам")
         self.class_pos, self.q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs, pos_as_query_masks=False)
         timing_info['embedding_extraction'] = time.time() - t_embeddings 
-         
+
     def find_present_elements(self, image_np: np.ndarray) -> Dict[str, Any]:
+        if self.config.use_heatmap_sam_hybrid:
+            return self._find_present_elements_with_fastsam_integration(image_np)
+        return self._find_present_elements(image_np)
+         
+    def _find_present_elements(self, image_np: np.ndarray) -> Dict[str, Any]:
         print("🔄 ДЕТАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ МОДУЛЬНОГО PIPELINE:")
         print("=" * 80)
         print("8️⃣ searchdet_pipeline/core/detector.py → find_present_elements()")
@@ -340,7 +345,7 @@ class SearchDetDetector(DetectorBase):
             "timing_info": timing_info,
         }
 
-    def find_present_elements_with_fastsam_integration(self, image_np: np.ndarray)-> Dict[str, Any]:
+    def _find_present_elements_with_fastsam_integration(self, image_np: np.ndarray)-> Dict[str, Any]:
         timing_info: Dict[str, float] = {}
         t_total = time.time()
         image_pil = Image.fromarray(image_np)

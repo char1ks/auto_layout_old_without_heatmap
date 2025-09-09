@@ -35,7 +35,7 @@ class DetectorBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def find_present_elements(self, image_np: np.ndarray, output_dir: str = "output") -> Dict[str, Any]:
+    def find_present_elements(self, image_np: np.ndarray, *args, **kwargs) -> Dict[str, Any]:
         """Runs detection on a single image (RGB ndarray)."""
         pass
 

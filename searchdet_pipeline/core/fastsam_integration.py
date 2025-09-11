@@ -7,7 +7,6 @@ from .heatmap_generator import HeatmapGenerator ,crop_heatmap_region ,merge_mask
 from .scoring import ScoreCalculator ,score_multiclass
 from .embeddings import EmbeddingExtractor
 
-from ultralytics.models.fastsam import FastSAMPredictor
 
 class FastSAMHeatmapProcessor :
     def __init__ (self ,heatmap_generator :HeatmapGenerator ,fastsam_model =None ,
@@ -35,6 +34,7 @@ class FastSAMHeatmapProcessor :
         self.skip_small_crops =True
         self.min_crop_size =64
         self.max_processing_time =0.08
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self._load_fastsam_model()
 
@@ -107,24 +107,6 @@ class FastSAMHeatmapProcessor :
         """
         Select spatially diverse high-score points from heatmap-valued region masks.
     
-        Args:
-            regions: Output from _generate_heatmap_masks_np(..., crop=<flag>).
-                     - If crop=False: each region is full-size (same HxW as original), values retained inside mask, 0 elsewhere.
-                     - If crop=True: each region is a tight crop (HxW of that contour), values retained inside crop, 0 elsewhere.
-            points_per_region: Max number of points to sample per region.
-            crop: Must match the flag used to produce `regions`.
-            orig_shape: Optional (H, W). If provided with crop=True, used only for validation/sanity.
-            min_dist: Minimum pixel separation enforced between points in the SAME region.
-            region_offsets: Optional list of (x_offset, y_offset) for each cropped region.
-                            Only meaningful if crop=True and you want ABSOLUTE coordinates.
-                            Offsets should be the (x, y) top-left of each crop in the original image space.
-    
-        Returns:
-            List of (x, y, score) tuples. If:
-              - crop=False -> (x, y) are absolute coordinates in the original image.
-              - crop=True and region_offsets is provided -> absolute coordinates.
-              - crop=True and region_offsets is None -> coordinates are LOCAL to each crop
-                and returned as (x, y) within that crop.
         """
         if crop and orig_shape is not None:
             if len(orig_shape) != 2 or not all(isinstance(v, int) for v in orig_shape):
@@ -133,7 +115,6 @@ class FastSAMHeatmapProcessor :
         if crop and region_offsets is not None and len(region_offsets) != len(regions):
             raise ValueError("region_offsets length must match number of regions when provided.")
     
-        # Precompute a circular (disk) mask for suppression
         r = int(max(1, min_dist))
         yy, xx = np.ogrid[-r:r+1, -r:r+1]
         disk = (xx*xx + yy*yy) <= (r*r)
@@ -144,61 +125,43 @@ class FastSAMHeatmapProcessor :
             if region.size == 0:
                 continue
     
-            # We will pick greedily by score while zeroing a disk around each chosen point
-            # Work on a copy to avoid mutating caller data
             scores = region.astype(np.float32).copy()
     
-            # Mask out zeros as unselectable by setting to -inf (so they never win)
             scores[scores <= 0] = -np.inf
     
             selected_local: List[Tuple[int, int, float]] = []
     
-            # Greedy selection loop
             for _ in range(points_per_region):
-                # Find current maximum
                 flat_idx = np.argmax(scores)
                 max_val = scores.flat[flat_idx]
                 if not np.isfinite(max_val):
-                    break  # no more valid points
+                    break 
     
                 y, x = np.unravel_index(flat_idx, scores.shape)
                 selected_local.append((x, y, float(max_val)))
     
-                # Suppress a disk around (y, x)
                 y0, x0 = y - r, x - r
                 y1, x1 = y + r + 1, x + r + 1
-    
-                # Clip to region bounds
                 ry0, rx0 = max(0, y0), max(0, x0)
                 ry1, rx1 = min(scores.shape[0], y1), min(scores.shape[1], x1)
     
-                # Corresponding slice in the disk
                 dy0, dx0 = ry0 - y0, rx0 - x0
                 dy1, dx1 = dy0 + (ry1 - ry0), dx0 + (rx1 - rx0)
     
-                # Apply suppression
                 sub = scores[ry0:ry1, rx0:rx1]
                 sub[disk[dy0:dy1, dx0:dx1]] = -np.inf
     
-            # Map local (within-region) to absolute (image) coords if possible/desired
             if crop and region_offsets is not None:
                 x_off, y_off = region_offsets[i]
                 for (lx, ly, s) in selected_local:
                     results.append((lx + x_off, ly + y_off, s))
             else:
-                # Either full-size (already absolute), or cropped (stay local)
                 for (lx, ly, s) in selected_local:
                     results.append((lx, ly, s))
     
-        # Done: we collected up to points_per_region per input region.
-        # If you want the global top-N regardless of region, you can sort here.
-        # The user asked "output N points with the highest score"; interpret N as
-        # points_per_region * len(regions).
-        # If you instead want a strict cap N (independent of regions), change below.
         results.sort(key=lambda t: t[2], reverse=True)
         # NOTE: (@gas) omit scores
-        results = [(p[0], p[1]) for p in results]
-    
+        results = [(p[0], p[1]) for p in results] 
         return results
 
     def process_image(
@@ -215,19 +178,17 @@ class FastSAMHeatmapProcessor :
                 print ("⚠️ Heatmap не предоставлена, генерируем заглушку...")
                 heatmap = torch.rand(image.size[1]//8, image.size[0]//8)
 
-            # TODO: (@gas) try to extract masks from heatmap (needed for points extraction)
             heatmap_masks = self._generate_heatmap_masks_np(heatmap, threshold=0.4, crop=False)
 
             print (f"🔍 Применение FastSAM к изображению...")
-            # points = self._sample_anchor_points(
-            #     regions=heatmap_masks,
-            #     points_per_region=3,
-            #     crop=False,             # must match how regions were generated
-            #     orig_shape=heatmap.shape,
-            #     min_dist=10,
-            # )
-            # fastsam_masks = self._generate_fastsam_masks_with_points_np(image, points)
-            fastsam_masks = self._generate_fastsam_masks_np(image)
+            points = self._sample_anchor_points(
+                regions=heatmap_masks,
+                points_per_region=3,
+                crop=False,             # NOTE: (@gas) must match how regions were generated
+                orig_shape=heatmap.shape,
+                min_dist=10,
+            )
+            fastsam_masks = self._generate_fastsam_masks_np(image, points)
 
             print (f"🔗 Мердж {len(fastsam_masks)} FastSAM масок с горячей зоной...")
             merged_masks = merge_masks_with_heatmap_np(
@@ -251,6 +212,7 @@ class FastSAMHeatmapProcessor :
                     return scored_masks
                 else:
                     print(f"📊 Применение скоринга к {len(merged_masks)} финальным маскам...")
+                    # TODO: (@gas) keep only that scoring; apply for both: binary and multiclass
                     scoring_decisions, scored_masks = self.score_fastsam_masks(
                         image=image,
                         masks=merged_masks,
@@ -273,103 +235,6 @@ class FastSAMHeatmapProcessor :
             print(f"❌ Ошибка в process_image: {e}")
             return []
 
-    def _generate_fastsam_masks_with_points_np(
-        self,
-        cropped_image: Image.Image,
-        query_points: Optional[List[Tuple[int, int]]] = None,  # (x, y) in cropped image coords
-    ) -> List[np.ndarray]:
-        """
-        Generate FastSAM masks guided by query points.
-    
-        Args:
-            cropped_image (Image.Image): PIL image of the crop to segment.
-            query_points (list of (x,y), optional): Pixel coordinates in cropped image space.
-                                                    If None, falls back to unguided "everything".
-    
-        Returns:
-            List[np.ndarray]: Binary masks (H x W, dtype=uint8) with values {0,1}.
-        """
-        if self.fastsam_model is None:
-            return [np.array(m) for m in self._generate_fallback_masks(cropped_image)]
-    
-        try:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            image_np = np.array(cropped_image)
-    
-            # Run once to get embeddings/candidates
-            results = self.fastsam_model(
-                image_np,
-                device=device,
-                retina_masks=True,
-                imgsz=1024,
-                conf=self.confidence_threshold,
-                iou=self.iou_threshold,
-                verbose=False,
-            )
-    
-            if len(results) == 0 or not hasattr(results[0], "masks") or results[0].masks is None:
-                return [np.array(m) for m in self._generate_fallback_masks(cropped_image)]
-    
-            result_masks: List[np.ndarray] = []
-    
-            # === If query points provided, try FastSAMPrompt ===
-            if query_points and len(query_points) > 0:
-                try: 
-                    # TODO: (@gas) adopt for that new class instead of FastSAMPrompt
-                    prompt = FastSAMPredictor(image_np, results, device=device)
-    
-                    pointlabel = [1] * len(query_points)  # all positive
-                    ann = prompt.point_prompt(points=query_points, pointlabel=pointlabel)
-    
-                    def _to_numpy(m) -> np.ndarray:
-                        if isinstance(m, torch.Tensor):
-                            m = m.detach().cpu().numpy()
-                        return (m > 0).astype(np.uint8)
-    
-                    extracted: List[np.ndarray] = []
-                    if ann is not None:
-                        if isinstance(ann, (list, tuple)):
-                            extracted = [_to_numpy(m) for m in ann]
-                        elif hasattr(ann, "masks") and getattr(ann, "masks") is not None:
-                            am = ann.masks.data if hasattr(ann.masks, "data") else ann.masks
-                            am = torch.as_tensor(am).cpu().numpy()
-                            extracted = [(am[i] > 0.5).astype(np.uint8) for i in range(am.shape[0])]
-                        elif isinstance(ann, np.ndarray):
-                            if ann.ndim == 2:
-                                extracted = [_to_numpy(ann)]
-                            else:
-                                extracted = [(ann[i] > 0).astype(np.uint8) for i in range(ann.shape[0])]
-    
-                    # Filter & cap
-                    for m in extracted:
-                        if m.sum() >= self.min_mask_area:
-                            result_masks.append(m)
-                            if len(result_masks) >= self.max_masks_per_crop:
-                                break
-    
-                    if len(result_masks) > 0:
-                        print(f"✅ Generated {len(result_masks)} FastSAM masks (query-guided)")
-                        return result_masks
-    
-                except Exception as e:
-                    print(f"⚠️ Query-point path failed, falling back: {e}")
-    
-            # === Fallback: keep top-N masks from "everything" ===
-            mask_data = results[0].masks.data
-            mask_data = (mask_data > 0.5).to(torch.uint8).cpu().numpy()
-    
-            for i in range(min(len(mask_data), self.max_masks_per_crop)):
-                m = mask_data[i]
-                if m.sum() >= self.min_mask_area:
-                    result_masks.append(m)
-    
-            print(f"✅ Generated {len(result_masks)} FastSAM masks (fallback)")
-            return result_masks
-    
-        except Exception as e:
-            print(f"⚠️ FastSAM mask generation error: {e}")
-            return [np.array(m) for m in self._generate_fallback_masks(cropped_image)]
-
     def _generate_fastsam_masks (self ,cropped_image :Image .Image )->List [torch .Tensor ]:
         if self .fastsam_model is None :
 
@@ -377,7 +242,7 @@ class FastSAMHeatmapProcessor :
 
         try :
             image_np =np .array (cropped_image )
-            results =self .fastsam_model (image_np ,device ='cuda'if torch .cuda .is_available ()else 'cpu',retina_masks =True ,imgsz =1024 ,conf =self .confidence_threshold ,iou =self .iou_threshold ,verbose =False)
+            results =self .fastsam_model (image_np ,device =self.device,retina_masks =True ,imgsz =1024 ,conf =self .confidence_threshold ,iou =self .iou_threshold ,verbose =False)
             if len (results )==0 or not hasattr (results [0 ],'masks')or results [0 ].masks is None :
                 return self ._generate_fallback_masks (cropped_image )
             mask_data =results [0 ].masks .data
@@ -396,7 +261,7 @@ class FastSAMHeatmapProcessor :
             print (f"Ошибка при генерации FastSAM масок: {e}")
             return self ._generate_fallback_masks (cropped_image )
 
-    def _generate_fastsam_masks_np(self, cropped_image: Image.Image) -> List[np.ndarray]:
+    def _generate_fastsam_masks_np(self, img: Image.Image, query_points: Optional[List[Tuple[int, int]]] = None) -> List[np.ndarray]:
         """
         Generate plain FastSAM masks for a cropped image, returned as NumPy arrays.
     
@@ -407,29 +272,42 @@ class FastSAMHeatmapProcessor :
             List[np.ndarray]: List of binary masks (H x W, dtype=uint8) with values {0,1}.
         """
         if self.fastsam_model is None:
-            # Fallback already expected to return list of np.ndarray
-            return [np.array(m) for m in self._generate_fallback_masks(cropped_image)]
+            return []
     
         try:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            image_np = np.array(cropped_image)
-    
-            results = self.fastsam_model(
-                image_np,
-                device=device,
-                retina_masks=True,
-                imgsz=1024,
-                conf=self.confidence_threshold,
-                iou=self.iou_threshold,
-                verbose=False,
-            )
+            image_np = np.array(img)
+            
+            if query_points is not None and query_points:
+                pts = np.asarray(query_points, dtype=np.int32)
+                labels = np.ones(len(pts), dtype=np.int32)
+                results = self.fastsam_model(
+                    image_np,
+                    points=pts, 
+                    labels=labels,
+                    device=self.device,
+                    retina_masks=True,
+                    imgsz=1024,
+                    conf=self.confidence_threshold,
+                    iou=self.iou_threshold,
+                    verbose=False,
+                )
+            else: 
+                results = self.fastsam_model(
+                    image_np,
+                    device=self.device,
+                    retina_masks=True,
+                    imgsz=1024,
+                    conf=self.confidence_threshold,
+                    iou=self.iou_threshold,
+                    verbose=False,
+                )
     
             if (
                 len(results) == 0
                 or not hasattr(results[0], "masks")
                 or results[0].masks is None
             ):
-                return [np.array(m) for m in self._generate_fallback_masks(cropped_image)]
+                return []
     
             mask_data = results[0].masks.data  # torch.Tensor [N, H, W]
             result_masks: List[np.ndarray] = []
@@ -448,7 +326,7 @@ class FastSAMHeatmapProcessor :
     
         except Exception as e:
             print(f"⚠️ Error generating FastSAM masks: {e}")
-            return [np.array(m) for m in self._generate_fallback_masks(cropped_image)]
+            return []
 
     def _calculate_mask_iou (self ,mask1 :torch .Tensor ,mask2 :torch .Tensor )->float :
 
@@ -598,35 +476,23 @@ class FastSAMHeatmapProcessor :
 
         return Image .fromarray (buf )
 
-    def score_fastsam_masks (self ,
-    image :Image .Image ,
-    masks :List [torch .Tensor ],
-    pos_by_class :Dict [str ,np .ndarray ],
-    neg_imgs :np .ndarray =None ,
-    min_overlap_ratio :float =0.8 ,
-    skip_scoring :bool =False )->Tuple [List [Dict [str ,Any ]],List [torch .Tensor ]]:
-
+    # TODO: (@gas) add multiclass scoring for the final masks
+    def score_fastsam_masks(
+        self,
+        image: Image.Image,
+        masks: List[torch.Tensor],
+        pos_by_class: Dict[str, np.ndarray],
+        neg_imgs: np.ndarray = None,
+    ) -> Tuple[List[Dict[str,Any]], List[torch.Tensor]]:
         if not masks :
             print ("   ⚠️ Нет масок для обработки")
             return [],[]
-
-        if skip_scoring :
-            print (f"   🎯 Пропуск скоринга для {len(masks)} масок из горячих зон - принимаем все")
-            decisions =[]
-            for i ,mask in enumerate (masks ):
-                decision ={'accepted':True ,'class':'hotspot_mask','pos':1.0 ,'neg':0.0 ,'diff':1.0 ,'mask_index':i}
-                decisions .append (decision )
-                print (f"   ✅ Маска {i}: принята без скоринга (горячая зона)")
-
-            print (f"   📈 Все {len(masks)} масок из горячих зон приняты без скоринга")
-            return decisions ,masks
 
         if self .embedding_extractor is None or self .score_calculator is None :
             print ("   ⚠️ Нет компонентов для скоринга")
             return [],[]
 
-        try :
-
+        try:
             mask_dicts =[]
             for i ,mask in enumerate (masks ):
 

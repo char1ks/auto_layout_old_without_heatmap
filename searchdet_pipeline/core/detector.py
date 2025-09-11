@@ -385,8 +385,6 @@ class SearchDetDetector(DetectorBase):
             print ("   ❌ Нет FastSAM масок для обработки.")
             return {"masks": [], "timing_info": timing_info }
 
-        # TODO: (@gas) add multiclass handling on complete masks
-
         print ("4️⃣ Шаг 4: Формирование результатов")
         t_result =time.time()
 

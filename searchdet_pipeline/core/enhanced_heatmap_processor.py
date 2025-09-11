@@ -224,10 +224,19 @@ class EnhancedHeatmapProcessor :
         else :
             hot_zones_resized =hot_zones
 
-        gating =self ._contrastive_gating (pixel_features ,Pk ,Nk ,
-        topk_pos =3 ,topk_neg =1 ,alpha =0.25 ,margin =0.02 ,beta =5.0 )
+        # TODO: (@gas) simplofy?
+        gating =self ._contrastive_gating (
+            pixel_features, 
+            Pk, 
+            Nk,
+            topk_pos=3,
+            topk_neg=1,
+            alpha=0.25,
+            margin=0.02,
+            beta=5.0,
+        )
 
-        gated =(gating >0.3 ).astype (np .uint8 )*(hot_zones_resized >0 ).astype (np .uint8 )
+        gated =(gating >0.3 ).astype (np .uint8 )*(hot_zones_resized >0 ).astype (np .uint8 ) # 0 and 1
 
         kernel_small =cv2 .getStructuringElement (cv2 .MORPH_ELLIPSE ,(3 ,3 ))
         kernel_medium =cv2 .getStructuringElement (cv2 .MORPH_ELLIPSE ,(5 ,5 ))

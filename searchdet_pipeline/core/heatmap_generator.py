@@ -225,14 +225,14 @@ query_weight :float =0.5 )->torch .Tensor :
 class HeatmapGenerator :
 
     def __init__ (
-    self ,
-    dinov3_encoder :DinoV3Encoder ,
-    attention_pool_examples :bool =False ,
-    use_cosine_similarity_for_heatmap :bool =True ,
-    enable_expansion :bool =False ,
-    morph_smoothing_kernel :int =5 ,
-    resize_size :int =512 ,
-    crop_images :bool =False
+        self,
+        dinov3_encoder: DinoV3Encoder,
+        attention_pool_examples :bool =False ,
+        use_cosine_similarity_for_heatmap :bool =True ,
+        enable_expansion :bool =False ,
+        morph_smoothing_kernel :int =5 ,
+        resize_size :int =512 ,
+        crop_images :bool =False
     ):
 
         self .dinov3_fe =DinoV3FeatureExtractor (
@@ -246,15 +246,27 @@ class HeatmapGenerator :
         self .enable_expansion =enable_expansion
         self .morph_smoothing_kernel =morph_smoothing_kernel
 
-    @torch.no_grad()
-    def generate_heatmap(
-        self,
-        input_image: Image.Image,
-        positive_images: List[Image.Image],
-        negative_images: List[Image.Image] = None,
-    ) -> torch.Tensor:
+        self.pooled_features_posneg = None
+        self.positive_embed, self.negative_embed = None, None
+        self.positive_images_n = 0
+        self.negaitve_images_n = 0
+
+    def init_adjusted_vector(self, positive_images: List[Image.Image], negative_images: List[Image.Image] = None) -> None:
         if negative_images is None:
             negative_images = []
+        self.pooled_features_posneg = self._generate_pooled_patch_features(positive_images + negative_images)
+        positive_cls, _ = self.dinov3_fe(positive_images)
+        self.positive_embed = positive_cls
+        if negative_images:
+            negative_cls, _ = self.dinov3_fe(negative_images)
+            self.negative_embed = negative_cls
+        else :
+            self.negative_embed = torch.empty(0, device=self.dinov3_fe.device) 
+        self.positive_images_n = len(positive_images)
+        self.negative_images_n = len(negative_images)
+
+    @torch.no_grad()
+    def generate_heatmap(self, input_image: Image.Image) -> torch.Tensor:
         input_cls, input_patches = self.dinov3_fe([input_image])
         tokens = input_patches[0]
         side = int(math.sqrt(tokens.shape[0]))
@@ -263,18 +275,12 @@ class HeatmapGenerator :
             tokens = tokens[:valid]
 
         if self.attention_pool_examples:
-            pooled_embed = self._get_pooled_embed(tokens, positive_images + negative_images)
-            positive_embed = pooled_embed[:len(positive_images)]
-            negative_embed = pooled_embed[len(positive_images):] if negative_images else torch.empty(0, device=self.dinov3_fe.device)
-        else :
-            positive_cls, _ = self.dinov3_fe(positive_images)
-            positive_embed = positive_cls
-
-            if negative_images:
-                negative_cls, _ = self.dinov3_fe(negative_images)
-                negative_embed = negative_cls
-            else :
-                negative_embed = torch.empty(0, device=self.dinov3_fe.device)
+            pooled_embed = self._attention_pool_keys(tokens, self.pooled_features_posneg)
+            positive_embed = pooled_embed[:self.positive_images_n]
+            negative_embed = pooled_embed[self.positive_images_n:] if self.negative_images_n else torch.empty(0, device=self.dinov3_fe.device)
+        else:
+            positive_embed = self.positive_embed
+            negative_embed = self.negative_embed
 
         adjusted_embed = adjust_embedding(
             input_cls[0],
@@ -284,15 +290,15 @@ class HeatmapGenerator :
             negative_weight=2.0,
             query_weight=0.5,
         )
-
+        adjusted_embed = adjusted_embed.unsqueeze(0) 
         if self .use_cosine_similarity_for_heatmap:
             similarities = F.cosine_similarity(
-                adjusted_embed.unsqueeze(0),
+                adjusted_embed,
                 tokens,
                 dim=1,
             )
         else:
-            distances = torch.norm(tokens - adjusted_embed.unsqueeze(0), dim=1)
+            distances = torch.norm(tokens - adjusted_embed, dim=1)
             similarities = 1.0 / (1.0 + distances)
 
         similarities = self._enhance_heatmap_contrast(similarities)
@@ -305,6 +311,12 @@ class HeatmapGenerator :
         heatmap = self._apply_morphological_filtering(heatmap)
         if self.enable_expansion:
             heatmap = self.expand_hot_zones(heatmap, expansion_factor=2.5, dilation_iterations=4)
+        img_h, img_w = input_image.height, input_image.width
+        heatmap = F.interpolate(
+            heatmap.unsqueeze(0).unsqueeze(0), 
+            size=(img_h, img_w), 
+            mode='bilinear',
+        ).squeeze(0).squeeze(0)
         return heatmap
 
     def _enhance_heatmap_contrast (self ,similarities :torch .Tensor ,
@@ -526,7 +538,6 @@ class HeatmapGenerator :
     def _get_pooled_embed (self ,query_feats :torch .Tensor ,images :List [Image .Image ])->torch .Tensor :
 
         pooled_features =self ._generate_pooled_patch_features (images )
-        pooled_embed =self ._attention_pool_keys (query_feats ,pooled_features )
         return pooled_embed
 
     def _generate_pooled_patch_features (self ,images :List [Image .Image ])->torch .Tensor :
@@ -807,7 +818,7 @@ def _save_fastsam_overlay_details(overlay_masks ,image_size ,bbox):
 
     print (f"   💾 Сохранена информация о {len(overlay_masks)} масках в {filepath}")
 
-def merge_masks_with_heatmap(
+def merge_masks_with_heatmap_cropped(
     fastsam_masks: List[torch.Tensor],
     heatmap: torch.Tensor,
     bbox: Tuple[int, int, int, int],
@@ -882,6 +893,143 @@ def merge_masks_with_heatmap(
         print(f"   📊 Результат фильтрации: {len(filtered_masks)}/{len(fastsam_masks)} масок прошли фильтр (порог {min_overlap_ratio})")
         return filtered_masks
 
+def merge_masks_with_heatmap(
+    fastsam_masks: List[torch.Tensor],
+    heatmap: torch.Tensor,
+    min_overlap_ratio: float = 0.5,
+)->List[torch.Tensor]:
+    filtered_masks = []
+
+    print (f"   🔍 Анализ перекрытия {len(fastsam_masks)} FastSAM масок с heatmap...")
+
+    for i, mask in enumerate(fastsam_masks):
+        binary_full = (mask > 0.5).float()
+        binary_hot = (heatmap > 0.0).float() # NOTE: (@gas) since it should be -1,1; if not - change.
+        merged_mask = binary_full * binary_hot
+
+        mask_area = torch.sum(binary_full).float()
+        overlap_area = torch.sum(merged_mask > 0.5).float()
+
+        if mask_area > 0:
+            overlap_ratio = overlap_area / mask_area
+            if overlap_ratio >= min_overlap_ratio:
+                filtered_masks.append(binary_full)
+                print (f"   ✅ Маска {i}: перекрытие {overlap_ratio:.3f} >= {min_overlap_ratio} - принята")
+            else :
+                print (f"   ❌ Маска {i}: перекрытие {overlap_ratio:.3f} < {min_overlap_ratio} - отклонена")
+
+    if len(filtered_masks) > 1:
+        print (f"   🔗 Объединение {len(filtered_masks)} масок по IoU...")
+        merged_masks = merge_overlapping_masks(filtered_masks, iou_threshold=0.3)
+        print (f"   📊 Результат: {len(fastsam_masks)} -> {len(filtered_masks)} -> {len(merged_masks)} масок")
+        return merged_masks
+    else :
+        print(f"   📊 Результат фильтрации: {len(filtered_masks)}/{len(fastsam_masks)} масок прошли фильтр (порог {min_overlap_ratio})")
+        return filtered_masks
+
+def merge_masks_with_heatmap_np(
+    fastsam_masks: List[np.ndarray],
+    heatmap: np.ndarray,
+    min_overlap_ratio: float = 0.5,
+)->List[np.ndarray]:
+    filtered_masks = []
+
+    print (f"   🔍 Анализ перекрытия {len(fastsam_masks)} FastSAM масок с heatmap...")
+
+    for i, mask in enumerate(fastsam_masks):
+        binary_full = mask > 0.5
+        binary_hot = heatmap > 0.5 # TODO: (@gas) since it should be -1,1; if not - change.
+        merged_mask = binary_full * binary_hot
+
+        mask_area = np.sum(binary_full)
+        overlap_area = np.sum(merged_mask)
+
+        if mask_area > 0:
+            overlap_ratio = overlap_area / mask_area
+            if overlap_ratio >= min_overlap_ratio:
+                filtered_masks.append(binary_full)
+                print (f"   ✅ Маска {i}: перекрытие {overlap_ratio:.3f} >= {min_overlap_ratio} - принята")
+            else :
+                print (f"   ❌ Маска {i}: перекрытие {overlap_ratio:.3f} < {min_overlap_ratio} - отклонена")
+    return filtered_masks
+ 
+def merge_overlapping_masks_np(
+    masks: List[np.ndarray],
+    iou_threshold: float = 0.3,
+    containment_threshold: float = 0.85,   # merge if ≥85% of the smaller mask is covered
+    bin_threshold: float = 0.5,
+    return_bool: bool = True,
+    verbose: bool = False,
+) -> List[np.ndarray]:
+    """
+    Recursively merge masks if (IoU >= iou_threshold) OR
+    (intersection covers ≥ containment_threshold of the smaller mask).
+    NumPy-only, vectorized, transitive (connected-components) merge.
+    """
+    if not masks:
+        return []
+
+    # Boolean stack (N, H, W)
+    bin_masks = np.asarray([np.asarray(m) > bin_threshold for m in masks], dtype=bool)
+    N = bin_masks.shape[0]
+    if N == 1:
+        return [bin_masks[0] if return_bool else bin_masks[0].astype(np.uint8)]
+
+    # Flatten (N, HW)
+    flat_bool = bin_masks.reshape(N, -1)
+
+    # Areas (int64 to be safe)
+    areas = flat_bool.sum(axis=1, dtype=np.int64)  # (N,)
+
+    # Intersections (avoid uint8 overflow)
+    flat_i32 = flat_bool.astype(np.int32, copy=False)
+    inter = flat_i32 @ flat_i32.T  # (N, N), int32
+
+    # Unions and IoU
+    union = areas[:, None] + areas[None, :] - inter  # (N, N)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        iou = inter / np.maximum(union, 1)
+
+    # Containment fallback: fraction of the *smaller* mask covered by the intersection
+    # coverage[i, j] = inter[i, j] / min(area[i], area[j])
+    min_area = np.minimum.outer(areas, areas)  # (N, N)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        coverage = inter / np.maximum(min_area, 1)
+
+    # Build adjacency: connect if IoU high OR containment high; exclude self, require some overlap
+    adj = ((iou >= iou_threshold) | (coverage >= containment_threshold)) & (inter > 0)
+    np.fill_diagonal(adj, False)
+
+    # Connected components (BFS)
+    visited = np.zeros(N, dtype=bool)
+    components: List[List[int]] = []
+    for i in range(N):
+        if visited[i]:
+            continue
+        q = [i]
+        visited[i] = True
+        comp = [i]
+        while q:
+            u = q.pop()
+            nbrs = np.flatnonzero(adj[u] & ~visited)
+            if nbrs.size:
+                visited[nbrs] = True
+                q.extend(nbrs.tolist())
+                comp.extend(nbrs.tolist())
+        components.append(comp)
+
+    # Merge via OR within each component
+    merged: List[np.ndarray] = []
+    for comp in components:
+        m = np.any(bin_masks[comp], axis=0)
+        merged.append(m if return_bool else m.astype(np.uint8))
+
+    if verbose:
+        print(
+            f"🔗 Merged {N} masks with IoU≥{iou_threshold:.2f} "
+            f"or containment≥{containment_threshold:.2f} → {len(merged)} masks"
+        )
+    return merged
 
 def merge_overlapping_masks(masks: List[torch.Tensor], iou_threshold: float = 0.3) -> List[torch.Tensor]:
     if not masks:

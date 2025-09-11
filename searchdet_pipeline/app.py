@@ -334,6 +334,8 @@ async def infer(
 
         if "timing_info" in res:
             del res["timing_info"]
+        if "heatmap" in res:
+            del res["heatmap"]
         batch_results.append(res)
 
     return JSONResponse(content=jsonable_encoder(batch_results))

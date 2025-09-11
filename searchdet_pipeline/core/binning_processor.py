@@ -26,7 +26,6 @@ class BinningProcessor :
         self .keep_largest =keep_largest
 
     def get_dinov3_vector (self ,image :Image .Image )->np .ndarray :
-
         with torch .no_grad ():
             cls_token ,_ =self .feature_extractor ([image ])
         return cls_token .squeeze ().cpu ().numpy ()
@@ -718,3 +717,68 @@ class BinningProcessor :
                 cv2 .drawContours (out ,[c ],-1 ,255 ,-1 )
 
         return out
+
+# TODO: (@gas) IT'S ALL WRONG
+def bin_filter_heatmap(
+    H: np.ndarray,
+    max_bins: int = 5,               # total number of bins to create
+    first_k_bins: int = 2,       # keep bins [0 .. first_k_bins-1]
+    fill_value: float = np.inf,  # value for filtered-out cells
+    out_dtype: Optional[np.dtype] = None,
+    ascending: bool = True       # True: smaller is better (distances); False: larger is better (scores)
+) -> np.ndarray:
+    """
+    Bin all values in a 2D heatmap into `max_bins` buckets by global rank and
+    keep only entries that fall into the first `first_k_bins` buckets.
+
+    Args:
+        H: 2D numpy array (heatmap).
+        max_bins: Number of bins to split all values into (>=1).
+        first_k_bins: How many of the first (best) bins to keep (>=1).
+        fill_value: Value written where entries are filtered-out.
+        out_dtype: Dtype of the returned array. If None, uses a safe result type
+                   that can represent both H and fill_value.
+        ascending: Sort direction: True keeps globally smallest values; False keeps largest.
+
+    Returns:
+        refined: np.ndarray with same shape as H; original values preserved where kept,
+                 others set to fill_value.
+    """
+    if H.ndim != 2:
+        raise ValueError("H must be a 2D array (heatmap).")
+    if max_bins < 1:
+        raise ValueError("max_bins must be >= 1.")
+
+    N = H.size
+    if N == 0:
+        # Empty-safe typed copy
+        if out_dtype is None:
+            out_dtype = np.result_type(H.dtype, np.asarray(fill_value).dtype)
+        return H.astype(out_dtype, copy=True)
+
+    # Choose an output dtype that can hold both H and fill_value.
+    if out_dtype is None:
+        out_dtype = np.result_type(H.dtype, np.asarray(fill_value).dtype)
+
+    flat = H.ravel()
+
+    # Global order (stable tie-handling). Keep NaNs as worst (they go to the end).
+    if ascending:
+        order = np.argsort(flat, kind="stable")
+    else:
+        order = np.argsort(-flat, kind="stable")  # descending while leaving NaNs at the end
+
+    # Rank → bin index. Map ranks 0..N-1 to bins 0..max_bins-1 as evenly as possible.
+    # bin_idx = floor(rank * max_bins / N)
+    ranks = np.empty(N, dtype=np.int64)
+    ranks[order] = np.arange(N, dtype=np.int64)
+    bin_idx = (ranks * max_bins) // N  # int64 to avoid overflow on large N
+
+    # Keep only first_k_bins
+    k = max(1, min(first_k_bins, max_bins))
+    keep = (bin_idx < k)
+
+    # Build refined output
+    refined = np.full(N, fill_value, dtype=out_dtype)
+    refined[keep] = flat.astype(out_dtype, copy=False)[keep]
+    return refined

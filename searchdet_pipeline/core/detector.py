@@ -27,6 +27,7 @@ import torch
 from .models import MaskBackend, BackboneType
 
 from searchdet_pipeline.detector_base import DetectorBase
+from searchdet_pipeline.core.binning_processor import bin_filter_heatmap
 
 
 class SearchDetDetector(DetectorBase):
@@ -169,6 +170,7 @@ class SearchDetDetector(DetectorBase):
             all_positive_images.extend(class_images)
         self.neg_imgs = neg_imgs 
         self.all_positive_images = all_positive_images
+        self.heatmap_generator.init_adjusted_vector(all_positive_images, neg_imgs)
         # 
         self.class_pos, self.q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs, pos_as_query_masks=False)
         timing_info['embedding_extraction'] = time.time() - t_embeddings 
@@ -352,13 +354,14 @@ class SearchDetDetector(DetectorBase):
 
         t_heatmap =time.time()
 
-        heatmap = self.heatmap_generator.generate_heatmap(
-            input_image=image_pil, 
-            positive_images=self.all_positive_images, 
-            negative_images=self.neg_imgs,
-        )
+        heatmap = self.heatmap_generator.generate_heatmap(input_image=image_pil)
+        heatmap = heatmap.detach().cpu().numpy()
         timing_info['heatmap_generation'] = time.time()-t_heatmap
         print (f"   📊 Heatmap сгенерирована: {heatmap.shape}")
+
+        # TODO: (@gas) add heatmap binning here
+        # heatmap = bin_filter_heatmap(
+        #     heatmap, max_bins=5, first_k_bins=2, fill_value=0, ascending=False)
 
         print ("3️⃣ Шаг 3: FastSAM интеграция с heatmap")
         t_fastsam =time.time()
@@ -382,12 +385,28 @@ class SearchDetDetector(DetectorBase):
             print ("   ❌ Нет FastSAM масок для обработки.")
             return {"masks": [], "timing_info": timing_info }
 
+        # TODO: (@gas) add multiclass handling on complete masks
+
         print ("4️⃣ Шаг 4: Формирование результатов")
         t_result =time.time()
 
         result_masks = []
 
-        for mask_item in fastsam_masks :
+        for mask_item in fastsam_masks:
+            if isinstance(mask_item, np.ndarray):
+                seg = (mask_item > 0.5).astype(bool)
+                ys , xs = np.where(seg)
+                if xs.size and ys.size :
+                    x_min , x_max = int(xs.min()), int(xs.max())
+                    y_min , y_max = int(ys.min()), int(ys.max())
+                    bbox = [x_min, y_min, x_max - x_min + 1, y_max - y_min + 1]
+                else :
+                    bbox = [0, 0, 0, 0]
+                # TODO: (@gas) should be solved by the multiclass mask handler earlier
+                class_name = list(self.class_pos.keys())[0] if self.class_pos else "detected" 
+                # TODO: (@gas) compute confidence from mask values (like a mean or smth OR take from multiclass classifier distance)
+                md = {'segmentation': seg, 'bbox': bbox, 'area': int(seg.sum()), 'confidence': 0.9, 'class': class_name} 
+                result_masks.append(md)
             if isinstance(mask_item, torch.Tensor):
                 seg = (mask_item.detach().cpu().numpy()>0.5).astype(bool)
                 ys , xs = np.where(seg)
@@ -425,7 +444,7 @@ class SearchDetDetector(DetectorBase):
         total_time = time.time()-t_total
         timing_info['total_time'] = total_time
 
-        print (f"🎯 Найдено FastSAM элементов: {len(md)}")
+        # print (f"🎯 Найдено FastSAM элементов: {len(md)}")
         print (f"⏱️ Общее время: {total_time:.2f} сек")
         self._print_timing_statistics(timing_info)
 

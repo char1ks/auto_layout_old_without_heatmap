@@ -1,3 +1,5 @@
+import os
+
 import torch
 import numpy as np
 from PIL import Image
@@ -178,17 +180,28 @@ class FastSAMHeatmapProcessor :
                 print ("⚠️ Heatmap не предоставлена, генерируем заглушку...")
                 heatmap = torch.rand(image.size[1]//8, image.size[0]//8)
 
-            heatmap_masks = self._generate_heatmap_masks_np(heatmap, threshold=0.4, crop=False)
 
             print (f"🔍 Применение FastSAM к изображению...")
-            points = self._sample_anchor_points(
-                regions=heatmap_masks,
-                points_per_region=3,
-                crop=False,             # NOTE: (@gas) must match how regions were generated
-                orig_shape=heatmap.shape,
-                min_dist=10,
-            )
-            fastsam_masks = self._generate_fastsam_masks_np(image, points)
+            # heatmap_masks = self._generate_heatmap_masks_np(heatmap, threshold=0.4, crop=False)
+
+            # debug_path = ".local/debug"
+            # os.makedirs(debug_path, exist_ok=True)
+            # for i_, mask in enumerate(heatmap_masks):
+            #     cv2.imwrite(os.path.join(debug_path, f"heatmap_mask_{i_}.png"), mask*255)
+            # print(f">>> DEBUG: masks saved to: {debug_path}")
+
+            # # TODO: (@gas) fix the implementation - in case of unseparated masks 
+            # #       sampling doesn't choose all the needed areas
+            # points = self._sample_anchor_points(
+            #     regions=heatmap_masks,
+            #     points_per_region=3,
+            #     crop=False,             # NOTE: (@gas) must match how regions were generated
+            #     orig_shape=heatmap.shape,
+            #     min_dist=10,
+            # )
+            # fastsam_masks = self._generate_fastsam_masks_np(image, points)
+
+            fastsam_masks = self._generate_fastsam_masks_np(image)
 
             print (f"🔗 Мердж {len(fastsam_masks)} FastSAM масок с горячей зоной...")
             merged_masks = merge_masks_with_heatmap_np(

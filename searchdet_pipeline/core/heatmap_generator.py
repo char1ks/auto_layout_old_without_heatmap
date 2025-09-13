@@ -902,9 +902,9 @@ def merge_masks_with_heatmap(
 
     print (f"   🔍 Анализ перекрытия {len(fastsam_masks)} FastSAM масок с heatmap...")
 
+    binary_hot = (heatmap > 0).float() # NOTE: (@gas) since it should be -1,1; if not - change.
     for i, mask in enumerate(fastsam_masks):
         binary_full = (mask > 0.5).float()
-        binary_hot = (heatmap > 0.0).float() # NOTE: (@gas) since it should be -1,1; if not - change.
         merged_mask = binary_full * binary_hot
 
         mask_area = torch.sum(binary_full).float()
@@ -936,9 +936,9 @@ def merge_masks_with_heatmap_np(
 
     print (f"   🔍 Анализ перекрытия {len(fastsam_masks)} FastSAM масок с heatmap...")
 
+    binary_hot = heatmap > 0 # TODO: (@gas) since it should be -1,1; if not - change.
     for i, mask in enumerate(fastsam_masks):
         binary_full = mask > 0.5
-        binary_hot = heatmap > 0.5 # TODO: (@gas) since it should be -1,1; if not - change.
         merged_mask = binary_full * binary_hot
 
         mask_area = np.sum(binary_full)
@@ -947,6 +947,7 @@ def merge_masks_with_heatmap_np(
         if mask_area > 0:
             overlap_ratio = overlap_area / mask_area
             if overlap_ratio >= min_overlap_ratio:
+                # filtered_masks.append(merged_mask)
                 filtered_masks.append(binary_full)
                 print (f"   ✅ Маска {i}: перекрытие {overlap_ratio:.3f} >= {min_overlap_ratio} - принята")
             else :

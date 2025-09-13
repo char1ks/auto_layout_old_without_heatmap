@@ -14,13 +14,12 @@ from .filtering import MaskFilter
 from .embeddings import EmbeddingExtractor
 from .scoring import ScoreCalculator
 from .step7_result_saving import ResultSaver
-from .sam_predictor import SAMPredictor
 from .utils import get_image_size, get_feature_map_size, upsample_feature_map
 from .dinov3_encoder import DinoV3Encoder
 from .heatmap_generator import HeatmapGenerator
 from .binning_processor import BinningProcessor
 from .enhanced_heatmap_processor import EnhancedHeatmapProcessor
-from .fastsam_integration import FastSAMHeatmapProcessor
+from .fastsam_integration import FastSAMHeatmapProcessor, load_fastsam_model, load_sam_model, load_sam_predictor
 from .models import DetectorConfig, ProcessingResult, MaskData, DetectionResult
 from ..utils.validation import ImageValidator, DirectoryValidator, ValidationError, validate_processing_pipeline_inputs
 import torch
@@ -65,7 +64,7 @@ class SearchDetDetector(DetectorBase):
             print(f"🔧 DINOv2 бэкенд: используется собственный размер модели")
         print(f"🔧 Выбран SAM энкодер: {self.sam_encoder}")
 
-        self.searchdet_resnet, self.searchdet_layer, self.searchdet_transform, self.searchdet_sam = init_searchdet()
+        # self.searchdet_resnet, self.searchdet_layer, self.searchdet_transform, self.searchdet_sam = init_searchdet()
         if not self .backbone .startswith ('dinov2'):
             import torchvision .transforms as transforms
             feat_short_side_env =os .getenv ('SEARCHDET_FEAT_SHORT_SIDE','384')
@@ -89,31 +88,15 @@ class SearchDetDetector(DetectorBase):
             k :v for k ,v in self .params .items ()
             if k not in {"mask_backend","device","fastsam_model","fastsam_device","sam_generator","mask_resize_long_side"}
         }
-        self.mask_generator = MaskGenerator(
-            mask_backend=self.mask_backend,
-            device=self.device,
-            fastsam_model=self.config.fastsam_model,
-            fastsam_device=self.config.fastsam_device or self.device, 
-            sam_generator=None,
-            **generator_params,
-        )
-        
-        # Создаем универсальный SAMPredictor с поддержкой разных бэкендов
-        segmentation_backend = getattr(self.config, 'segmentation_backend', 'fastsam')
-        if segmentation_backend =='fastsam':
-            self.sam_predictor = SAMPredictor(backend_type="fastsam", mask_generator=self.mask_generator)
-        elif segmentation_backend =='heatmap':
-            heatmap_threshold = getattr(self.config, 'heatmap_threshold', 0.5)
-            self.sam_predictor = SAMPredictor(backend_type="heatmap", threshold=heatmap_threshold)
 
+        # NOTE: (@gas) general functionality
         self.mask_filter = MaskFilter(self.params)
         self.embedding_extractor = EmbeddingExtractor(
             backbone_name=self.config.dinov3_backbone,
             device=self.device,
             ckpt_path=self.config.dinov3_ckpt
         )
-        self.score_calculator = ScoreCalculator(self.params)
-        
+        self.score_calculator = ScoreCalculator(self.params) 
         self.dinov3_encoder = DinoV3Encoder(
             backbone_name=self.config.dinov3_backbone,
             ckpt_path=self.config.dinov3_ckpt,
@@ -124,14 +107,28 @@ class SearchDetDetector(DetectorBase):
             repo_dir=self.config.repo_dir
         )
 
+        # # NOTE: (@gas) for sam-only approach
+        # self.mask_generator = MaskGenerator(
+        #     mask_backend=self.mask_backend,
+        #     device=self.device,
+        #     fastsam_model=self.config.fastsam_model,
+        #     fastsam_device=self.config.fastsam_device or self.device, 
+        #     sam_generator=None,
+        #     **generator_params,
+        # )
+        
+        # NOTE: (@gas) for heatmaps
         optimal_size = 512 # TODO: (@gas) move to config
         self.heatmap_generator = HeatmapGenerator(self.dinov3_encoder, resize_size=optimal_size, crop_images=False)
         self.binning_processor = BinningProcessor(self.dinov3_encoder, concept_threshold=1)
         self.enhanced_heatmap_processor = EnhancedHeatmapProcessor(self.dinov3_encoder, resize_size=optimal_size)
-        fastsam_model_instance = getattr(self.mask_generator, '_fastsam_model', None)
+
+        # NOTE: (@gas) use sam or fastsam
+        sam_model_instance = load_fastsam_model()
+        # sam_model_instance = load_sam_model()
+        # sam_model_instance = load_sam_predictor()
         self.fastsam_processor = FastSAMHeatmapProcessor(
-            heatmap_generator=self.heatmap_generator, 
-            fastsam_model=fastsam_model_instance,
+            fastsam_model=sam_model_instance,
             embedding_extractor=self.embedding_extractor,
             score_calculator=self.score_calculator,
         )
@@ -180,172 +177,172 @@ class SearchDetDetector(DetectorBase):
             return self._find_present_elements_with_fastsam_integration(image_np)
         return self._find_present_elements(image_np)
          
-    def _find_present_elements(self, image_np: np.ndarray) -> Dict[str, Any]:
-        print("🔄 ДЕТАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ МОДУЛЬНОГО PIPELINE:")
-        print("=" * 80)
-        print("8️⃣ searchdet_pipeline/core/detector.py → find_present_elements()")
-        timing_info: Dict[str, float] = {}
-        t_total = time.time()
-        t_loading = time.time()
-        timing_info['image_loading'] = time.time() - t_loading
-        print("🔟 Шаг 2: MaskGenerator.generate() - генерация масок через SAM/FastSAM")
-        t_masks = time.time()
-        masks = self.mask_generator.generate(image_np)
-        timing_info['mask_generation'] = time.time() - t_masks
-        print("1️⃣1️⃣ Шаг 3-7: MaskFilter.apply_all_filters() - все фильтры масок")
-        t_filtering = time.time()
-        masks = self.mask_filter.apply_all_filters(masks, image_np)
-        timing_info['mask_filtering'] = time.time() - t_filtering
-        if not masks:
-            print("   ❌ Нет валидных масок после фильтров.")
-            return {"found_elements": [], "masks": []}
-        print("1️⃣2️⃣ Шаг 8: EmbeddingExtractor.extract_mask_embeddings() - эмбеддинги масок")
-        image_pil = Image.fromarray(image_np.astype(np.uint8))
+    # def _find_present_elements(self, image_np: np.ndarray) -> Dict[str, Any]:
+    #     print("🔄 ДЕТАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ МОДУЛЬНОГО PIPELINE:")
+    #     print("=" * 80)
+    #     print("8️⃣ searchdet_pipeline/core/detector.py → find_present_elements()")
+    #     timing_info: Dict[str, float] = {}
+    #     t_total = time.time()
+    #     t_loading = time.time()
+    #     timing_info['image_loading'] = time.time() - t_loading
+    #     print("🔟 Шаг 2: MaskGenerator.generate() - генерация масок через SAM/FastSAM")
+    #     t_masks = time.time()
+    #     masks = self.mask_generator.generate(image_np)
+    #     timing_info['mask_generation'] = time.time() - t_masks
+    #     print("1️⃣1️⃣ Шаг 3-7: MaskFilter.apply_all_filters() - все фильтры масок")
+    #     t_filtering = time.time()
+    #     masks = self.mask_filter.apply_all_filters(masks, image_np)
+    #     timing_info['mask_filtering'] = time.time() - t_filtering
+    #     if not masks:
+    #         print("   ❌ Нет валидных масок после фильтров.")
+    #         return {"found_elements": [], "masks": []}
+    #     print("1️⃣2️⃣ Шаг 8: EmbeddingExtractor.extract_mask_embeddings() - эмбеддинги масок")
+    #     image_pil = Image.fromarray(image_np.astype(np.uint8))
  
-        print(f"   🔍 ДИАГНОСТИКА: Начинаем обработку {len(masks)} масок")
-        try:
-            mask_vecs = self.embedding_extractor.extract_mask_embeddings(image_pil, masks)
-            print(f"   🔍 ДИАГНОСТИКА: Получено {mask_vecs.shape[0]} валидных векторов из {len(masks)} масок")
+    #     print(f"   🔍 ДИАГНОСТИКА: Начинаем обработку {len(masks)} масок")
+    #     try:
+    #         mask_vecs = self.embedding_extractor.extract_mask_embeddings(image_pil, masks)
+    #         print(f"   🔍 ДИАГНОСТИКА: Получено {mask_vecs.shape[0]} валидных векторов из {len(masks)} масок")
             
-            if mask_vecs.shape[0] == 0:
-                print("   ❌ Не удалось получить эмбеддинги масок.")
-                print("   📍 ПРИЧИНА: Все маски были отброшены как невалидные (NaN/Inf/нулевая норма)")
+    #         if mask_vecs.shape[0] == 0:
+    #             print("   ❌ Не удалось получить эмбеддинги масок.")
+    #             print("   📍 ПРИЧИНА: Все маски были отброшены как невалидные (NaN/Inf/нулевая норма)")
                 
-                print("   🔍 ДЕТАЛЬНАЯ ДИАГНОСТИКА МАСОК:")
-                for i, mask in enumerate(masks):
-                    try:
-                        print(f"     Маска {i+1}: тип={type(mask)}, размер={getattr(mask, 'shape', 'неизвестно')}")
-                        if hasattr(mask, 'segmentation'):
-                            seg = mask['segmentation']
-                            if isinstance(seg, np.ndarray):
-                                print(f"       segmentation: shape={seg.shape}, dtype={seg.dtype}, sum={seg.sum()}")
-                            else:
-                                print(f"       segmentation: тип={type(seg)} (не numpy array)")
-                    except Exception as e:
-                        print(f"     Маска {i+1}: ошибка анализа - {e}")
+    #             print("   🔍 ДЕТАЛЬНАЯ ДИАГНОСТИКА МАСОК:")
+    #             for i, mask in enumerate(masks):
+    #                 try:
+    #                     print(f"     Маска {i+1}: тип={type(mask)}, размер={getattr(mask, 'shape', 'неизвестно')}")
+    #                     if hasattr(mask, 'segmentation'):
+    #                         seg = mask['segmentation']
+    #                         if isinstance(seg, np.ndarray):
+    #                             print(f"       segmentation: shape={seg.shape}, dtype={seg.dtype}, sum={seg.sum()}")
+    #                         else:
+    #                             print(f"       segmentation: тип={type(seg)} (не numpy array)")
+    #                 except Exception as e:
+    #                     print(f"     Маска {i+1}: ошибка анализа - {e}")
                 
-                return {"found_elements": [], "masks": []}
+    #             return {"found_elements": [], "masks": []}
                 
-        except Exception as e:
-            import traceback
-            print(f"   ❌ КРИТИЧЕСКАЯ ОШИБКА в extract_mask_embeddings: {e}")
-            print("   📍 STACK TRACE:")
-            traceback.print_exc()
-            return {"found_elements": [], "masks": []}
-        print(f"   📊 Масок с валидными векторами: {mask_vecs.shape[0]}")
+    #     except Exception as e:
+    #         import traceback
+    #         print(f"   ❌ КРИТИЧЕСКАЯ ОШИБКА в extract_mask_embeddings: {e}")
+    #         print("   📍 STACK TRACE:")
+    #         traceback.print_exc()
+    #         return {"found_elements": [], "masks": []}
+    #     print(f"   📊 Масок с валидными векторами: {mask_vecs.shape[0]}")
 
-        online_negatives = None
-        # Если нет явных негативных примеров, используем онлайн-негативы
-        if self.q_neg is None or self.q_neg.shape[0] == 0:
-            print("   ⚠️ Нет явных негативных примеров, генерируем онлайн-негативы...")
+    #     online_negatives = None
+    #     # Если нет явных негативных примеров, используем онлайн-негативы
+    #     if self.q_neg is None or self.q_neg.shape[0] == 0:
+    #         print("   ⚠️ Нет явных негативных примеров, генерируем онлайн-негативы...")
             
-            # 1. Собрать все позитивные запросы в один тензор
-            pos_queries_tensors = [torch.from_numpy(v) for v in self.class_pos.values() if v.shape[0] > 0]
+    #         # 1. Собрать все позитивные запросы в один тензор
+    #         pos_queries_tensors = [torch.from_numpy(v) for v in self.class_pos.values() if v.shape[0] > 0]
 
-            if not pos_queries_tensors:
-                print("   ❌ Нет эмбеддингов для positive-классов, невозможно сгенерировать онлайн-негативы.")
-            else:
-                all_pos_queries = torch.cat(pos_queries_tensors, dim=0)
+    #         if not pos_queries_tensors:
+    #             print("   ❌ Нет эмбеддингов для positive-классов, невозможно сгенерировать онлайн-негативы.")
+    #         else:
+    #             all_pos_queries = torch.cat(pos_queries_tensors, dim=0)
 
-                if all_pos_queries.shape[0] > 0 and mask_vecs.shape[0] > 0:
-                    # 2. Рассчитать косинусное сходство между масками и всеми позитивными запросами
-                    mask_vecs_torch = torch.from_numpy(mask_vecs)
+    #             if all_pos_queries.shape[0] > 0 and mask_vecs.shape[0] > 0:
+    #                 # 2. Рассчитать косинусное сходство между масками и всеми позитивными запросами
+    #                 mask_vecs_torch = torch.from_numpy(mask_vecs)
                     
-                    # Используем torch для расчета косинусной близости
-                    sim_matrix = torch.nn.functional.cosine_similarity(mask_vecs_torch.unsqueeze(1), all_pos_queries.unsqueeze(0), dim=2)
+    #                 # Используем torch для расчета косинусной близости
+    #                 sim_matrix = torch.nn.functional.cosine_similarity(mask_vecs_torch.unsqueeze(1), all_pos_queries.unsqueeze(0), dim=2)
 
-                    # 3. Найти лучший позитивный скор для каждой маски
-                    best_pos_scores, _ = torch.max(sim_matrix, dim=1)
+    #                 # 3. Найти лучший позитивный скор для каждой маски
+    #                 best_pos_scores, _ = torch.max(sim_matrix, dim=1)
                     
-                    # 4. Определить количество для онлайн-негативов (нижние 40%)
-                    num_online_negatives = int(mask_vecs.shape[0] * 0.4)
+    #                 # 4. Определить количество для онлайн-негативов (нижние 40%)
+    #                 num_online_negatives = int(mask_vecs.shape[0] * 0.4)
                     
-                    if num_online_negatives > 0:
-                        # 5. Найти индексы масок с наименьшими скорами
-                        k = min(num_online_negatives, len(best_pos_scores))
-                        if k > 0:
-                            _, bottom_indices = torch.topk(best_pos_scores, k=k, largest=False)
+    #                 if num_online_negatives > 0:
+    #                     # 5. Найти индексы масок с наименьшими скорами
+    #                     k = min(num_online_negatives, len(best_pos_scores))
+    #                     if k > 0:
+    #                         _, bottom_indices = torch.topk(best_pos_scores, k=k, largest=False)
                             
-                            # 6. Собрать эмбеддинги для онлайн-негативов
-                            online_negatives = mask_vecs[bottom_indices.numpy()]
-                            print(f"   💡 Создано {online_negatives.shape[0]} онлайн-негативов из масок с наихудшими positive-скорами.")
+    #                         # 6. Собрать эмбеддинги для онлайн-негативов
+    #                         online_negatives = mask_vecs[bottom_indices.numpy()]
+    #                         print(f"   💡 Создано {online_negatives.shape[0]} онлайн-негативов из масок с наихудшими positive-скорами.")
 
-        print("1️⃣4️⃣ Шаг 10: ScoreCalculator.score_multiclass() - скоринг и принятие решений")
-        print("🔍 ЭТАП 3: Сопоставление с positive/negative по классам...")
-        t_scoring = time.time()
-        decisions, _ = self.score_calculator.score_multiclass(
-            mask_vecs, 
-            self.class_pos, 
-            self.q_neg,
-            online_negatives=online_negatives
-        )
-        timing_info['scoring_and_decisions'] = time.time() - t_scoring
-        t_result = time.time()
-        result_masks = []
-        candidates = []
-        H, W = image_np.shape[:2]
+    #     print("1️⃣4️⃣ Шаг 10: ScoreCalculator.score_multiclass() - скоринг и принятие решений")
+    #     print("🔍 ЭТАП 3: Сопоставление с positive/negative по классам...")
+    #     t_scoring = time.time()
+    #     decisions, _ = self.score_calculator.score_multiclass(
+    #         mask_vecs, 
+    #         self.class_pos, 
+    #         self.q_neg,
+    #         online_negatives=online_negatives
+    #     )
+    #     timing_info['scoring_and_decisions'] = time.time() - t_scoring
+    #     t_result = time.time()
+    #     result_masks = []
+    #     candidates = []
+    #     H, W = image_np.shape[:2]
         
-        # Создаем idx_map для связи индексов решений с оригинальными индексами масок
-        idx_map = list(range(len(masks)))
+    #     # Создаем idx_map для связи индексов решений с оригинальными индексами масок
+    #     idx_map = list(range(len(masks)))
         
-        print(f"\n🔍 Processing {len(decisions)} decisions...")
-        for i, dec in enumerate(decisions):
-            print(f"  - Decision {i}: accepted={dec.get('accepted')}, class='{dec.get('class')}', confidence={dec.get('confidence', 0.0):.3f}")
-            if not dec.get('accepted'):
-                print(f"    -> SKIPPED (not accepted)")
-                continue
-            original_idx = idx_map[i]
-            print(f"    -> ACCEPTED. Original mask index: {original_idx}")
-            mask_dict = masks[original_idx].copy()
-            confidence = float(np.clip(dec.get('confidence', 0.0), 0.0, 1.0))
-            mask_dict['confidence'] = confidence
-            mask_dict['class'] = dec.get('class')
-            if 'area' not in mask_dict and 'segmentation' in mask_dict:
-                mask_dict['area'] = int(np.sum(mask_dict['segmentation']))
-            bx = mask_dict.get('bbox', [0,0,0,0])
-            if len(bx) == 4 and (bx[2] <= W and bx[3] <= H):
-                x1, y1, w, h = bx
-                bbox_xyxy = [int(x1), int(y1), int(x1 + w), int(y1 + h)]
-            else:
-                bbox_xyxy = [int(bx[0]), int(bx[1]), int(bx[2]), int(bx[3])]
-            cls_label = dec.get('class')
-            try:
-                cls_label = str(cls_label) if cls_label is not None else "__unknown__"
-            except Exception:
-                cls_label = "__unknown__"
-            print(f"    -> Appending candidate: class='{cls_label}', confidence={confidence:.3f}")
-            candidates.append({
-                'mask': mask_dict['segmentation'].astype(bool),
-                'bbox_xyxy': bbox_xyxy,
-                'confidence': confidence,
-                'area': int(mask_dict['area']),
-                'class': cls_label,
-            })
-        from collections import Counter
-        print("NMS candidates by class:", Counter([c.get('class') for c in candidates]))
-        kept = self._nms(candidates, class_aware=True)
-        for e in kept:
-            seg = e['mask']
-            x1, y1, x2, y2 = e['bbox_xyxy']
-            bbox_xywh = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
-            mask_dict = {
-                'segmentation': seg,
-                'bbox': bbox_xywh,
-                'area': int(seg.sum()),
-                'confidence': float(e['confidence']),
-                'class': e.get('class')
-            }
-            result_masks.append(mask_dict)
-        timing_info['result_formatting'] = time.time() - t_result
-        total_time = time.time() - t_total
-        timing_info['total_time'] = total_time
-        print(f"🎯 Принято масок: {len(result_masks)} (после правил и NMS)")
-        print(f"⏱️ Общее время: {total_time:.2f} сек")
-        self._print_timing_statistics(timing_info)
-        return {
-            "masks": result_masks,
-            "timing_info": timing_info,
-        }
+    #     print(f"\n🔍 Processing {len(decisions)} decisions...")
+    #     for i, dec in enumerate(decisions):
+    #         print(f"  - Decision {i}: accepted={dec.get('accepted')}, class='{dec.get('class')}', confidence={dec.get('confidence', 0.0):.3f}")
+    #         if not dec.get('accepted'):
+    #             print(f"    -> SKIPPED (not accepted)")
+    #             continue
+    #         original_idx = idx_map[i]
+    #         print(f"    -> ACCEPTED. Original mask index: {original_idx}")
+    #         mask_dict = masks[original_idx].copy()
+    #         confidence = float(np.clip(dec.get('confidence', 0.0), 0.0, 1.0))
+    #         mask_dict['confidence'] = confidence
+    #         mask_dict['class'] = dec.get('class')
+    #         if 'area' not in mask_dict and 'segmentation' in mask_dict:
+    #             mask_dict['area'] = int(np.sum(mask_dict['segmentation']))
+    #         bx = mask_dict.get('bbox', [0,0,0,0])
+    #         if len(bx) == 4 and (bx[2] <= W and bx[3] <= H):
+    #             x1, y1, w, h = bx
+    #             bbox_xyxy = [int(x1), int(y1), int(x1 + w), int(y1 + h)]
+    #         else:
+    #             bbox_xyxy = [int(bx[0]), int(bx[1]), int(bx[2]), int(bx[3])]
+    #         cls_label = dec.get('class')
+    #         try:
+    #             cls_label = str(cls_label) if cls_label is not None else "__unknown__"
+    #         except Exception:
+    #             cls_label = "__unknown__"
+    #         print(f"    -> Appending candidate: class='{cls_label}', confidence={confidence:.3f}")
+    #         candidates.append({
+    #             'mask': mask_dict['segmentation'].astype(bool),
+    #             'bbox_xyxy': bbox_xyxy,
+    #             'confidence': confidence,
+    #             'area': int(mask_dict['area']),
+    #             'class': cls_label,
+    #         })
+    #     from collections import Counter
+    #     print("NMS candidates by class:", Counter([c.get('class') for c in candidates]))
+    #     kept = self._nms(candidates, class_aware=True)
+    #     for e in kept:
+    #         seg = e['mask']
+    #         x1, y1, x2, y2 = e['bbox_xyxy']
+    #         bbox_xywh = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
+    #         mask_dict = {
+    #             'segmentation': seg,
+    #             'bbox': bbox_xywh,
+    #             'area': int(seg.sum()),
+    #             'confidence': float(e['confidence']),
+    #             'class': e.get('class')
+    #         }
+    #         result_masks.append(mask_dict)
+    #     timing_info['result_formatting'] = time.time() - t_result
+    #     total_time = time.time() - t_total
+    #     timing_info['total_time'] = total_time
+    #     print(f"🎯 Принято масок: {len(result_masks)} (после правил и NMS)")
+    #     print(f"⏱️ Общее время: {total_time:.2f} сек")
+    #     self._print_timing_statistics(timing_info)
+    #     return {
+    #         "masks": result_masks,
+    #         "timing_info": timing_info,
+    #     }
 
     def _find_present_elements_with_fastsam_integration(self, image_np: np.ndarray)-> Dict[str, Any]:
         timing_info: Dict[str, float] = {}
@@ -372,6 +369,7 @@ class SearchDetDetector(DetectorBase):
             heatmap=heatmap, 
             neg_imgs=self.neg_imgs, 
             skip_scoring_for_hotspot_masks=self.config.skip_scoring_for_hotspot_masks,
+            min_overlap_ratio=0.5,
         )
         timing_info['fastsam_integration'] = time.time()-t_fastsam
 
@@ -393,7 +391,7 @@ class SearchDetDetector(DetectorBase):
         for mask_item in fastsam_masks:
             if isinstance(mask_item, np.ndarray):
                 seg = (mask_item > 0.5).astype(bool)
-                ys , xs = np.where(seg)
+                ys, xs = np.where(seg)
                 if xs.size and ys.size :
                     x_min , x_max = int(xs.min()), int(xs.max())
                     y_min , y_max = int(ys.min()), int(ys.max())
@@ -705,56 +703,6 @@ class SearchDetDetector(DetectorBase):
                 print(f"     -> Класс '{class_name}': 0 изображений.")
 
         return result
-    
-    def switch_segmentation_backend(self, backend_type: str, **kwargs) -> None:
-        """Переключает бэкенд сегментации.
-        
-        Args:
-            backend_type: Тип бэкенда ('sam', 'fastsam', 'heatmap')
-            **kwargs: Дополнительные параметры для бэкенда
-        """
-        print(f"🔄 Переключение бэкенда сегментации на: {backend_type}")
-        
-        if backend_type == 'sam':
-            self.sam_predictor.switch_backend(
-                backend_type="sam",
-                sam_model=self.searchdet_sam
-            )
-        elif backend_type == 'fastsam':
-            self.sam_predictor.switch_backend(
-                backend_type="fastsam",
-                mask_generator=self.mask_generator
-            )
-        elif backend_type == 'heatmap':
-            threshold = kwargs.get('threshold', 0.5)
-            self.sam_predictor.switch_backend(
-                backend_type="heatmap",
-                threshold=threshold
-            )
-        else:
-            raise ValueError(f"Неподдерживаемый тип бэкенда: {backend_type}")
-        
-        print(f"✅ Бэкенд сегментации переключен на: {backend_type}")
-    
-    def get_current_segmentation_backend(self) -> str:
-        """Возвращает текущий тип бэкенда сегментации.
-        
-        Returns:
-            Строка с типом текущего бэкенда
-        """
-        return self.sam_predictor.get_backend_type()
-    
-    def set_heatmap_for_segmentation(self, heatmap: np.ndarray) -> None:
-        """Устанавливает heatmap для сегментации (только для heatmap бэкенда).
-        
-        Args:
-            heatmap: Тепловая карта для генерации масок
-        """
-        if self.get_current_segmentation_backend() == 'heatmap':
-            self.sam_predictor.set_heatmap(heatmap)
-        else:
-            print(f"⚠️ Предупреждение: heatmap можно устанавливать только для heatmap бэкенда. "
-                  f"Текущий бэкенд: {self.get_current_segmentation_backend()}")
     
     def _print_timing_statistics(self, timing_info: Dict[str, float]) -> None:
         """Выводит детальную статистику времени выполнения.

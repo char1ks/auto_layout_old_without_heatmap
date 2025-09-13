@@ -947,8 +947,8 @@ def merge_masks_with_heatmap_np(
         if mask_area > 0:
             overlap_ratio = overlap_area / mask_area
             if overlap_ratio >= min_overlap_ratio:
-                # filtered_masks.append(merged_mask)
-                filtered_masks.append(binary_full)
+                filtered_masks.append(merged_mask)
+                # filtered_masks.append(binary_full)
                 print (f"   ✅ Маска {i}: перекрытие {overlap_ratio:.3f} >= {min_overlap_ratio} - принята")
             else :
                 print (f"   ❌ Маска {i}: перекрытие {overlap_ratio:.3f} < {min_overlap_ratio} - отклонена")

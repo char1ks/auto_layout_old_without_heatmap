@@ -83,13 +83,14 @@ class FastSAMHeatmapProcessor:
         cv2.imwrite(os.path.join(debug_path, f"heatmap_thrsh_{thrsh}.png"), heatmap*255)
         # 
 
-        points = sample_points_with_value(heatmap, value=0.0, n=10, seed=42)
+        points = sample_points_with_value(heatmap, value=0.0, n=5, seed=42)
 
         # fastsam_masks = self._generate_sam_masks_np(image, heatmap)
         # fastsam_masks = self._generate_sam_masks_np(image)
 
         # NOTE: (@gas) pass background points
-        fastsam_masks = self._generate_fastsam_masks_np(image, points, [0]*len(points))
+        # fastsam_masks = self._generate_fastsam_masks_np(image, points, [0]*len(points))
+        fastsam_masks = self._generate_fastsam_masks_np(image)
 
         # NOTE: (@gas) debug
         debug_path = ".local/debug"

@@ -16,8 +16,8 @@ from searchdet_pipeline.core.heatmap_points_extractor import ExtractConfig, Brig
 
 
 def load_fastsam_model():
-    model = FastSAM('FastSAM-s.pt')
-    # model = FastSAM('FastSAM-x.pt')
+    # model = FastSAM('FastSAM-s.pt')
+    model = FastSAM('FastSAM-x.pt')
     print ("✅ FastSAM модель загружена и закэширована")
     return model
 
@@ -41,9 +41,9 @@ class FastSAMHeatmapProcessor:
         self.score_calculator = score_calculator
 
         # self.max_masks_per_crop = 15
-        self.min_mask_area = 100
-        self.confidence_threshold = 0.4
-        self.iou_threshold = 0.9
+        self.min_mask_area = 200
+        self.confidence_threshold = 0.5
+        self.iou_threshold = 0.8
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -89,8 +89,8 @@ class FastSAMHeatmapProcessor:
         # fastsam_masks = self._generate_sam_masks_np(image)
 
         # NOTE: (@gas) pass background points
-        # fastsam_masks = self._generate_fastsam_masks_np(image, points, [0]*len(points))
-        fastsam_masks = self._generate_fastsam_masks_np(image)
+        fastsam_masks = self._generate_fastsam_masks_np(image, points, [0]*len(points))
+        # fastsam_masks = self._generate_fastsam_masks_np(image)
 
         # NOTE: (@gas) debug
         debug_path = ".local/debug"

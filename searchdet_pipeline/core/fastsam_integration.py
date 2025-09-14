@@ -10,7 +10,7 @@ from ultralytics.models.sam.predict import SAM2Predictor
 from ultralytics.engine.results import Masks
 
 from .heatmap_generator import HeatmapGenerator ,crop_heatmap_region ,merge_masks_with_heatmap_np ,save_crop_debug_info ,visualize_crop_region, merge_overlapping_masks_np
-from .scoring import ScoreCalculator ,score_multiclass
+from .scoring import ScoreCalculator, score_multiclass
 from .embeddings import EmbeddingExtractor
 from searchdet_pipeline.core.heatmap_points_extractor import ExtractConfig, BrightClusterExtractor, ExtractResult, sample_points_with_value
 
@@ -34,12 +34,18 @@ def load_sam_predictor():
     return model
 
 class FastSAMHeatmapProcessor:
-    def __init__ (self, fastsam_model = None, embedding_extractor: EmbeddingExtractor = None, score_calculator: ScoreCalculator = None):
-
+    def __init__ (
+        self, 
+        heatmap_generator: HeatmapGenerator,
+        fastsam_model = None, 
+        embedding_extractor: EmbeddingExtractor = None, 
+        decision_threshold: float = 0.5
+    ) -> None:
+        self.heatmap_generator = heatmap_generator
         self.fastsam_model = fastsam_model
         self.embedding_extractor = embedding_extractor
-        self.score_calculator = score_calculator
 
+        self.decision_threshold = decision_threshold
         # self.max_masks_per_crop = 15
         self.min_mask_area = 200
         self.confidence_threshold = 0.5
@@ -61,11 +67,8 @@ class FastSAMHeatmapProcessor:
     def process_image(
         self, 
         image: Image.Image,
-        pos_by_class: Dict[str, np.ndarray],
         heatmap: Optional[torch.Tensor] = None,
-        neg_imgs: np.ndarray = None,
         min_overlap_ratio: float = 0.8,
-        skip_scoring_for_hotspot_masks: bool = False,
     ) -> List[torch.Tensor]:
         # try:
         if heatmap is None :
@@ -77,31 +80,30 @@ class FastSAMHeatmapProcessor:
         heatmap_mask = heatmap > thrsh
         heatmap = np.where(heatmap_mask, heatmap, 0)
 
-        # NOTE: (@gas) for debug only
-        debug_path = ".local/debug"
-        os.makedirs(debug_path, exist_ok=True)
-        cv2.imwrite(os.path.join(debug_path, f"heatmap_thrsh_{thrsh}.png"), heatmap*255)
-        # 
+        # # NOTE: (@gas) for debug only
+        # debug_path = ".local/debug"
+        # os.makedirs(debug_path, exist_ok=True)
+        # cv2.imwrite(os.path.join(debug_path, f"heatmap_thrsh_{thrsh}.png"), heatmap*255)
+        # # 
 
         points = sample_points_with_value(heatmap, value=0.0, n=5, seed=42)
 
         # fastsam_masks = self._generate_sam_masks_np(image, heatmap)
         # fastsam_masks = self._generate_sam_masks_np(image)
 
-        # NOTE: (@gas) pass background points
+        # NOTE: (@gas) pass background points as 0's
         fastsam_masks = self._generate_fastsam_masks_np(image, points, [0]*len(points))
-        # fastsam_masks = self._generate_fastsam_masks_np(image)
 
-        # NOTE: (@gas) debug
-        debug_path = ".local/debug"
-        os.makedirs(debug_path, exist_ok=True)
-        mask_debug = np.zeros(image.size[::-1], dtype=np.uint8)
-        for idx, mask in enumerate(fastsam_masks):
-            mask_debug += mask
-            cv2.imwrite(os.path.join(debug_path, f"sam_mask_{idx}.png"), mask*255)
-        mask_debug = np.clip(mask_debug, 0, 1)
-        cv2.imwrite(os.path.join(debug_path, f"sam_mask_unite.png"), mask_debug*255)
-        # 
+        # # NOTE: (@gas) debug
+        # debug_path = ".local/debug"
+        # os.makedirs(debug_path, exist_ok=True)
+        # mask_debug = np.zeros(image.size[::-1], dtype=np.uint8)
+        # for idx, mask in enumerate(fastsam_masks):
+        #     mask_debug += mask
+        #     cv2.imwrite(os.path.join(debug_path, f"sam_mask_{idx}.png"), mask*255)
+        # mask_debug = np.clip(mask_debug, 0, 1)
+        # cv2.imwrite(os.path.join(debug_path, f"sam_mask_unite.png"), mask_debug*255)
+        # # 
 
         print (f"🔗 Мердж {len(fastsam_masks)} FastSAM масок с горячей зоной...")
         merged_masks = merge_masks_with_heatmap_np(
@@ -113,33 +115,19 @@ class FastSAMHeatmapProcessor:
             merged_masks = merge_overlapping_masks_np(merged_masks, iou_threshold=0.3, verbose=True)
             print (f"   📊 Результат: {len(fastsam_masks)} -> {len(merged_masks)} масок")
 
-        if merged_masks and pos_by_class is not None:
-            if skip_scoring_for_hotspot_masks :
-                print(f"🎯 Пропуск скоринга для {len(merged_masks)} масок из горячих зон")
+        if merged_masks:
+            print(f"📊 Применение скоринга к {len(merged_masks)} финальным маскам...")
+            scoring_decisions, scored_masks = self.score_fastsam_masks(
+                image=image,
+                masks=merged_masks,
+            )
 
-                scoring_decisions =[]
-                for i in range(len(merged_masks)):
-                    scoring_decisions.append({'accepted':True ,'class':'hotspot_mask','pos':1.0 ,'neg':0.0 ,'diff':1.0 ,'mask_index':i})
-                scored_masks = merged_masks
-                print(f"✅ Все {len(scored_masks)} масок из горячих зон приняты без скоринга")
+            if scored_masks:
+                print(f"✅ Финальный результат: {len(scored_masks)} масок прошли скоринг")
                 return scored_masks
             else:
-                print(f"📊 Применение скоринга к {len(merged_masks)} финальным маскам...")
-                # TODO: (@gas) keep only that scoring; apply for both: binary and multiclass
-                scoring_decisions, scored_masks = self.score_fastsam_masks(
-                    image=image,
-                    masks=merged_masks,
-                    pos_by_class=pos_by_class,
-                    neg_imgs=neg_imgs,
-                    skip_scoring=False,
-                )
-
-                if scored_masks:
-                    print(f"✅ Финальный результат: {len(scored_masks)} масок прошли скоринг")
-                    return scored_masks
-                else:
-                    print("⚠️ Ни одна маска не прошла скоринг")
-                    return []
+                print("⚠️ Ни одна маска не прошла скоринг")
+                return []
         else:
             print(f"✅ Финальный результат: {len(merged_masks)} масок после мерджа (без скоринга)")
             return merged_masks
@@ -280,115 +268,80 @@ class FastSAMHeatmapProcessor:
                 regions.append(region)
         return regions
 
-    # TODO: (@gas) add multiclass scoring for the final masks
     def score_fastsam_masks(
         self,
         image: Image.Image,
-        masks: List[torch.Tensor],
-        pos_by_class: Dict[str, np.ndarray],
-        neg_imgs: np.ndarray = None,
-    ) -> Tuple[List[Dict[str,Any]], List[torch.Tensor]]:
+        masks: List[np.ndarray],
+    ) -> Tuple[List[Dict[str,Any]], List[np.ndarray]]:
         if not masks :
             print ("   ⚠️ Нет масок для обработки")
             return [],[]
 
-        if self .embedding_extractor is None or self .score_calculator is None :
-            print ("   ⚠️ Нет компонентов для скоринга")
-            return [],[]
-
         try:
-            mask_dicts =[]
-            for i ,mask in enumerate (masks ):
+            masks_dicts =[]
+            for i, mask in enumerate(masks):
+                mask_np = (mask>0.5).astype(bool)
+                mask_dict = {
+                    'segmentation': mask_np, 
+                    'area': int(np.sum(mask_np)), 
+                    'bbox': self._mask_to_bbox(mask_np),
+                    'predicted_iou': 0.8, 
+                    'stability_score': 0.8,
+                    'crop_box': [0, 0, mask_np.shape[1], mask_np.shape[0]],
+                }
+                masks_dicts.append(mask_dict)
 
-                mask_np =(mask .cpu ().numpy ()>0.5 ).astype (bool )
+            print (f"   🔍 Извлечение эмбеддингов для {len(masks_dicts)} FastSAM масок...")
+            # TODO: (@gas) generate in the same way with dino fe, as pos images features being extracted
+            masks_vecs = self.embedding_extractor.extract_mask_embeddings(image, masks_dicts)
 
-                mask_dict ={'segmentation':mask_np ,'area':int (np .sum (mask_np )),'bbox':self ._mask_to_bbox (mask_np ),'predicted_iou':0.8 ,'stability_score':0.8 ,'crop_box':[0 ,0 ,mask_np .shape [1 ],mask_np .shape [0 ]]}
-                mask_dicts .append (mask_dict )
-
-            print (f"   🔍 Извлечение эмбеддингов для {len(mask_dicts)} FastSAM масок...")
-            mask_vecs =self .embedding_extractor .extract_mask_embeddings (image ,mask_dicts )
-
-            if mask_vecs .shape [0 ]==0 :
+            if masks_vecs.shape[0] == 0:
                 print ("   ❌ Не удалось извлечь эмбеддинги для масок")
-                return [],[]
+                return [], []
 
-            def _is_numeric_ndarray (x ):
-                return isinstance (x ,np .ndarray )and np .issubdtype (x .dtype ,np .number )and x .size >=0
+            print (f"   📊 Применение скоринга к {masks_vecs.shape[0]} маскам...")
+            decisions = self.score_multiclass_v2(image, masks_vecs=masks_vecs)
 
-            def _looks_like_vec_list (x ):
-                return isinstance (x ,list )and len (x )>0 and isinstance (x [0 ],np .ndarray )and np .issubdtype (x [0 ].dtype ,np .number )
+            accepted_masks = []
+            accepted_decisions = []
 
-            pos_is_embeddings =True
-            for cls ,Q in (pos_by_class or {}).items ():
-                if _is_numeric_ndarray (Q )or _looks_like_vec_list (Q ):
-                    continue
-
-                pos_is_embeddings =False
-                break
-
-            q_pos_ready :Dict [str ,np .ndarray ]
-            q_neg_ready :Optional [np .ndarray ]
-
-            if not pos_is_embeddings :
-                print ("   🔧 q_pos содержит изображения, кодируем в эмбеддинги через EmbeddingExtractor...")
-                q_pos_ready ,q_neg_ready =self .embedding_extractor .build_queries_multiclass (pos_by_class ,neg_imgs or [])
-            else :
-
-                q_pos_ready ={}
-                for cls ,Q in (pos_by_class or {}).items ():
-                    if isinstance (Q ,np .ndarray ):
-                        arr =Q .astype (np .float32 )
-                        if arr .ndim ==1 :
-                            arr =arr [None ,:]
-                        q_pos_ready [cls ]=arr
-                    elif _looks_like_vec_list (Q ):
-                        try :
-                            arr =np .vstack ([v .reshape (1 ,-1 )if v .ndim ==1 else v for v in Q ]).astype (np .float32 )
-                        except Exception :
-
-                            print (f"   ⚠️ Класс '{cls}': не удалось собрать массив из списка, кодируем через энкодер")
-                            arr =self .embedding_extractor ._encode_pil_list (Q )
-                            arr =self .embedding_extractor ._filter_bad (arr ,cls_name =cls ,kind ="q_pos")
-                        q_pos_ready [cls ]=arr
-                    else :
-
-                        print (f"   ⚠️ Класс '{cls}': непонятный тип, кодируем через энкодер")
-                        arr =self .embedding_extractor ._encode_pil_list (Q if isinstance (Q ,list )else [Q ])
-                        arr =self .embedding_extractor ._filter_bad (arr ,cls_name =cls ,kind ="q_pos")
-                        q_pos_ready [cls ]=arr
-
-                if isinstance (neg_imgs ,np .ndarray ):
-                    q_neg_ready =neg_imgs .astype (np .float32 )
-                    if q_neg_ready .ndim ==1 :
-                        q_neg_ready =q_neg_ready [None ,:]
-                else :
-                    q_neg_ready =None
-
-            print (f"   📊 Применение скоринга к {mask_vecs.shape[0]} маскам...")
-            decisions ,debug_info =score_multiclass (mask_vecs =mask_vecs ,q_pos =q_pos_ready ,q_neg =q_neg_ready ,min_pos_score =self .score_calculator .min_pos_score ,decision_threshold =self .score_calculator .decision_threshold ,verbose =True)
-
-            accepted_masks =[]
-            accepted_decisions =[]
-
-            for i ,decision in enumerate (decisions ):
-                if decision .get ('accepted',False ):
-                    accepted_masks .append (masks [i ])
-                    accepted_decisions .append (decision )
-                    print (f"   ✅ Маска {i}: класс={decision.get('class')}, "
+            for i, decision in enumerate(decisions):
+                if decision.get('accepted', False):
+                    accepted_masks.append(masks[i])
+                    accepted_decisions.append(decision)
+                    print(f"   ✅ Маска {i}: класс={decision.get('class')}, "
                     f"pos={decision.get('pos', 0):.3f}, "
                     f"diff={decision.get('diff', 0):.3f}")
                 else :
-                    print (f"   ❌ Маска {i}: отклонена, "
+                    print(f"   ❌ Маска {i}: отклонена, "
                     f"pos={decision.get('pos', 0):.3f}, "
                     f"diff={decision.get('diff', 0):.3f}")
 
-            print (f"   📈 Скоринг завершен: {len(accepted_masks)}/{len(masks)} масок прошли скоринг")
+            print(f"   📈 Скоринг завершен: {len(accepted_masks)}/{len(masks)} масок прошли скоринг")
             return accepted_decisions ,accepted_masks
 
-        except Exception as e :
-            print (f"   ⚠️ Ошибка при скоринге FastSAM масок: {e}")
-            return [],[]
+        except Exception as e:
+            print(f"   ⚠️ Ошибка при скоринге FastSAM масок: {e}")
+            return [], []
 
+    # TODO: (@gas) debug - create a new function, for cosine sim. measure.
+    def score_multiclass_v2(
+        self,
+        image: Image.Image, 
+        masks_vecs: np.ndarray,
+    ):
+        decisions =[]
+        for m in range (M ):
+            accepted = (best_pos [m ] >= self.decision_threshold) and (diff[m] >= self.decision_threshold)
+            decisions.append({
+                'class': best_cls[m],
+                'pos': float(best_pos[m]),
+                'neg_raw': float(neg_raw[m]),
+                'neg': float(neg[m]),
+                'diff': float(diff[m]),
+                'accepted': bool(accepted),
+            })
+        return decisions
 
     def _mask_to_bbox (self ,mask :np .ndarray )->List [int ]:
 

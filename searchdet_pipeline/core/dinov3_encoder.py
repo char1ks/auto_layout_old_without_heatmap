@@ -15,6 +15,18 @@ try :
 except Exception :
     pass
 
+try:
+    from dinov3.hub import backbones as dino_backbones
+except ImportError:
+    project_root =Path (__file__ ).resolve ().parent .parent .parent
+    dinov3_repo_path =project_root
+    if str (dinov3_repo_path )not in sys .path :
+        sys .path .insert (0 ,str (dinov3_repo_path ))
+    inner_dinov3_path =project_root /'dinov3'
+    if str (inner_dinov3_path )not in sys .path :
+        sys .path .insert (0 ,str (inner_dinov3_path ))
+    from dinov3.hub import backbones as dino_backbones
+
 def _to_pil_any (x :object )->Image .Image :
 
     if isinstance (x ,Image .Image ):
@@ -44,20 +56,7 @@ def _to_pil_any (x :object )->Image .Image :
         return Image .fromarray (t ,mode ="RGB")
     raise TypeError (f"Unsupported image type: {type(x)}")
 
-try :
-    from dinov3 .hub import backbones as dino_backbones
-except ImportError :
-
-    project_root =Path (__file__ ).resolve ().parent .parent .parent
-    dinov3_repo_path =project_root
-    if str (dinov3_repo_path )not in sys .path :
-        sys .path .insert (0 ,str (dinov3_repo_path ))
-    inner_dinov3_path =project_root /'dinov3'
-    if str (inner_dinov3_path )not in sys .path :
-        sys .path .insert (0 ,str (inner_dinov3_path ))
-    from dinov3 .hub import backbones as dino_backbones
-
-class DinoV3Encoder :
+class DinoV3Encoder:
     def __init__ (self ,backbone_name ='vitb16',device ='cpu',ckpt_path =None ,half_precision :bool =False ,vit_pooling :str ='cls',loader :str ='hub',repo_dir :Optional [str ]=None ):
         self .device =torch .device (device if (device =="cpu"or torch .cuda .is_available ())else "cpu")
 

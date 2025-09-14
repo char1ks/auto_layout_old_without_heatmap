@@ -103,14 +103,14 @@ class EmbeddingExtractor :
 
     def __init__ (self ,backbone_name :str ='vitb16',device :str ='cpu',ckpt_path :str =None ):
 
-        self .encoder =DinoV3Encoder (
-        backbone_name =backbone_name ,
-        device =device ,
-        ckpt_path =ckpt_path
+        self.encoder = DinoV3Encoder(
+            backbone_name=backbone_name,
+            device=device,
+            ckpt_path=ckpt_path,
         )
 
     def _safe_stack (self ,arrs ,axis =0 ):
-        if not arrs :
+        if not arrs:
             return np .zeros ((0 ,768 ),dtype =np .float32 )
         return np .stack (arrs ,axis =axis )
 
@@ -318,143 +318,19 @@ class EmbeddingExtractor :
 
         return V [good ].astype (np .float32 )
 
-    def build_queries_multiclass (self ,pos_dict ,neg_list ,pos_as_query_masks =False ):
-
-        q_pos ={}
-        for cls ,pil_list in pos_dict .items ():
-            M =self ._encode_pil_list (pil_list )
-            M =self ._filter_bad (M ,cls_name =cls ,kind ="q_pos")
-            if M .shape [0 ]>0 :
-                q_pos [cls ]=M
+    def build_queries_multiclass(self, pos_dict, neg_list):
+        q_pos = {}
+        for cls, pil_list in pos_dict.items():
+            M = self._encode_pil_list(pil_list)
+            M = self._filter_bad(M, cls_name=cls, kind="q_pos")
+            if M.shape[0] > 0:
+                q_pos[cls] = M
             else :
-                print (f"   ⚠️ Класс '{cls}' пуст после фильтрации — пропущен")
+                print(f"   ⚠️ Класс '{cls}' пуст после фильтрации — пропущен")
 
-        q_neg =self ._encode_pil_list (neg_list )if neg_list else np .zeros ((0 ,768 ),dtype =np .float32 )
-        q_neg =self ._filter_bad (q_neg ,kind ="q_neg")
+        q_neg = self._encode_pil_list(neg_list) if neg_list else np.zeros((0, 768), dtype=np.float32)
+        q_neg = self._filter_bad(q_neg, kind="q_neg")
 
-        if not q_pos :
-            print ("   ❌ Нет валидных классов с эмбеддингами после фильтрации.")
-        return q_pos ,q_neg
-
-def build_queries_multiclass (
-pos_by_class :dict [str ,list [np .ndarray ]|np .ndarray ],
-neg_list :list [np .ndarray ]|np .ndarray |None =None ,
-)->tuple [dict [str ,np .ndarray ],np .ndarray ]:
-
-    q_pos :dict [str ,np .ndarray ]={}
-    D :int |None =None
-
-    for cls ,vecs in (pos_by_class or {}).items ():
-        if vecs is None :
-            arr =np .zeros ((0 ,0 ),dtype =np .float32 )
-        else :
-            if isinstance (vecs ,np .ndarray ):
-                arr =vecs
-            else :
-
-                if isinstance (vecs ,list )and len (vecs )>0 :
-
-                    first_shape =None
-                    valid_vecs =[]
-                    for v in vecs :
-                        if isinstance (v ,np .ndarray )and v .size >0 :
-                            if first_shape is None :
-                                first_shape =v .shape [1 :]if v .ndim >1 else (v .shape [0 ],)
-                            if (v .ndim >1 and v .shape [1 :]==first_shape )or (v .ndim ==1 and v .shape ==first_shape ):
-                                valid_vecs .append (v )
-
-                    if valid_vecs :
-                        try :
-                            arr =np .vstack (valid_vecs )
-                        except ValueError :
-
-                            arr =np .concatenate (valid_vecs ,axis =0 )
-                    else :
-                        arr =np .zeros ((0 ,0 ),dtype =np .float32 )
-                else :
-                    arr =np .array (vecs ,dtype =np .float32 )
-
-        if arr .size ==0 :
-            q_pos [cls ]=np .zeros ((0 ,0 ),dtype =np .float32 )
-            continue
-        if arr .ndim ==1 :
-            arr =arr [None ,:]
-        arr =arr .astype (np .float32 ,copy =False )
-        arr =_l2n (arr ,axis =1 )
-        q_pos [cls ]=arr
-        if D is None :
-            D =arr .shape [1 ]
-
-    if neg_list is None :
-        q_neg =np .zeros ((0 ,D if D is not None else 0 ),dtype =np .float32 )
-    else :
-        if isinstance (neg_list ,np .ndarray ):
-            neg_arr =neg_list
-        else :
-
-            if isinstance (neg_list ,list )and len (neg_list )>0 :
-                valid_negs =[]
-                for v in neg_list :
-                    if isinstance (v ,np .ndarray )and v .size >0 :
-                        valid_negs .append (v )
-
-                if valid_negs :
-                    try :
-                        neg_arr =np .vstack (valid_negs )
-                    except ValueError :
-                        neg_arr =np .concatenate (valid_negs ,axis =0 )
-                else :
-                    neg_arr =np .zeros ((0 ,D if D is not None else 0 ),dtype =np .float32 )
-            else :
-                neg_arr =np .array (neg_list ,dtype =np .float32 )
-
-        if neg_arr .size ==0 :
-            q_neg =np .zeros ((0 ,D if D is not None else 0 ),dtype =np .float32 )
-        else :
-            if neg_arr .ndim ==1 :
-                neg_arr =neg_arr [None ,:]
-            neg_arr =neg_arr .astype (np .float32 ,copy =False )
-            neg_arr =_l2n (neg_arr ,axis =1 )
-            q_neg =neg_arr
-
-    try :
-        total_neg =int (q_neg .shape [0 ])
-    except Exception :
-        total_neg =0
-
-    for cls ,arr in q_pos .items ():
-        if not isinstance (arr ,np .ndarray ):
-            print (f"   ⚠️ ПРЕДУПРЕЖДЕНИЕ: q_pos['{cls}'] не является numpy массивом: {type(arr)}")
-
-            try :
-                q_pos [cls ]=np .array (arr ,dtype =np .float32 )
-                if q_pos [cls ].ndim ==1 :
-                    q_pos [cls ]=q_pos [cls ][None ,:]
-                q_pos [cls ]=_l2n (q_pos [cls ],axis =1 )
-                print (f"   ✅ Исправлено: q_pos['{cls}'] теперь имеет форму {q_pos[cls].shape}")
-            except Exception as e :
-                print (f"   ❌ Ошибка при конвертации q_pos['{cls}']: {e}")
-                q_pos [cls ]=np .zeros ((0 ,D if D is not None else 0 ),dtype =np .float32 )
-
-    if not isinstance (q_neg ,np .ndarray ):
-        print (f"   ⚠️ ПРЕДУПРЕЖДЕНИЕ: q_neg не является numpy массивом: {type(q_neg)}")
-        try :
-            q_neg =np .array (q_neg ,dtype =np .float32 )
-            if q_neg .ndim ==1 :
-                q_neg =q_neg [None ,:]
-            q_neg =_l2n (q_neg ,axis =1 )
-            print (f"   ✅ Исправлено: q_neg теперь имеет форму {q_neg.shape}")
-        except Exception as e :
-            print (f"   ❌ Ошибка при конвертации q_neg: {e}")
-            q_neg =np .zeros ((0 ,D if D is not None else 0 ),dtype =np .float32 )
-
-    print (f"   DEBUG: build_queries_multiclass returning: q_pos type={type(q_pos)}, "
-    f"q_neg type={type(q_neg)}, q_neg shape={getattr(q_neg, 'shape', None)}")
-
-    for cls ,arr in q_pos .items ():
-        if hasattr (arr ,'shape'):
-            print (f"   DEBUG: q_pos['{cls}'] shape={arr.shape}, dtype={arr.dtype}")
-        else :
-            print (f"   ❌ ОШИБКА: q_pos['{cls}'] не имеет атрибута shape: {type(arr)}")
-
-    return q_pos ,q_neg
+        if not q_pos:
+            print("   ❌ Нет валидных классов с эмбеддингами после фильтрации.")
+        return q_pos, q_neg

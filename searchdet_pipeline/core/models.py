@@ -169,7 +169,6 @@ class DetectorConfig :
     fastsam_heatmap_overlap_threshold :float =0.8
     prefer_fastsam_on_overlap :bool =True
     fallback_to_heatmap :bool =True
-    skip_scoring_for_hotspot_masks :bool =True
 
     fastsam_refinement_iou_threshold :float =0.3
     min_overlap_ratio :float =0.8

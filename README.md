@@ -33,7 +33,7 @@ mkdir -p models input output examples/positive examples/negative
 
 Copy dinov3 weights:  
 ```sh
-cp ~/dinov3-weights/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth ~/.cache/torch/hub/checkpoints/
+cp ~/dinov3-weights/dinov3/* ~/.cache/torch/hub/checkpoints/
 ```  
 
 ## Run  

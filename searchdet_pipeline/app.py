@@ -87,42 +87,6 @@ def init_detector_mock() -> DetectorBase:
     mask_size = int(os.getenv("DETECTOR_MASK_SIZE", "32"))
     return MockDetector(mask_size=mask_size)
 
-def init_detector_v1() -> DetectorBase:
-    detector_params = {
-        'mask_backend': 'fastsam',
-        "positive_aggregation": "max",
-        'dinov3_backbone': "vit7b16",
-        "layer": "layer3",
-        'pos_as_query_masks': True,
-        'vit_pooling': 'cls',
-        "loader": "timm",
-        "repo_dir": None,
-        "max_embedding_size": 1024,
-        'device': "cuda",
-        'encoder_device': "cuda",
-        "use-heatmap-masks": False,
-        'half': True,
-        'dinov3_ckpt': None,
-        'dino_half_precision': False,
-        'backbone': "dinov3_vitb16",
-        'min_mask_area': 100,
-        'smart_rectangle_filter': True,
-        'rectangle_bbox_iou_threshold': 0.95, 
-        'rectangle_straight_line_ratio': 0.8,  
-        'rectangle_area_ratio_threshold': 0.95, 
-        'rectangle_angle_tolerance': 10.0, 
-        'rectangle_side_ratio_threshold': 0.9, 
-        'perfect_rectangle_iou_threshold': 0.99,  
-        'rectangle_similarity_iou_threshold': 0.94,
-        'square_similarity_iou_threshold': 0.94,   
-        'rectangle_use_silhouette': True,          
-        'hole_area_ratio_threshold': 0.03,
-
-        'min_positive_score': 0.3,
-        'decision_threshold': 0.65,
-    }
-    return SearchDetDetector(**detector_params)
-
 def init_detector_v2() -> DetectorBase:
     detector_params = {
         'mask_backend': 'fastsam',
@@ -153,7 +117,7 @@ def init_detector_v2() -> DetectorBase:
         'square_similarity_iou_threshold': 0.94,
         'rectangle_use_silhouette': True,
         'hole_area_ratio_threshold': 0.03,
-        'min_positive_score': 0.3,
+        'min_positive_score': 0.4,
         'decision_threshold': 0.65,
         'enable_image_downscaling': True,
         'max_image_size': 512,

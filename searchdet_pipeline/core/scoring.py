@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 import numpy as np
+from PIL import Image
 from typing import Dict ,List ,Tuple ,Any
 from ..utils .config import ScoringConfig
 
@@ -331,41 +332,39 @@ class ScoreCalculator :
 
         return accepted ,pos_scores ,neg_for_decision
 
-def score_multiclass (
-mask_vecs :np .ndarray ,
-q_pos :dict [str ,np .ndarray ],
-q_neg :np .ndarray |None ,
-*,
-pos_agg :str ="max",
-topk :int =3 ,
-min_pos_score :float =0.70 ,
-decision_threshold :float =0.10 ,
-clamp_neg_to_zero :bool =True ,
-verbose :bool =True ,
+def score_multiclass(
+    mask_vecs: np.ndarray,
+    q_pos: dict[str, np.ndarray],
+    q_neg: np.ndarray| None,
+    *,
+    pos_agg: str="max",
+    topk: int=3 ,
+    min_pos_score: float=0.70 ,
+    decision_threshold: float=0.10 ,
+    clamp_neg_to_zero: bool=True ,
+    verbose: bool=True,
 ):
+    if mask_vecs.ndim == 1:
+        mask_vecs = mask_vecs[None, :]
+    mask_vecs = mask_vecs.astype (np.float32, copy=False)
+    mask_vecs = _l2n(mask_vecs, axis=1)
+    M, D = mask_vecs.shape
 
-    if mask_vecs .ndim ==1 :
-        mask_vecs =mask_vecs [None ,:]
-    mask_vecs =mask_vecs .astype (np .float32 ,copy =False )
-    mask_vecs =_l2n (mask_vecs ,axis =1 )
-    M ,D =mask_vecs .shape
-
-    try :
-        print (f"   🔍 DEBUG: q_neg тип = {type(q_neg)}, значение = {q_neg}")
+    try:
+        print(f"   🔍 DEBUG: q_neg тип = {type(q_neg)}, значение = {q_neg}")
         if q_neg is not None and not isinstance (q_neg ,np .ndarray ):
-            print (f"   🔍 DEBUG: Конвертируем q_neg из {type(q_neg)} в numpy массив")
-            q_neg =np .array (q_neg ,dtype =np .float32 )
-            if q_neg .ndim ==1 :
-                q_neg =q_neg [None ,:]
-            print (f"   🔍 DEBUG: q_neg после конвертации: форма = {q_neg.shape}")
+            print(f"   🔍 DEBUG: Конвертируем q_neg из {type(q_neg)} в numpy массив")
+            q_neg = np .array (q_neg ,dtype =np .float32 )
+            if q_neg.ndim == 1:
+                q_neg = q_neg[None, :]
+            print(f"   🔍 DEBUG: q_neg после конвертации: форма = {q_neg.shape}")
     except Exception as e :
-        print (f"   ❌ DEBUG: Ошибка при конвертации q_neg: {e}")
+        print(f"   ❌ DEBUG: Ошибка при конвертации q_neg: {e}")
         import traceback
-        traceback .print_exc ()
-        q_neg =None
+        traceback.print_exc ()
+        q_neg = None
 
     if q_neg is None or (hasattr (q_neg ,'size')and q_neg .size ==0 ):
-
         neg_pool =[]
         for cls ,Q in q_pos .items ():
             if Q is not None :
@@ -505,12 +504,12 @@ verbose :bool =True ,
     for m in range (M ):
         accepted =(best_pos [m ]>=min_pos_score )and (diff [m ]>=decision_threshold )
         decisions .append ({
-        'class':best_cls [m ],
-        'pos':float (best_pos [m ]),
-        'neg_raw':float (neg_raw [m ]),
-        'neg':float (neg [m ]),
-        'diff':float (diff [m ]),
-        'accepted':bool (accepted ),
+            'class':best_cls [m ],
+            'pos':float (best_pos [m ]),
+            'neg_raw':float (neg_raw [m ]),
+            'neg':float (neg [m ]),
+            'diff':float (diff [m ]),
+            'accepted':bool (accepted ),
         })
         if verbose :
             sep =best_pos [m ]
@@ -520,11 +519,11 @@ verbose :bool =True ,
             f"diff={diff[m]:+.3f}, sep=+{sep:.3f}, cons={cons} → принято={accepted}")
 
     debug ={
-    'pos_avg':pos_avg ,
-    'neg_avg':neg_avg ,
-    'used_online_negs':used_online_negs ,
-    'best_pos':best_pos ,
-    'neg_raw':neg_raw ,
-    'diff':diff ,
+        'pos_avg':pos_avg ,
+        'neg_avg':neg_avg ,
+        'used_online_negs':used_online_negs ,
+        'best_pos':best_pos ,
+        'neg_raw':neg_raw ,
+        'diff':diff ,
     }
-    return decisions ,debug
+    return decisions, debug

@@ -205,7 +205,7 @@ positive_weight :float =3.0 ,
 negative_weight :float =2.0 ,
 query_weight :float =0.5 )->torch .Tensor :
 
-    positive_weights =calculate_attention_weights_softmax (query_embedding ,positive_embeddings ,temperature =2.5 )
+    positive_weights = calculate_attention_weights_softmax (query_embedding ,positive_embeddings ,temperature =2.5 )
 
     positive_adjustment =positive_weight *torch .sum (positive_weights .unsqueeze (1 )*positive_embeddings ,dim =0 )
 
@@ -248,22 +248,41 @@ class HeatmapGenerator :
 
         self.pooled_features_posneg = None
         self.positive_embed, self.negative_embed = None, None
+        self.positive_embed_by_class = dict()
         self.positive_images_n = 0
         self.negaitve_images_n = 0
 
-    def init_adjusted_vector(self, positive_images: List[Image.Image], negative_images: List[Image.Image] = None) -> None:
+    def init_train_embeddings(self, positive_images_dict: List[Image.Image], negative_images: List[Image.Image] = None) -> None:
+        all_positive_images = []
+        for class_images in positive_images_dict.values():
+            all_positive_images.extend(class_images)
         if negative_images is None:
             negative_images = []
-        self.pooled_features_posneg = self._generate_pooled_patch_features(positive_images + negative_images)
-        positive_cls, _ = self.dinov3_fe(positive_images)
+        self.pooled_features_posneg = self._generate_pooled_patch_features(all_positive_images + negative_images)
+        positive_cls, _ = self.dinov3_fe(all_positive_images)
         self.positive_embed = positive_cls
         if negative_images:
             negative_cls, _ = self.dinov3_fe(negative_images)
             self.negative_embed = negative_cls
         else :
             self.negative_embed = torch.empty(0, device=self.dinov3_fe.device) 
-        self.positive_images_n = len(positive_images)
+        for label, pos_imgs in positive_images_dict.items():
+            positive_cls, _ = self.dinov3_fe(pos_imgs)
+            self.positive_embed_by_class[label] = positive_cls
+        self.positive_images_n = len(all_positive_images)
         self.negative_images_n = len(negative_images)
+
+    def generate_adjusted_embedding_simple(self, input_image: Image.Image, pos_embed, neg_embed):
+        input_cls, _ = self.dinov3_fe([input_image])
+        adjusted_embed = adjust_embedding(
+            input_cls[0],
+            pos_embed,
+            neg_embed,
+            positive_weight=3.0,
+            negative_weight=2.0,
+            query_weight=0.5,
+        )
+        return adjusted_embed
 
     @torch.no_grad()
     def generate_heatmap(self, input_image: Image.Image) -> torch.Tensor:
@@ -535,13 +554,7 @@ class HeatmapGenerator :
 
         return Image .fromarray (blended )
 
-    def _get_pooled_embed (self ,query_feats :torch .Tensor ,images :List [Image .Image ])->torch .Tensor :
-
-        pooled_features =self ._generate_pooled_patch_features (images )
-        return pooled_embed
-
     def _generate_pooled_patch_features (self ,images :List [Image .Image ])->torch .Tensor :
-
         all_patches =[]
         for img in images :
             _ ,patches =self .dinov3_fe ([img ])

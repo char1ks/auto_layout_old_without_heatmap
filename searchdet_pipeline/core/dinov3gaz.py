@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import sys
 from pathlib import Path
 import torch
@@ -36,9 +37,26 @@ PATCH_SIZE = 16
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
-# NOTE: (@gas) for masks only
-patch_quant_filter = torch.nn.Conv2d(1, 1, PATCH_SIZE, stride=PATCH_SIZE, bias=False)
-patch_quant_filter.weight.data.fill_(1.0 / (PATCH_SIZE * PATCH_SIZE))
+
+MODEL_DINOV3_VITS = "dinov3_vits16"
+MODEL_DINOV3_VITSP = "dinov3_vits16plus"
+MODEL_DINOV3_VITB = "dinov3_vitb16"
+MODEL_DINOV3_VITL = "dinov3_vitl16"
+MODEL_DINOV3_VITHP = "dinov3_vith16plus"
+MODEL_DINOV3_VIT7B = "dinov3_vit7b16"
+
+
+MODEL_TO_NUM_LAYERS = {
+    MODEL_DINOV3_VITS: 12,
+    MODEL_DINOV3_VITSP: 12,
+    MODEL_DINOV3_VITB: 12,
+    MODEL_DINOV3_VITL: 24,
+    MODEL_DINOV3_VITHP: 32,
+    MODEL_DINOV3_VIT7B: 40,
+}
+
+# TODO: (@gas) automate
+DINOV3_LOCATION = "/home/synetra/ml_segmentation/vendor/dinov3"
 
 
 class DinoV3VisionTextEncoderGaz:
@@ -78,24 +96,10 @@ def resize_transform(
     return TF.to_tensor(TF.resize(mask_image, (h_patches * patch_size, w_patches * patch_size)))
 
 
-MODEL_DINOV3_VITS = "dinov3_vits16"
-MODEL_DINOV3_VITSP = "dinov3_vits16plus"
-MODEL_DINOV3_VITB = "dinov3_vitb16"
-MODEL_DINOV3_VITL = "dinov3_vitl16"
-MODEL_DINOV3_VITHP = "dinov3_vith16plus"
-MODEL_DINOV3_VIT7B = "dinov3_vit7b16"
-
-
-MODEL_TO_NUM_LAYERS = {
-    MODEL_DINOV3_VITS: 12,
-    MODEL_DINOV3_VITSP: 12,
-    MODEL_DINOV3_VITB: 12,
-    MODEL_DINOV3_VITL: 24,
-    MODEL_DINOV3_VITHP: 32,
-    MODEL_DINOV3_VIT7B: 40,
-}
-
-DINOV3_LOCATION = "/home/synetra/ml_segmentation/vendor/dinov3"
+@dataclass
+class DinoFeaturesPT:
+    cls: torch.Tensor
+    patches: torch.Tensor
 
 
 class DinoV3EncoderGaz:
@@ -108,8 +112,11 @@ class DinoV3EncoderGaz:
         )
         self.model.eval()
         self.model.cuda()
+        # NOTE: (@gas) for masks only
+        self.patch_quant_filter = torch.nn.Conv2d(1, 1, PATCH_SIZE, stride=PATCH_SIZE, bias=False)
+        self.patch_quant_filter.weight.data.fill_(1.0 / (PATCH_SIZE * PATCH_SIZE))
 
-    def encode(self, img_pil: Image.Image) -> tuple[tuple[torch.Tensor, ...], ...]:
+    def encode(self, img_pil: Image.Image) -> DinoFeaturesPT:
         """
         rgb image --> tuple(patch features, cls feature vector)
         shapes:
@@ -127,7 +134,44 @@ class DinoV3EncoderGaz:
                     reshape=True, 
                     norm=True,
                 )[-1]
-        return (feats[0].squeeze(), feats[1].squeeze())
+        return DinoFeaturesPT(cls=feats[1].squeeze(), patches=feats[0].squeeze())
+
+    def encode_mask(
+        self, 
+        mask: Image.Image, 
+        features: DinoFeaturesPT | None = None, 
+        img_pil: Image.Image | None = None, 
+        mask_threshold: float = 0.5,
+    ) -> torch.Tensor:
+        if features is None and img_pil is None:
+            raise ValueError("either of features or img_pil should be passed, got none of them")
+        mask_resized = resize_transform(mask)
+        mask_quantized = self.patch_quant_filter(mask_resized.unsqueeze(0)).squeeze().detach().cpu()
+        if features is None and img_pil is not None:
+            features = self.encode(img_pil)
+        patches_fg_selection = (mask_quantized > mask_threshold) # (P_H, P_W); bool
+        patches_selected = features.patches[:, patches_fg_selection] # (D, H, W) --> (D, N_points)
+        patches_mean = patches_selected.mean(axis=1) # (,D)
+        return patches_mean
+
+
+def cosine_similarity_pt(A, B):
+    if A.shape[-1] != B.shape[-1]:
+        raise ValueError("Last dimension of A and B must match (feature dimension d)")
+
+    if A.dim() == 1 and B.dim() == 1:
+        A_norm = A / (torch.norm(A, dim=-1, keepdim=True) + 1e-8)
+        B_norm = B / (torch.norm(B, dim=-1, keepdim=True) + 1e-8)
+        return torch.dot(A_norm, B_norm)
+    
+    if A.dim() < 2 or B.dim() < 2:
+        raise ValueError("For batched inputs, tensors must have at least 2 dimensions (..., n, d)")
+
+    A_norm = A / (torch.norm(A, dim=-1, keepdim=True) + 1e-8)
+    B_norm = B / (torch.norm(B, dim=-1, keepdim=True) + 1e-8)
+    
+    similarity = torch.matmul(A_norm, B_norm.mT)
+    return similarity
 
 
 if __name__=="__main__":
@@ -135,14 +179,26 @@ if __name__=="__main__":
 
     model = DinoV3EncoderGaz()
  
-    img_pil = Image.open(".local/example.jpg").convert("RGB")
-    feats = model.encode(img_pil)
+    img_pil_ex = Image.open(".local/example.jpg").convert("RGB")
+    img_pil = Image.open(".local/image_left.jpg").convert("RGB")
+    mask = Image.open(".local/image_left_fg.png")
+    mask = mask.split()[-1]
+
+    feats_ex = model.encode(img_pil_ex)
 
     start = time.perf_counter()
     feats = model.encode(img_pil)
     end = time.perf_counter()
-    print(len(feats), feats[0].shape, feats[1].shape) # 0 - patches, 1 - cls
+
+    print(feats.patches.shape, feats.cls.shape)
     print(f"{int((end-start)*1000)} ms.") 
+
+    mask_features = model.encode_mask(mask, feats)
+    print("mask features: ", feats.patches.shape, mask_features.shape)
+
+    sim1 = cosine_similarity_pt(feats_ex.cls, feats.cls) # should be low
+    sim2 = cosine_similarity_pt(feats.cls, mask_features) # should be high
+    print("SIM.: ", sim1, sim2)
 
 
 # if __name__=="__main__":

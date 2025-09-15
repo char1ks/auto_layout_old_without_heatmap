@@ -84,13 +84,7 @@ class Metric(abc.ABC):
         union = area_a + area_b - inter
         return 0.0 if union <= 0.0 else inter / union
 
-    def _map(
-        self,
-        gt_anns: List[COCOAnnotation],
-        pred_anns: List[COCOAnnotation],
-        iou_thresholds: List[float] = [t / 100 for t in range(50, 100, 5)],  # 0.50..0.95
-    ) -> float:
-        # Группируем истинные аннотации по (file_name, label)
+    def _map(self,gt_anns: List[COCOAnnotation],pred_anns: List[COCOAnnotation],iou_thresholds: List[float] = [t / 100 for t in range(50, 100, 5)], ) -> float:
         gt_by_key: Dict[Tuple[Any, Any], List[COCOAnnotation]] = {}
         for g in gt_anns:
             fname = getattr(g, "file_name", None)

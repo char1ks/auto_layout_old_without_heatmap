@@ -16,10 +16,10 @@ class COCOAnnotation:
     height: int
 
     area: float
+    file_name: str
     bbox: List[float] = field(default_factory=list)
     
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
-    file_name: str
 
     #Необходимость этих полей спорна,хотя в COCO Format они есть,куча этих полей вроде как можно откинуть :
     # license: Optional[int] = None

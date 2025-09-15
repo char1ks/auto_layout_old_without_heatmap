@@ -30,5 +30,8 @@ def main() -> None:
     print("КАТЕГОРИИ ФИЛЬТР")
     print(len(chicken_ds.filter_by_category("Chicken")))
     print(len(simple_ds.filter_by_category("Chicken")))
+    print("МЕТА-ДАННЫЕ")
+    print(chicken_ds.meta.get("total_annotations"))
+    print(chicken_ds.meta.get("dataset_type"))
 if __name__ == "__main__":
     main()

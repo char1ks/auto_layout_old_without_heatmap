@@ -11,7 +11,6 @@ negative_dir="examples/negative"
 ground_truth="ground_truth"
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-#QUESTION: что такое IoU? Правильно я понимаю,что это фактически равни двух бинаризованных массивов путем вычисления пересечения и наложения и позже их деления?
 # metrics variables
 all_ious = [] # to mean IoU
 total_predictions = 0 # to mean IoU

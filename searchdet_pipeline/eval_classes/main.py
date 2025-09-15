@@ -21,7 +21,14 @@ def main() -> None:
     if not json_path.exists():
         print("coco file not found")
         return
+        Chicken
     chicken_ds = ChickenDataset.from_path(json_path)
     simple_ds = SimpleDataset.from_path(json_path)
+    print("ВСЕ АННОТАЦИИ")
+    print(chicken_ds.annotations_len())
+    print(simple_ds.annotations_len())
+    print("КАТЕГОРИИ ФИЛЬТР")
+    print(len(chicken_ds.filter_by_category("Chicken")))
+    print(len(simple_ds.filter_by_category("Chicken")))
 if __name__ == "__main__":
     main()

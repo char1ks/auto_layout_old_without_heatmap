@@ -6,8 +6,9 @@ from .COCOAnnotations import COCOAnnotation
 #Грубо говоря это модель датасета, которая содержит в себе аннотации к изображениям и простое описание датасета:Имя, дата, источник датасета, ссылки, и тд
 @dataclass
 class DatasetModel:
-    uid: str = field(default_factory=lambda: str(uuid.uuid4()))
     data_points: List[COCOAnnotation]
+    uid: str = field(default_factory=lambda: str(uuid.uuid4()))
+    meta: dict[str, Any] = field(default_factory=dict)
 
     #Метаданные датасета:
     #name-имя датасета
@@ -16,7 +17,6 @@ class DatasetModel:
     #total_annotations-количество аннотаций в датасете
     #url-ссылка до источника датасета 
     #color_channels-список доступных каналов
-    meta: dict[str, Any] = field(default_factory=dict)
 
     #Сколько аннотаций всего у нас
     def annotations_len(self) -> int:

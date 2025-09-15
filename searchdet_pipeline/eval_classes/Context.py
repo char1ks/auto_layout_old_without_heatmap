@@ -8,7 +8,7 @@ from datetime import datetime
 
 @dataclass
 class Context:
-    uid: str = field(default_factory=lambda: str(uuid.uuid4()))
+    uid: str = field(default_factory=lambda: str(uuid4()))
     detector_name: str = ""
     image_shape: Optional[tuple[int, int, int]] = None
 

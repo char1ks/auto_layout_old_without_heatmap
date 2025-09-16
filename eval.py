@@ -27,36 +27,6 @@ def load_dataset(json_path: Path, dataset_type: str) -> Tuple[DatasetModel, Dict
     return gt, gt_by_file
 
 
-def detections_to_coco(found: List[dict],file_name: str,image_np: np.ndarray,) -> List[COCOAnnotation]:
-    H, W = image_np.shape[:2]
-    preds: List[COCOAnnotation] = []
-    for f in found:
-        mask_dict = f.get("mask", {})
-        seg = mask_dict.get("segmentation")
-        if seg is None:
-            continue
-        seg_np = np.array(seg).astype(bool)
-        bbox = f.get("bbox", mask_dict.get("bbox", [0, 0, 0, 0]))
-        area = int(seg_np.sum()) if seg_np.size > 0 else int(mask_dict.get("area", 0))
-        label = f.get("class", "unknown")
-        conf = float(f.get("confidence", mask_dict.get("confidence", 0.0)))
-
-        ann = COCOAnnotation(
-            img=image_np,
-            mask=seg_np,
-            label=label,
-            width=W,
-            height=H,
-            area=float(area),
-            bbox=[int(b) for b in bbox],
-            image_resolution=(W, H),
-            file_name=file_name,
-        )
-        setattr(ann, "score", conf)
-        preds.append(ann)
-    return preds
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Оценка детектора на COCO-подобном датасете c мерами IoU/mAP")
     parser.add_argument("--json", type=str, required=True, help="Путь к COCO JSON аннотациям")
@@ -90,10 +60,7 @@ def main() -> None:
         image_np = anns[0].img
         if image_np is None or not isinstance(image_np, np.ndarray) or image_np.size == 0:
             continue
-
-        result = detector.find_present_elements(image_np)
-        found = result.get("found_elements", [])
-        preds = detections_to_coco(found, file_name=fname, image_np=image_np)
+        preds = detector.detect(image_np, file_name=fname)
         predictions.extend(preds)
 
     metric = Metric()
@@ -105,14 +72,23 @@ def main() -> None:
         print(f"sum time: {np.sum(timing_total):.3f}с")
     print(f"metric: {metric_out.metric_name}")
     print(f"Score (mean IoU): {metric_out.score:.4f}")
-    stats = metric_oudddddddt.stats or {}
+    stats = metric_out.stats or {}
     if stats:
         mean_iou = stats.get("mean_iou")
         map_score = stats.get("mAP")
+        map_50 = stats.get("mAP50")
+        map_75 = stats.get("mAP75")
+        dice = stats.get("dice")
         if mean_iou is not None:
-            print(f"Mean IoU: {mean_iou:.4f}")
+            print(f"Mean IoU (Jaccard): {mean_iou:.4f}")
+        if dice is not None:
+            print(f"Mean Dice: {dice:.4f}")
         if map_score is not None:
             print(f"mAP@[0.50:0.95]: {map_score:.4f}")
+        if map_50 is not None:
+            print(f"mAP@0.50: {map_50:.4f}")
+        if map_75 is not None:
+            print(f"mAP@0.75: {map_75:.4f}")
 
 
 if __name__ == "__main__":

@@ -43,7 +43,10 @@ class DetectorBase(abc.ABC):
             detector_name=self.detector_name,
             image_shape=image_np.shape if image_np is not None else None
         )
-        
+        context.extra['original_image'] = image_np
+        file_name = kwargs.get('file_name')
+        if file_name is not None:
+            context.extra['file_name'] = file_name
         try:
             results = self.find_present_elements(image_np, context, *args, **kwargs)
             annotations = self._convert_to_coco_annotations(results, context)
@@ -58,15 +61,68 @@ class DetectorBase(abc.ABC):
                 callback(context)
     
     def _convert_to_coco_annotations(self, results: Dict[str, Any], context: Context) -> List[COCOAnnotation]:
-        annotations = []
-        if 'detections' in results:
-            for detection in results['detections']:
-                annotation = COCOAnnotation(
-                    img=context.extra.get('original_image'),
-                    bbox=detection.get('bbox', [0, 0, 0, 0]),
-                    label=detection.get('label', 'unknown'),
-                    confidence=detection.get('confidence', 0.0)
-                )
-                annotations.append(annotation)
+        annotations: List[COCOAnnotation] = []
+        detections = []
+        if isinstance(results, dict):
+            if 'detections' in results and isinstance(results['detections'], list):
+                detections = results['detections']
+            elif 'found_elements' in results and isinstance(results['found_elements'], list):
+                detections = results['found_elements']
+        elif isinstance(results, list):
+            detections = results
+
+        img_np = context.extra.get('original_image')
+        H = W = None
+        if isinstance(img_np, np.ndarray) and img_np.size > 0:
+            H, W = img_np.shape[:2]
+        file_name = context.extra.get('file_name')
+        for det in detections:
+            det = det or {}
+            mask_dict = det.get('mask') if isinstance(det.get('mask'), dict) else {}
+            seg = mask_dict.get('segmentation') if isinstance(mask_dict, dict) else None
+            if seg is None:
+                seg = det.get('segmentation')
+            seg_np = None
+            if seg is not None:
+                try:
+                    seg_np = np.array(seg).astype(bool)
+                except Exception:
+                    seg_np = None
+            bbox = det.get('bbox') or (mask_dict.get('bbox') if isinstance(mask_dict, dict) else None) or [0, 0, 0, 0]
+            label = det.get('label') or det.get('class') or 'unknown'
+            conf = det.get('confidence', None)
+            if conf is None and isinstance(mask_dict, dict):
+                conf = mask_dict.get('confidence', None)
+            if conf is None:
+                conf = det.get('score', 0.0)
+            try:
+                conf = float(conf)
+            except Exception:
+                conf = 0.0
+            if H is None or W is None:
+                if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                    W = W or int(bbox[2])
+                    H = H or int(bbox[3])
+            area = 0
+            if isinstance(seg_np, np.ndarray):
+                area = int(seg_np.sum())
+            elif isinstance(mask_dict, dict):
+                try:
+                    area = int(mask_dict.get('area', 0))
+                except Exception:
+                    area = 0
+            ann = COCOAnnotation(
+                img=img_np,
+                mask=seg_np if isinstance(seg_np, np.ndarray) else None,
+                label=label,
+                width=W,
+                height=H,
+                area=float(area),
+                bbox=[int(b) for b in bbox] if isinstance(bbox, (list, tuple)) else [0, 0, 0, 0],
+                image_resolution=(W, H) if (W is not None and H is not None) else None,
+                file_name=file_name,
+            )
+            setattr(ann, 'score', conf)
+            annotations.append(ann)
         
         return annotations

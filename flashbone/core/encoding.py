@@ -1,3 +1,4 @@
+# NOTE: (@gas) reference is Meta example notebook: https://github.com/facebookresearch/dinov3/blob/main/notebooks/dinotxt_inference.ipynb
 from dataclasses import dataclass
 import sys
 from pathlib import Path

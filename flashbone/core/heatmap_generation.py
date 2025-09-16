@@ -1,3 +1,4 @@
+# NOTE: (@gas) this code is changed and refactored version of the searchdet: https://github.com/Mankeerat/SearchDet/blob/main/heatmap_generation.py
 import logging
 
 import torch
@@ -7,7 +8,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from einops import reduce
 import torch.nn.functional as F
 
-from flashbone.core.encoding import DinoV3EncoderGaz, DinoFeaturesPT
+from flashbone.core.encoding import DinoV3EncoderGaz
 
 
 _logger = logging.getLogger("heatmap-generation")

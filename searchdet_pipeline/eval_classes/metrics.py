@@ -4,6 +4,7 @@ import abc
 from dataclasses import dataclass, field
 from typing import Any, List, Dict, Tuple, Iterable, Optional
 
+import numpy as np
 from .DatasetModel import DatasetModel
 from .COCOAnnotations import COCOAnnotation
 
@@ -31,33 +32,54 @@ class Metric(abc.ABC):
             pred_by_file.setdefault(fname, []).append(ann)
 
         ious: List[float] = []
+        dices: List[float] = []
         pairs: List[dict] = []
         matched_images = 0
 
         for fname, gt_list in gt_by_file.items():
-            preds = pred_by_file.get(fname)
+            preds = pred_by_file.get(fname, [])
             if not preds:
                 continue
             matched_images += 1
-            n = min(len(gt_list), len(preds))
-            for i in range(n):
-                iou = self._iou(gt_list[i].bbox, preds[i].bbox)
-                ious.append(iou)
-                pairs.append({
-                    "file_name": fname,
-                    "gt_uid": getattr(gt_list[i], "uid", None),
-                    "pred_uid": getattr(preds[i], "uid", None),
-                    "iou": iou,
-                })
+            used: set[int] = set()
+            preds_sorted = sorted(preds, key=lambda x: getattr(x, "score", 0.0), reverse=True)
+            for p in preds_sorted:
+                best_iou = 0.0
+                best_idx = -1
+                for gi, g in enumerate(gt_list):
+                    if gi in used:
+                        continue
+                    iou_val = self._calc_iou(g, p)
+                    if iou_val > best_iou:
+                        best_iou = iou_val
+                        best_idx = gi
+                if best_idx >= 0:
+                    used.add(best_idx)
+                    dice = (2 * best_iou / (1 + best_iou)) if best_iou > 0.0 else 0.0
+                    ious.append(best_iou)
+                    dices.append(dice)
+                    pairs.append({
+                        "file_name": fname,
+                        "gt_uid": getattr(gt_list[best_idx], "uid", None),
+                        "pred_uid": getattr(p, "uid", None),
+                        "iou": best_iou,
+                        "dice": dice,
+                    })
 
         mean_iou = (sum(ious) / len(ious)) if ious else 0.0
+        mean_dice = (sum(dices) / len(dices)) if dices else 0.0
 
-        # mAP по file_name/label
         map_score = self._map(gt.data_points, prediction)
+        map_50 = self._map(gt.data_points, prediction, [0.5])
+        map_75 = self._map(gt.data_points, prediction, [0.75])
 
         stats = {
             "mean_iou": mean_iou,
             "mAP": map_score,
+            "mAP50": map_50,
+            "mAP75": map_75,
+            "jaccard": mean_iou,
+            "dice": mean_dice,
             "num_images_matched": matched_images,
             "num_pairs": len(pairs),
             "pairs": pairs,
@@ -65,6 +87,17 @@ class Metric(abc.ABC):
         }
 
         return MetricOutputModel(metric_name="combined", score=mean_iou, stats=stats)
+
+    def _calc_iou(self, g: COCOAnnotation, p: COCOAnnotation) -> float:
+        gm = getattr(g, "mask", None)
+        pm = getattr(p, "mask", None)
+        if isinstance(gm, np.ndarray) and isinstance(pm, np.ndarray) and gm.size and pm.size and gm.shape == pm.shape:
+            gmb = (gm.astype(bool))
+            pmb = (pm.astype(bool))
+            inter = np.logical_and(gmb, pmb).sum(dtype=np.int64)
+            union = np.logical_or(gmb, pmb).sum(dtype=np.int64)
+            return float(inter) / float(union) if union > 0 else 0.0
+        return self._iou(g.bbox, p.bbox)
 
     def _iou(self, box_a: Iterable[float], box_b: Iterable[float]) -> float:
         ax, ay, aw, ah = box_a
@@ -115,7 +148,7 @@ class Metric(abc.ABC):
                         key = (p_fname, gi)
                         if gt_used.get(key, False):
                             continue
-                        iou = self._iou(p.bbox, g.bbox)
+                        iou = self._calc_iou(g, p)
                         if iou > best_iou:
                             best_iou = iou
                             best_idx = gi
@@ -140,7 +173,6 @@ class Metric(abc.ABC):
                     rec = tp_cum / total_gt
                     precisions.append(prec)
                     recalls.append(rec)
-                # 101-точечная аппроксимация AP
                 ap = 0.0
                 for r_i in range(101):
                     r_target = r_i / 100.0

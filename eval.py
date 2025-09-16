@@ -71,15 +71,11 @@ def main() -> None:
         print("coco file not found:", json_path)
         return
     gt, gt_by_file = load_dataset(json_path, args.dataset_type)
-
-    # 2) Готовим детектор и референсы
     detector = SearchDetDetector()
     pos_by_class, neg_imgs = detector.read_reference_images(
         positive_dir=args.positive_dir, negative_dir=args.negative_dir
     )
     detector.set_references(pos_by_class, neg_imgs)
-
-    # 3) Прогоняем детектор по каждому изображению один раз и конвертируем в COCOAnnotation для метрик
     predictions: List[COCOAnnotation] = []
     timing_total = []
 
@@ -109,7 +105,7 @@ def main() -> None:
         print(f"sum time: {np.sum(timing_total):.3f}с")
     print(f"metric: {metric_out.metric_name}")
     print(f"Score (mean IoU): {metric_out.score:.4f}")
-    stats = metric_out.stats or {}
+    stats = metric_oudddddddt.stats or {}
     if stats:
         mean_iou = stats.get("mean_iou")
         map_score = stats.get("mAP")

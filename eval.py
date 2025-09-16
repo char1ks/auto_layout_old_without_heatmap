@@ -1,94 +1,123 @@
-from searchdet_pipeline.core.detector import SearchDetDetector
-import cv2
-import os
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Dict, List, Tuple
 import numpy as np
 
-detector = SearchDetDetector()
-
-reference_masks_dir = "input/reference_masks"  
-positive_dir="examples/positive"
-negative_dir="examples/negative"
-ground_truth="ground_truth"
-script_dir = os.path.dirname(os.path.abspath(__file__))
-
-# metrics variables
-all_ious = [] # to mean IoU
-total_predictions = 0 # to mean IoU
+from searchdet_pipeline.core.detector import SearchDetDetector
+from searchdet_pipeline.eval_classes.ChickenDataset import ChickenDataset
+from searchdet_pipeline.eval_classes.Dataset_without_changes import SimpleDataset
+from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
+from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
+from searchdet_pipeline.eval_classes.metrics import Metric
 
 
-pos_by_class, neg_imgs = detector.read_reference_images(
-    positive_dir=positive_dir,
-    negative_dir=negative_dir
-)
-detector.set_references(pos_by_class, neg_imgs)
+def load_dataset(json_path: Path, dataset_type: str) -> Tuple[DatasetModel, Dict[str, List[COCOAnnotation]]]:
+    if dataset_type == "chicken":
+        ds = ChickenDataset.from_path(json_path)
+    else:
+        ds = SimpleDataset.from_path(json_path)
+    gt: DatasetModel = ds
 
-for image_file in os.listdir(reference_masks_dir):
-    if image_file.lower().endswith(('.png', '.jpg', '.jpeg')):
-        image_path = os.path.join(reference_masks_dir, image_file)
-        image_np = detector.read_input_img(image_path)
+    gt_by_file: Dict[str, List[COCOAnnotation]] = {}
+    for ann in gt.data_points:
+        fname = getattr(ann, "file_name", "") or ""
+        gt_by_file.setdefault(fname, []).append(ann)
+    return gt, gt_by_file
+
+
+def detections_to_coco(found: List[dict],file_name: str,image_np: np.ndarray,) -> List[COCOAnnotation]:
+    H, W = image_np.shape[:2]
+    preds: List[COCOAnnotation] = []
+    for f in found:
+        mask_dict = f.get("mask", {})
+        seg = mask_dict.get("segmentation")
+        if seg is None:
+            continue
+        seg_np = np.array(seg).astype(bool)
+        bbox = f.get("bbox", mask_dict.get("bbox", [0, 0, 0, 0]))
+        area = int(seg_np.sum()) if seg_np.size > 0 else int(mask_dict.get("area", 0))
+        label = f.get("class", "unknown")
+        conf = float(f.get("confidence", mask_dict.get("confidence", 0.0)))
+
+        ann = COCOAnnotation(
+            img=image_np,
+            mask=seg_np,
+            label=label,
+            width=W,
+            height=H,
+            area=float(area),
+            bbox=[int(b) for b in bbox],
+            image_resolution=(W, H),
+            file_name=file_name,
+        )
+        setattr(ann, "score", conf)
+        preds.append(ann)
+    return preds
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Оценка детектора на COCO-подобном датасете c мерами IoU/mAP")
+    parser.add_argument("--json", type=str, required=True, help="Путь к COCO JSON аннотациям")
+    parser.add_argument("--dataset_type", type=str, default="simple", choices=["simple", "chicken"], help="Тип датасета из eval_classes")
+    parser.add_argument("--positive_dir", type=str, required=True, help="Директория с позитивными образцами (по классам)")
+    parser.add_argument("--negative_dir", type=str, default=None, help="Директория с негативными образцами (опционально)")
+    parser.add_argument("--limit", type=int, default=None, help="Ограничить число изображений для быстрой проверки")
+    args = parser.parse_args()
+
+    json_path = Path(args.json)
+    if not json_path.exists():
+        print("coco file not found:", json_path)
+        return
+    gt, gt_by_file = load_dataset(json_path, args.dataset_type)
+
+    # 2) Готовим детектор и референсы
+    detector = SearchDetDetector()
+    pos_by_class, neg_imgs = detector.read_reference_images(
+        positive_dir=args.positive_dir, negative_dir=args.negative_dir
+    )
+    detector.set_references(pos_by_class, neg_imgs)
+
+    # 3) Прогоняем детектор по каждому изображению один раз и конвертируем в COCOAnnotation для метрик
+    predictions: List[COCOAnnotation] = []
+    timing_total = []
+
+    all_files = list(gt_by_file.keys())
+    if args.limit is not None:
+        all_files = all_files[: max(0, args.limit)]
+
+    for i, fname in enumerate(all_files, start=1):
+        anns = gt_by_file.get(fname, [])
+        if not anns:
+            continue
+        image_np = anns[0].img
+        if image_np is None or not isinstance(image_np, np.ndarray) or image_np.size == 0:
+            continue
+
         result = detector.find_present_elements(image_np)
-        
-        for i, elements in enumerate(result.get('found_elements')):
-            original_image = image_np.copy()
-            
-            if len(original_image.shape) == 2:
-                original_image = cv2.cvtColor(original_image, cv2.COLOR_GRAY2BGR)
-            
-            mask_data = elements['mask']['segmentation']
-            confidence = elements['confidence']
-            bbox = elements['bbox']
-            
-            colored_mask = np.zeros_like(original_image, dtype=np.uint8)
-            mask_resized = cv2.resize(mask_data.astype(np.uint8), (original_image.shape[1], original_image.shape[0]))
-            colored_mask[mask_resized > 0] = [255, 0, 0]
-            
-            overlay = cv2.addWeighted(original_image, 0.7, colored_mask, 0.3, 0)
-            output_filename = f"output_{os.path.splitext(image_file)[0]}_{i}.png"
-            cv2.imwrite(os.path.join(script_dir, output_filename), overlay)
+        found = result.get("found_elements", [])
+        preds = detections_to_coco(found, file_name=fname, image_np=image_np)
+        predictions.extend(preds)
+
+    metric = Metric()
+    metric_out = metric.compute(gt=gt, prediction=predictions)
+    print("РЕЗЫ")
+    print(f"фоток обработано: {len(all_files)}")
+    if timing_total:
+        print(f"avg time на изображение: {np.mean(timing_total):.3f}с")
+        print(f"sum time: {np.sum(timing_total):.3f}с")
+    print(f"metric: {metric_out.metric_name}")
+    print(f"Score (mean IoU): {metric_out.score:.4f}")
+    stats = metric_out.stats or {}
+    if stats:
+        mean_iou = stats.get("mean_iou")
+        map_score = stats.get("mAP")
+        if mean_iou is not None:
+            print(f"Mean IoU: {mean_iou:.4f}")
+        if map_score is not None:
+            print(f"mAP@[0.50:0.95]: {map_score:.4f}")
 
 
-            #TODO : add metrics
-
-g
-
-
-def calculate_iou(prediction_mask, groundtruth_mask):
-    prediction_binary = (pred_mask > 0).astype(np.uint8) #QUESTION : Насколько правильно тут применять бинаризацию?ведь маски в gt могут приходить в формате 0/255 ,а из prediction_mask они могут приходит от 0/1 . Поэтому я пришел к выводу,что бинаризация нужна.
-    groundtruth_binary = (gt_mask > 0).astype(np.uint8)
-    intersection = np.logical_and(prediction_binary, groundtruth_binary).sum()
-    union = np.logical_or(prediction_binary, groundtruth_binary).sum()
-    return intersection / union if union > 0 else 0
-
-def calculate_map_multiple_detections(detections, ground_truth_mask, iou_thresholds=[0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]):
-    #QUESTION:Правильно я понимаю,что массив iou_thresholds нужен для вчисления mAP@[0.5:0.95]?
-    if not detections:
-        return 0.0
-    detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
-    aps = []
-    for iou_thresh in iou_thresholds:
-        precisions = []
-        recalls = []
-        tp = 0  
-        fp = 0  
-        gt_matched = False 
-        for detection in detections:
-            pred_mask = detection["mask"]
-            iou = calculate_iou(pred_mask, ground_truth_mask)
-            if iou >= iou_thresh and not gt_matched:
-                tp += 1
-                gt_matched = True
-            else:
-                fp += 1
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-            recall = tp / 1  
-            precisions.append(precision)
-            recalls.append(recall)
-        ap = 0.0
-        for i in range(len(recalls)):
-            if i == 0:
-                recall_delta = recalls[i]
-            else:
-                recall_delta = recalls[i] - recalls[i-1]
-            ap += precisions[i] * recall_delta
-        aps.append(ap)
-    return np.mean(aps)
+if __name__ == "__main__":
+    main()

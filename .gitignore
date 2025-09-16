@@ -85,9 +85,9 @@ wandb/
 tensorboard/
 
 # Images and Videos (except test samples)
-*.jpg
+# *.jpg
 *.jpeg
-*.png
+# *.png
 *.gif
 *.bmp
 *.tiff
@@ -150,3 +150,5 @@ dmypy.json
 
 vendor/dinov3/.git/
 vendor/dinov3/.github/
+
+!tests/*

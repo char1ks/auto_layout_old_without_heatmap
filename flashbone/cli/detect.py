@@ -6,15 +6,12 @@ from typing import Optional, List
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
-    from ..core.pipeline import PipelineProcessor
     from ..utils.config import Config, DEFAULT_CONFIG
 except ImportError:
     try:
-        from searchdet_pipeline.core.pipeline import PipelineProcessor
-        from searchdet_pipeline.utils.config import Config, DEFAULT_CONFIG
+        from flashbone.utils.config import Config, DEFAULT_CONFIG
     except ImportError:
         print("⚠️ Модули конфигурации недоступны, используем упрощенный режим")
-        PipelineProcessor = None
         Config = None
         DEFAULT_CONFIG = None
 

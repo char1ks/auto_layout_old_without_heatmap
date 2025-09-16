@@ -10,9 +10,52 @@ from ultralytics.models.sam.predict import SAM2Predictor
 from ultralytics.engine.results import Masks
 
 from .heatmap_generator import HeatmapGenerator ,crop_heatmap_region ,merge_masks_with_heatmap_np ,save_crop_debug_info ,visualize_crop_region, merge_overlapping_masks_np
-from .scoring import ScoreCalculator, score_multiclass
-from .embeddings import EmbeddingExtractor
-from searchdet_pipeline.core.heatmap_points_extractor import ExtractConfig, BrightClusterExtractor, ExtractResult, sample_points_with_value
+
+
+def sample_points_with_value(
+    arr: np.ndarray,
+    value: float,
+    n: int,
+    *,
+    atol: Optional[float] = None,
+    rtol: Optional[float] = None,
+    match_nan: bool = False,
+    replace: bool = False,
+    seed: Optional[int] = None,
+) -> List[Tuple[int, int]]:
+    """
+    Return N random (x, y) image coordinates from a 2D array where arr[y, x] == value.
+
+    - Exact match by default; use atol/rtol for float tolerance via np.isclose.
+    - Set match_nan=True and value=np.nan to sample NaN positions.
+    - If replace=False, raises if fewer than N matches exist.
+
+    Returns: list of (x, y) integer tuples.
+    """
+    a = np.asarray(arr)
+    if a.ndim != 2:
+        raise ValueError("arr must be 2D")
+
+    if match_nan and np.isnan(value):
+        mask = np.isnan(a)
+    elif atol is not None or rtol is not None:
+        mask = np.isclose(a, value, atol=atol or 0.0, rtol=rtol or 0.0, equal_nan=False)
+    else:
+        mask = (a == value)
+
+    flat_idx = np.flatnonzero(mask)
+    if flat_idx.size == 0:
+        return []
+
+    if not replace and n > flat_idx.size:
+        raise ValueError(f"Requested n={n} but only {flat_idx.size} matching points exist.")
+
+    rng = np.random.default_rng(seed)
+    chosen = rng.choice(flat_idx, size=n, replace=replace)
+    rows, cols = np.unravel_index(chosen, a.shape)  # rows=y, cols=x
+
+    # Convert to list of (x, y) ints
+    return [(int(x), int(y)) for y, x in zip(rows, cols)]
 
 
 def load_fastsam_model():
@@ -36,12 +79,10 @@ def load_sam_predictor():
 class FastSAMHeatmapProcessor:
     def __init__ (
         self, 
-        heatmap_generator: HeatmapGenerator,
         fastsam_model = None, 
         embedding_extractor: EmbeddingExtractor = None, 
         decision_threshold: float = 0.5
     ) -> None:
-        self.heatmap_generator = heatmap_generator
         self.fastsam_model = fastsam_model
         self.embedding_extractor = embedding_extractor
 

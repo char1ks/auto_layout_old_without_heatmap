@@ -15,18 +15,18 @@ from .embeddings import EmbeddingExtractor
 from .scoring import ScoreCalculator
 from .step7_result_saving import ResultSaver
 from .utils import get_image_size, get_feature_map_size, upsample_feature_map
-from .dinov3_encoder import DinoV3Encoder
+from .encoding import DinoV3Encoder
 from .heatmap_generator import HeatmapGenerator
 from .binning_processor import BinningProcessor
 from .enhanced_heatmap_processor import EnhancedHeatmapProcessor
-from .fastsam_integration import FastSAMHeatmapProcessor, load_fastsam_model, load_sam_model, load_sam_predictor
+from .segmentation import FastSAMHeatmapProcessor, load_fastsam_model, load_sam_model, load_sam_predictor
 from .models import DetectorConfig, ProcessingResult, MaskData, DetectionResult
 from ..utils.validation import ImageValidator, DirectoryValidator, ValidationError, validate_processing_pipeline_inputs
 import torch
 from .models import MaskBackend, BackboneType
 
-from searchdet_pipeline.detector_base import DetectorBase
-from searchdet_pipeline.core.binning_processor import bin_filter_heatmap
+from flashbone.detector_base import DetectorBase
+from flashbone.core.binning_processor import bin_filter_heatmap
 
 
 class SearchDetDetector(DetectorBase):
@@ -103,7 +103,6 @@ class SearchDetDetector(DetectorBase):
         # sam_model_instance = load_sam_model()
         # sam_model_instance = load_sam_predictor()
         self.fastsam_processor = FastSAMHeatmapProcessor(
-            heatmap_generator=self.heatmap_generator,
             fastsam_model=sam_model_instance,
             embedding_extractor=self.embedding_extractor,
             decision_threshold=self.config.decision_threshold,
@@ -137,7 +136,7 @@ class SearchDetDetector(DetectorBase):
         t_embeddings = time.time()
         print("1️⃣3️⃣ Шаг 9: EmbeddingExtractor.build_queries_multiclass() - эмбеддинги примеров по классам")
         # TODO: (@gas) remove from here after figuring out heatmaps integration (images needed by the `heatmap_generator`)
-        self.heatmap_generator.init_train_embeddings(pos_by_class, neg_imgs)
+        self.heatmap_generator.init_pooled_features_train(pos_by_class, neg_imgs)
         # 
         self.q_pos, self.q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs)
         timing_info['embedding_extraction'] = time.time() - t_embeddings 

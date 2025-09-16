@@ -17,8 +17,8 @@ from PIL import Image
 import numpy as np
 import cv2
 
-from searchdet_pipeline.core.detector import SearchDetDetector
-from searchdet_pipeline.detector_base import DetectorBase, MockDetector
+from flashbone.core.detector import SearchDetDetector
+from flashbone.detector_base import DetectorBase, MockDetector
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:

@@ -10,7 +10,7 @@ class COCOAnnotation:
     img:np.ndarray
     mask:np.ndarray # Выполняет роль segmentation в COCO standara format
     label: int | str
-    image_resolution: tuple[int, int]  # width, height
+    image_resolution: tuple[int, int]  # width, height (aod) change name
     
     width: int
     height: int

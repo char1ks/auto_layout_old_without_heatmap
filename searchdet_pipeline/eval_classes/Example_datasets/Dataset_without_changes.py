@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any
 from pathlib import Path
 
-from .Dataset import Dataset
+from searchdet_pipeline.eval_classes.Dataset import Dataset
 
 
 class SimpleDataset(Dataset):

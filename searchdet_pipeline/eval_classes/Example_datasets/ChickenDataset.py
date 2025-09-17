@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any
-from .Dataset import Dataset
+from searchdet_pipeline.eval_classes.Dataset import Dataset
+from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
 
 class ChickenDataset(Dataset):
     @classmethod
@@ -14,7 +15,6 @@ class ChickenDataset(Dataset):
             'categories': obj.get('categories', [])
         })
         
-        from .DatasetModel import DatasetModel
         data = DatasetModel(
             data_points=annotations,
             meta=meta
@@ -40,7 +40,6 @@ class ChickenDataset(Dataset):
             'categories': obj.get('categories', [])
         })
         
-        from .DatasetModel import DatasetModel
         data = DatasetModel(
             data_points=annotations,
             meta=meta

@@ -3,9 +3,9 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from .ChickenDataset import ChickenDataset
-from .Dataset import Dataset
-from .Dataset_without_changes import SimpleDataset
+from searchdet_pipeline.eval_classes.Example_datasets.ChickenDataset import ChickenDataset
+from searchdet_pipeline.eval_classes.Dataset import Dataset
+from searchdet_pipeline.eval_classes.Example_datasets.Dataset_without_changes import SimpleDataset
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Demo для ChickenDataset и SimpleDataset")

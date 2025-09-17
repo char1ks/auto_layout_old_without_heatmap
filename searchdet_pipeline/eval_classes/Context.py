@@ -15,16 +15,14 @@ class Context:
 
     started_at: datetime = field(default_factory=datetime.utcnow)
     ended_at: Optional[datetime] = None
-    duration: Optional[float] = None  # kept as raw field, not auto-computed
+    duration: Optional[float] = None
 
     success: bool = False
     error: Optional[str] = None
 
-    metrics: Dict[str, Any] = field(default_factory=dict)
+    metrics: Dict[str, Any] = field(default_factory=dict) #Сюда идут любые числовые/логические/строковые показатели по одному запуску детекции для конкретного изображения
     extra: Dict[str, Any] = field(default_factory=dict)
-
-    # raw spans; no auto duration calculations here
-    spans: List[dict] = field(default_factory=list)
+    spans: List[dict] = field(default_factory=list) #Сюда идут данные о времени выполнения различных частей пайплайна детекции (например, времени на предсказание, времени на постобработку, времени на запись в файл и тд)
 
     def finish(self, success: bool = True, error: Optional[str] = None):
         self.ended_at = datetime.utcnow()
@@ -37,6 +35,7 @@ class Context:
     def log_extra(self, key: str, value: Any) -> None:
         self.extra[key] = value
 
+    #Добавил эту аннотацию для того,чтобы IDE не ругалась на то,что span может быть None
     @contextmanager
     def span(self, name: str, **attrs: Any):
         span: Dict[str, Any] = {

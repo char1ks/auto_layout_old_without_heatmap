@@ -2,22 +2,18 @@ from dataclasses import dataclass, field
 from typing import List, Any
 import uuid
 from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
+from searchdet_pipeline.eval_classes.DatasetMeta import DatasetMeta
 
 #Грубо говоря это модель датасета, которая содержит в себе аннотации к изображениям и простое описание датасета:Имя, дата, источник датасета, ссылки, и тд
 @dataclass
 class DatasetModel:
     data_points: List[COCOAnnotation]
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
-    meta: dict[str, Any] = field(default_factory=dict) # (aod) data structure
+    meta: DatasetMeta = field(default_factory=DatasetMeta) 
 
-    #Метаданные датасета:
-    #name-имя датасета
-    #categories-массив категорий
-    #total_images-количество фото в датасете
-    #total_annotations-количество аннотаций в датасете
-    #url-ссылка до источника датасета 
-    #color_channels-список доступных каналов
-
+    def __post_init__(self):
+        if isinstance(self.meta, dict):
+            self.meta = DatasetMeta.from_dict(self.meta)
     #Сколько аннотаций всего у нас
     def annotations_len(self) -> int:
         return len(self.data_points)

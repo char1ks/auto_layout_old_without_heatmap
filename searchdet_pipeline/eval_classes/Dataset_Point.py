@@ -88,12 +88,16 @@ class Dataset_Point:
 
     def run(
         self,
+        positive_dir: Union[str, Path],
+        negative_dir: Optional[Union[str, Path]] = None,
         image_root: Optional[Union[str, Path]] = None,
         average: str = "micro",
         progress: Optional[Callable[[int, int, str | None], None]] = None,
         *args,
         **kwargs,
     ) -> Tuple[List[COCOAnnotation], MetricOutputModel]:
+        self.set_references(positive_dir, negative_dir)
+        
         preds = self.detect_all(image_root=image_root, progress=progress, *args, **kwargs)
         metrics = self.evaluate(preds, average=average)
         return preds, metrics

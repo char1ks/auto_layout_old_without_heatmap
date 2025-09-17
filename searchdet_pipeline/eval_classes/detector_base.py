@@ -119,7 +119,7 @@ class DetectorBase(abc.ABC):
                 height=H,
                 area=float(area),
                 bbox=[int(b) for b in bbox] if isinstance(bbox, (list, tuple)) else [0, 0, 0, 0],
-                image_resolution=(W, H) if (W is not None and H is not None) else None,
+                image_size=(W, H) if (W is not None and H is not None) else None,
                 file_name=file_name,
             )
             setattr(ann, 'score', conf)

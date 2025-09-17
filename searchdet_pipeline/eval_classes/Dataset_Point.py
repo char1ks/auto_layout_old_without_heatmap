@@ -10,10 +10,11 @@ from searchdet_pipeline.eval_classes.Dataset import Dataset
 from searchdet_pipeline.eval_classes.detector_base import DetectorBase
 from searchdet_pipeline.eval_classes.metrics import Metric, MetricOutputModel
 from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
+from searchdet_pipeline.eval_classes.ContextReporter import ContextReporter
 
 
 class Dataset_Point:
-    def __init__(self,dataset: Union[Dataset, DatasetModel],detector: DetectorBase,metric: Optional[Metric] = None,) -> None:
+    def __init__(self,dataset: Union[Dataset, DatasetModel],detector: DetectorBase,metric: Optional[Metric] = None, reporter: Optional[ContextReporter] = None,) -> None:
         if isinstance(dataset, Dataset):
             self.dataset_model: DatasetModel = dataset.data
         elif isinstance(dataset, DatasetModel):
@@ -23,6 +24,7 @@ class Dataset_Point:
 
         self.detector: DetectorBase = detector
         self.metric: Metric = metric if metric is not None else Metric()
+        self.reporter: Optional[ContextReporter] = reporter
 
         self._predictions: List[COCOAnnotation] = []
         self._last_metrics: Optional[MetricOutputModel] = None
@@ -53,7 +55,8 @@ class Dataset_Point:
                         progress(idx, total, fname)
                     continue
                 image_np = self.detector.read_input_img(img_path)
-            det_anns = self.detector.detect(image_np, file_name=fname, *args, **kwargs)
+            cb = self.reporter.emit if self.reporter else None
+            det_anns = self.detector.detect(image_np, callback=cb, file_name=fname, *args, **kwargs)
             predictions.extend(det_anns)
             if progress:
                 progress(idx, total, fname)

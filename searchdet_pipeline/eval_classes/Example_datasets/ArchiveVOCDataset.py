@@ -29,25 +29,63 @@ class ArchiveVOCDataset(Dataset):
         return cls(dataset=data)
 
     @classmethod
-    def from_path(cls, path: Path) -> "ArchiveVOCDataset":
+    def from_path(cls, path: Path, ann_dir: Optional[Path] = None, img_dir: Optional[Path] = None) -> "ArchiveVOCDataset":
         base = Path(path)
-        if base.is_dir() and base.name == "annotations":
+        # Определяем базовую директорию датасета (корень)
+        if base.is_dir() and base.name.lower() in {"annotations", "annotation"}:
             base_dir = base.parent
-            ann_dir = base
         else:
             base_dir = base
-            ann_dir = base_dir / "annotations"
-        img_dir = base_dir / "images"
-        xml_files = sorted(list(ann_dir.glob("*.xml")))
+
+        # 1) Сбор XML
+        xml_files: List[Path] = []
+        if ann_dir is not None:
+            ann_dir = Path(ann_dir)
+            if ann_dir.exists() and ann_dir.is_dir():
+                xml_files.extend(sorted(p for p in ann_dir.rglob("*") if p.is_file() and p.suffix.lower() == ".xml"))
+        else:
+            # Старое поведение: известные папки аннотаций рядом с корнем
+            candidate_ann_dirs = [
+                base_dir / "annotations",
+                base_dir / "Annotations",
+                base_dir / "annotation",
+                base_dir / "Annotation",
+            ]
+            for d in candidate_ann_dirs:
+                if d.exists() and d.is_dir():
+                    xml_files.extend(sorted(p for p in d.rglob("*") if p.is_file() and p.suffix.lower() == ".xml"))
+            # Если ничего не нашли, пробуем рекурсивно по всей базе (на случай кастомной структуры)
+            if not xml_files:
+                xml_files = sorted(p for p in base_dir.rglob("*") if p.is_file() and p.suffix.lower() == ".xml")
+
+        # 2) Определяем папку с изображениями
+        if img_dir is not None:
+            img_dir = Path(img_dir)
+            chosen_img_dir = img_dir if img_dir.exists() and img_dir.is_dir() else base_dir
+        else:
+            img_dir_candidates = [
+                base_dir / "images",
+                base_dir / "Images",
+                base_dir / "image",
+                base_dir / "Image",
+                base_dir / "JPEGImages",
+                base_dir / "jpegimages",
+                base_dir / "JPEGIMAGES",
+                base_dir,
+            ]
+            chosen_img_dir = next((d for d in img_dir_candidates if d.exists() and d.is_dir()), base_dir)
+
+        # 3) Парсим XML
         anns: List[COCOAnnotation] = []
         categories: List[str] = []
         for xml_path in xml_files:
             try:
-                file_anns, cats = cls._parse_single_voc_xml(xml_path, img_dir)
+                file_anns, cats = cls._parse_single_voc_xml(xml_path, chosen_img_dir)
                 anns.extend(file_anns)
                 categories.extend(cats)
             except Exception:
                 continue
+
         unique_categories = sorted(set(categories))
         meta: Dict[str, Any] = {
             "dataset_type": "voc_detection",
@@ -156,10 +194,25 @@ class ArchiveVOCDataset(Dataset):
         width = int(size_el.findtext("width", default="0")) if size_el is not None else 0
         height = int(size_el.findtext("height", default="0")) if size_el is not None else 0
 
-        img_path = img_dir / file_name if file_name else None
+        # Путь к изображению: поддержка абсолютного и относительного путей
+        img_path: Optional[Path] = None
+        if file_name:
+            fn_path = Path(file_name)
+            if fn_path.is_absolute():
+                img_path = fn_path
+            else:
+                candidate = img_dir / file_name
+                if candidate.exists():
+                    img_path = candidate
+                else:
+                    alt = img_dir.parent / file_name
+                    img_path = alt if alt.exists() else candidate
         if img_path and img_path.exists():
             try:
-                img_arr = np.array(Image.open(img_path).convert("RGB"))
+                img_pil = Image.open(img_path).convert("RGB")
+                img_arr = np.array(img_pil)
+                if (width <= 0 or height <= 0):
+                    height, width = img_arr.shape[0], img_arr.shape[1]
             except Exception:
                 img_arr = np.zeros((height, width, 3), dtype=np.uint8)
         else:
@@ -188,8 +241,6 @@ class ArchiveVOCDataset(Dataset):
                 xmin = ymin = 0.0
                 xmax = float(width)
                 ymax = float(height)
-
-            # трансформация VOC bbox -> COCO bbox 
             x = max(0.0, xmin)
             y = max(0.0, ymin)
             w = max(0.0, xmax - xmin)

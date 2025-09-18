@@ -153,7 +153,7 @@ class SearchDetDetector(DetectorBase):
     ) -> None:
         self.pos_by_class = pos_by_class
         self.neg_imgs = neg_imgs
-    def find_present_elements(self, image_np: np.ndarray, *args, **kwargs) -> Dict[str, Any]:
+    def find_present_elements(self, image_np: np.ndarray, context: Context, *args, **kwargs) -> Dict[str, Any]:
         if not hasattr(self, 'pos_by_class') or not self.pos_by_class:
             raise ValueError("References not set. Call set_references() first.")
         
@@ -313,6 +313,57 @@ class SearchDetDetector(DetectorBase):
             "timing_info": timing_info,
             "heatmap": heatmap
         }
+
+    def _convert_to_coco_annotations(self, detection_result: Dict[str, Any], image_np: np.ndarray, context) -> List:
+        from ..eval_classes.COCOAnnotations import COCOAnnotation
+        annotations = []
+        found_elements = detection_result.get('found_elements', [])
+    
+        height, width = image_np.shape[:2]
+        
+        file_name = getattr(context, 'image_path', 'unknown.jpg')
+        if hasattr(context, 'image_path') and context.image_path:
+            file_name = str(context.image_path).split('/')[-1]
+        
+        for element in found_elements:
+            mask_data = element.get('mask', {})
+            
+            segmentation = mask_data.get('segmentation')
+            if segmentation is None:
+                continue
+                
+            if isinstance(segmentation, np.ndarray):
+                mask = segmentation.astype(bool)
+            else:
+                mask = np.array(segmentation, dtype=bool)
+            
+            bbox = element.get('bbox', mask_data.get('bbox', [0, 0, 0, 0]))
+            if len(bbox) != 4:
+                if mask.any():
+                    y_indices, x_indices = np.where(mask)
+                    x_min, x_max = x_indices.min(), x_indices.max()
+                    y_min, y_max = y_indices.min(), y_indices.max()
+                    bbox = [int(x_min), int(y_min), int(x_max - x_min + 1), int(y_max - y_min + 1)]
+                else:
+                    bbox = [0, 0, 0, 0]
+            
+            area = element.get('area', mask_data.get('area', int(mask.sum())))
+            label = element.get('class', mask_data.get('class', 'unknown'))
+            annotation = COCOAnnotation(
+                img=image_np,
+                mask=mask,
+                label=label,
+                image_size=(width, height),
+                width=width,
+                height=height,
+                area=float(area),
+                file_name=file_name,
+                bbox=[float(x) for x in bbox]
+            )
+            
+            annotations.append(annotation)
+        
+        return annotations
 
 
     def set_references_from_dirs(self, image_path: Union[str, Path], positive_dir: Union[str, Path],

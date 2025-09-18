@@ -4,15 +4,42 @@ from pathlib import Path
 import sys
 from typing import Dict, Any, List, Tuple, Optional
 import xml.etree.ElementTree as ET
-
-from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
+try:
+    from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
+except ModuleNotFoundError:
+    ROOT = Path(__file__).resolve().parents[2]
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
 
 
 ImageDir = Optional[Path]
 
+def _auto_resolve_ann_dir(dataset_dir: Path, ann_dir: Optional[Path]) -> Tuple[Optional[Path], List[Path]]:
+    candidates: List[Path] = []
+    if ann_dir is not None:
+        candidates.append(ann_dir)
+    for name in [
+        "annotations", "Annotations", "annotation", "Annotation",
+        "labels", "Labels", "xml", "XML",
+        "VOC2007/Annotations", "VOC2012/Annotations",
+    ]:
+        candidates.append(dataset_dir / name)
+
+    for c in candidates:
+        if c.exists() and c.is_dir():
+            xmls = _collect_xmls(c)
+            if xmls:
+                return c, xmls
+
+    xmls = _collect_xmls(dataset_dir)
+    if xmls:
+        return xmls[0].parent, xmls
+
+    return ann_dir, []
+
 
 def _collect_xmls(base_dir: Path) -> List[Path]:
-    # Рекурсивный поиск XML с регистронезависимой фильтрацией
     return sorted(p for p in base_dir.rglob("*") if p.is_file() and p.suffix.lower() == ".xml")
 
 
@@ -104,17 +131,25 @@ def main() -> int:
         print(f"Папка с датасетом не найдена: {dataset_dir.resolve()}")
         return 1
 
-    # Диагностика структуры до загрузки датасета
-    ann_scan_dir = ann_dir if ann_dir is not None else dataset_dir
-    xml_files = _collect_xmls(ann_scan_dir)
+    # Новое: автоопределяем папку аннотаций, если в указанной нет XML
+    resolved_ann_dir, xml_files = _auto_resolve_ann_dir(dataset_dir, ann_dir)
+    if ann_dir is not None and (not resolved_ann_dir or resolved_ann_dir.resolve() != ann_dir.resolve()):
+        print(f"[!] Указанная папка аннотаций не содержит XML: {ann_dir.resolve()}")
+        if resolved_ann_dir:
+            print(f"    Автопоиск: используется {resolved_ann_dir.resolve()}")
+
     img_dirs = [img_dir] if img_dir is not None else _find_image_dirs(dataset_dir)
 
     print("\nДиагностика структуры датасета (до парсинга):")
     print(f"  • Найдено XML-аннотаций: {len(xml_files)}")
+    base_for_xml_rel = resolved_ann_dir if resolved_ann_dir is not None else dataset_dir
     if xml_files:
-        print(f"    Примеры XML: {[str(p.relative_to(ann_scan_dir)) for p in xml_files[:3]]}")
+        try:
+            print(f"    Примеры XML: {[str(p.relative_to(base_for_xml_rel)) for p in xml_files[:3]]}")
+        except Exception:
+            print(f"    Примеры XML: {[str(p) for p in xml_files[:3]]}")
     else:
-        print("    Внимание: XML не найдены. Проверьте, что аннотации лежат в annotations/ или рядом с изображениями." )
+        print("    Внимание: XML не найдены. Проверьте, что аннотации лежат в annotations/ или рядом с изображениями.")
 
     if img_dirs:
         base_for_rel = img_dir if img_dir is not None else dataset_dir
@@ -145,7 +180,7 @@ def main() -> int:
 
     # Загрузка датасета
     try:
-        dataset = ArchiveVOCDataset.from_path(dataset_dir, ann_dir=ann_dir, img_dir=img_dir)
+        dataset = ArchiveVOCDataset.from_path(dataset_dir, ann_dir=resolved_ann_dir, img_dir=img_dir)
     except Exception as e:
         print(f"\nОшибка при загрузке датасета из {dataset_dir}: {e}")
         return 2

@@ -28,11 +28,13 @@ from .fastsam_integration import FastSAMHeatmapProcessor
 from .models import DetectorConfig ,ProcessingResult ,MaskData ,DetectionResult
 from ..utils .validation import ImageValidator ,DirectoryValidator ,ValidationError ,validate_processing_pipeline_inputs
 from ..eval_classes.detector_base import DetectorBase 
+from ..eval_classes.Context import Context
 import torch
 from .models import MaskBackend ,BackboneType
 
 class SearchDetDetector(DetectorBase):
     def __init__ (self ,config :Optional [DetectorConfig ]=None ,**kwargs :Any )->None :
+        super().__init__(name="SearchDetDetector")
         if not SEARCHDET_AVAILABLE :
             raise RuntimeError ("SearchDet не найден")
         if config is None :
@@ -314,16 +316,26 @@ class SearchDetDetector(DetectorBase):
             "heatmap": heatmap
         }
 
-    def _convert_to_coco_annotations(self, detection_result: Dict[str, Any], image_np: np.ndarray, context) -> List:
+    def _convert_to_coco_annotations(self, detection_result: Dict[str, Any], context) -> List:
         from ..eval_classes.COCOAnnotations import COCOAnnotation
         annotations = []
         found_elements = detection_result.get('found_elements', [])
     
+        image_np = context.extra['original_image']
         height, width = image_np.shape[:2]
         
-        file_name = getattr(context, 'image_path', 'unknown.jpg')
-        if hasattr(context, 'image_path') and context.image_path:
-            file_name = str(context.image_path).split('/')[-1]
+        # Prefer file_name provided via Dataset_Point -> DetectorBase.detect(context.extra['file_name'])
+        file_name = None
+        try:
+            if hasattr(context, 'extra') and isinstance(context.extra, dict):
+                file_name = context.extra.get('file_name') or None
+        except Exception:
+            file_name = None
+        if not file_name:
+            if hasattr(context, 'image_path') and context.image_path:
+                file_name = os.path.basename(str(context.image_path))
+            else:
+                file_name = 'unknown.jpg'
         
         for element in found_elements:
             mask_data = element.get('mask', {})

@@ -146,7 +146,7 @@ class ScoreCalculator :
             if params is None :
                 params ={}
             self .config =ScoringConfig (
-            min_pos_score =_safe_get_float (params ,'min_positive_score',_safe_get_float (params ,'min_pos_score',0.53 )),
+            min_pos_score =0.1,
             decision_threshold =_safe_get_float (params ,'decision_threshold',0.06 ),
             class_separation =_safe_get_float (params ,'class_separation',0.04 ),
             neg_cap =_safe_get_float (params ,'neg_cap',0.90 ),
@@ -273,7 +273,7 @@ class ScoreCalculator :
 
             neg =float (neg_scores [i ])
             diff =best_pos -neg
-            accepted =(best_pos >=self .min_pos_score )and (diff >=self .decision_threshold )
+            accepted =(best_pos >=self .min_pos_score )
 
             decisions .append ({
             "mask_index":i ,

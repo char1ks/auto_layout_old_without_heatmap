@@ -142,6 +142,33 @@ class Metric(abc.ABC):
                 "AP75": ap75_per_class.get(label, 0.0),
             }
 
+        # Печать сводки метрик непосредственно здесь, где они вычисляются
+        try:
+            print("\n[metrics] Итоговая сводка:")
+            print(f" - metric: {metric_name}, score: {final_score:.4f}")
+            print(f" - GT аннотаций: {len(gt.data_points)}, предсказаний: {len(prediction)}")
+            print(f" - Файлов GT: {len(gt_by_file)}, файлов Pred: {len(pred_by_file)}, пересечений файлов с предсказаниями: {matched_images}")
+            print(f" - Пары (GT↔Pred): {len(pairs)}")
+            print(" - Micro: IoU={:.4f}, Dice={:.4f}, mAP={:.4f}/mAP50={:.4f}/mAP75={:.4f}".format(micro_mean_iou, micro_mean_dice, map_micro, map50_micro, map75_micro))
+            print(" - Macro: IoU={:.4f}, Dice={:.4f}, mAP={:.4f}/mAP50={:.4f}/mAP75={:.4f}".format(macro_mean_iou, macro_mean_dice, map_macro, map_50_macro, map_75_macro))
+            
+            files_only_pred = sorted(set(pred_by_file.keys()) - set(gt_by_file.keys()))
+            files_only_gt = sorted(set(gt_by_file.keys()) - set(pred_by_file.keys()))
+            if files_only_gt:
+                print(f" - Файлы только в GT ({len(files_only_gt)}), пример: {files_only_gt[:5]}")
+            if files_only_pred:
+                print(f" - Файлы только в Pred ({len(files_only_pred)}), пример: {files_only_pred[:5]}")
+
+            print("[metrics] По классам:")
+            for label, st in per_class_stats.items():
+                print(
+                    f"   {label}: GT={st['num_gt']}, Pred={st['num_pred']}, Pairs={st['num_pairs']}, "
+                    f"mIoU={st['mean_iou']:.4f}, Dice={st['mean_dice']:.4f}, "
+                    f"AP={ap_per_class.get(label, 0.0):.4f}, AP50={ap50_per_class.get(label, 0.0):.4f}, AP75={ap75_per_class.get(label, 0.0):.4f}"
+                )
+        except Exception as e:
+            print(f"[metrics][warn] Не удалось вывести сводку метрик: {e}")
+
         return MetricOutputModel(metric_name=metric_name, score=final_score, stats=stats)
 
     def _mask_or_bbox_iou(self, g: COCOAnnotation, p: COCOAnnotation) -> float:

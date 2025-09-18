@@ -1,0 +1,37 @@
+
+<annotation>
+    <folder>images</folder>
+    <filename>tomato676.png</filename>
+    <size>
+        <width>500</width>
+        <height>400</height>
+        <depth>3</depth>
+    </size>
+    <segmented>0</segmented>
+    <object>
+        <name>tomato</name>
+        <pose>Unspecified</pose>
+        <truncated>0</truncated>
+        <occluded>0</occluded>
+        <difficult>0</difficult>
+        <bndbox>
+            <xmin>0</xmin>
+            <ymin>114</ymin>
+            <xmax>90</xmax>
+            <ymax>201</ymax>
+        </bndbox>
+    </object>
+    <object>
+        <name>tomato</name>
+        <pose>Unspecified</pose>
+        <truncated>0</truncated>
+        <occluded>0</occluded>
+        <difficult>0</difficult>
+        <bndbox>
+            <xmin>45</xmin>
+            <ymin>187</ymin>
+            <xmax>134</xmax>
+            <ymax>262</ymax>
+        </bndbox>
+    </object>
+</annotation>

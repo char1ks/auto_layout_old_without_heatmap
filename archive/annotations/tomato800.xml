@@ -1,0 +1,24 @@
+
+<annotation>
+    <folder>images</folder>
+    <filename>tomato800.png</filename>
+    <size>
+        <width>400</width>
+        <height>500</height>
+        <depth>3</depth>
+    </size>
+    <segmented>0</segmented>
+    <object>
+        <name>tomato</name>
+        <pose>Unspecified</pose>
+        <truncated>0</truncated>
+        <occluded>0</occluded>
+        <difficult>0</difficult>
+        <bndbox>
+            <xmin>25</xmin>
+            <ymin>215</ymin>
+            <xmax>123</xmax>
+            <ymax>312</ymax>
+        </bndbox>
+    </object>
+</annotation>

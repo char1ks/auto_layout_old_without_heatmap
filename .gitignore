@@ -145,3 +145,6 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json 
+
+# Local datasets and archives (do not commit)
+archive/

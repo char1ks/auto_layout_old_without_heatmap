@@ -11,7 +11,6 @@ from searchdet_pipeline.core.config import get_preset_config
 
 
 def main() -> int:
-    # Параметры запуска: !python -m searchdet_pipeline.eval_classes.main archive --ann-dir archive/annotations/ --img-dir archive/images
     args = sys.argv[1:]
     dataset_dir = Path("archive")
     ann_dir: Path | None = None
@@ -34,31 +33,13 @@ def main() -> int:
             continue
         i += 1
 
-    print(f"[i] Рабочая папка: {Path.cwd().resolve()}")
-    print(f"[i] Указанный путь к датасету: {dataset_dir} -> {dataset_dir.resolve()}")
-    if ann_dir is not None:
-        print(f"[i] Папка аннотаций (--ann-dir): {ann_dir} -> {ann_dir.resolve()}")
-    if img_dir is not None:
-        print(f"[i] Папка изображений (--img-dir): {img_dir} -> {img_dir.resolve()}")
-
     if not dataset_dir.exists():
-        print(f"[!] Папка с датасетом не найдена: {dataset_dir.resolve()}")
         return 1
 
     positive_dir = "examples/positive"
     negative_dir = None
 
     dataset = ArchiveVOCDataset.from_path(dataset_dir, ann_dir=ann_dir, img_dir=img_dir)
-
-    print(f"🔍 Загружен датасет: {len(dataset.data_points)} аннотаций")
-
-    for i, ann in enumerate(dataset.data_points[:3]):
-        print(f"  📋 Аннотация {i+1}:")
-        print(f"    - file_name: {ann.file_name}")
-        print(f"    - label: {ann.label}")
-        print(f"    - image_size: {ann.image_size}")
-        print(f"    - img shape: {ann.img.shape if ann.img is not None else 'None'}")
-        print(f"    - mask shape: {ann.mask.shape if ann.mask is not None else 'None'}")
 
     config = get_preset_config("balanced")
     detector = SearchDetDetector(config=config)
@@ -70,8 +51,6 @@ def main() -> int:
         negative_dir=negative_dir,
         image_root=image_root,
     )
-    print(f"Предсказаний: {len(preds)}")
-    print(f"Метрика {metrics.metric_name}: {metrics.score:.4f}")
     return 0
 
 

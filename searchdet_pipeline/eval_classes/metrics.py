@@ -30,7 +30,6 @@ class MeanAveragePrecision(Metric):
     name = "mAP"
     def __init__(self, iou_thresholds: Optional[List[float]] = None):
         self.iou_thresholds = iou_thresholds or np.arange(0.5, 1.0, 0.05).tolist()
-        # Mappings will be populated during GT conversion and reused for predictions
         self._file_to_image_id: Dict[str, int] = {}
         self._label_to_cat_id: Dict[Union[int, str], int] = {}
         self._categories: List[Dict[str, Union[int, str]]] = []

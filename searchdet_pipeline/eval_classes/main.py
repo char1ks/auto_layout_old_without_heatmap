@@ -8,6 +8,7 @@ from searchdet_pipeline.eval_classes.Dataset_Point import Dataset_Point
 from searchdet_pipeline.eval_classes.metrics import Metric
 from searchdet_pipeline.core.detector import SearchDetDetector
 from searchdet_pipeline.core.config import get_preset_config
+from searchdet_pipeline.eval_classes.ContextReporter import ContextReporter
 
 
 def main() -> int:
@@ -43,7 +44,8 @@ def main() -> int:
 
     config = get_preset_config("balanced")
     detector = SearchDetDetector(config=config)
-    dp = Dataset_Point(dataset=dataset, detector=detector, metric=Metric())
+    reporter = ContextReporter(to_stdout=True, trace_file="context_trace.jsonl")
+    dp = Dataset_Point(dataset=dataset, detector=detector, metric=Metric(), reporter=reporter)
 
     image_root = img_dir if (img_dir is not None and img_dir.exists()) else None
     preds, metrics = dp.run(

@@ -20,156 +20,154 @@ class MetricOutputModel:
 
 class Metric(abc.ABC):
     name: str = "metric"
-    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], average: str = "micro") -> MetricOutputModel:
-        gt_by_file: Dict[str, List[COCOAnnotation]] = {}
-        for ann in gt.data_points:
-            fname = getattr(ann, "file_name", "") or ""
-            gt_by_file.setdefault(fname, []).append(ann)
+    @abc.abstractmethod
+    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
+        pass
 
-        pred_by_file: Dict[str, List[COCOAnnotation]] = {}
-        for ann in prediction:
-            fname = getattr(ann, "file_name", "") or ""
-            pred_by_file.setdefault(fname, []).append(ann)
 
-        per_class_stats = self._compute_per_class_iou_stats(gt, prediction)
-
-        all_ious = [iou for cls_stats in per_class_stats.values() for iou in cls_stats["ious"]]
-        all_dices = [di for cls_stats in per_class_stats.values() for di in cls_stats["dices"]]
-        micro_mean_iou = (sum(all_ious) / len(all_ious)) if all_ious else 0.0
-        micro_mean_dice = (sum(all_dices) / len(all_dices)) if all_dices else 0.0
-        classes_with_gt = [c for c, st in per_class_stats.items() if st["num_gt"] > 0]
-        macro_mean_iou = (sum((st["mean_iou"] for c, st in per_class_stats.items() if st["num_gt"] > 0)) / len(classes_with_gt)) if classes_with_gt else 0.0
-        macro_mean_dice = (sum((st["mean_dice"] for c, st in per_class_stats.items() if st["num_gt"] > 0)) / len(classes_with_gt)) if classes_with_gt else 0.0
-
-        ap_per_class = self._map_per_class(gt.data_points, prediction)
+class MeanAveragePrecision(Metric):
+    name: str = "mean_average_precision"
+    
+    def __init__(self, iou_thresholds: Optional[List[float]] = None):
+        if iou_thresholds is None:
+            self.iou_thresholds = [t / 100 for t in range(50, 100, 5)]
+        else:
+            self.iou_thresholds = iou_thresholds
+    
+    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
+        average = kwargs.get("average", "macro")
+        ap_per_class = self._map_per_class(gt.data_points, prediction, self.iou_thresholds)
         ap50_per_class = self._map_per_class(gt.data_points, prediction, [0.5])
         ap75_per_class = self._map_per_class(gt.data_points, prediction, [0.75])
-        map_macro = (sum(ap_per_class.values()) / len(ap_per_class)) if ap_per_class else 0.0
-        map_50_macro = (sum(ap50_per_class.values()) / len(ap50_per_class)) if ap50_per_class else 0.0
-        map_75_macro = (sum(ap75_per_class.values()) / len(ap75_per_class)) if ap75_per_class else 0.0
-
-        total_gt_by_class: Dict[str, int] = {c: st["num_gt"] for c, st in per_class_stats.items()}
-        total_gt_all = sum(total_gt_by_class.values())
-        if total_gt_all > 0:
-            map_micro = sum(ap_per_class.get(c, 0.0) * total_gt_by_class.get(c, 0) for c in per_class_stats.keys()) / total_gt_all
-            map50_micro = sum(ap50_per_class.get(c, 0.0) * total_gt_by_class.get(c, 0) for c in per_class_stats.keys()) / total_gt_all
-            map75_micro = sum(ap75_per_class.get(c, 0.0) * total_gt_by_class.get(c, 0) for c in per_class_stats.keys()) / total_gt_all
-        else:
-            map_micro = map50_micro = map75_micro = 0.0
-
-        pairs: List[dict] = []
-        matched_images = 0
-        for fname, gt_list in gt_by_file.items():
-            preds = pred_by_file.get(fname, [])
-            if not preds:
-                continue
-            matched_images += 1
-            gt_by_label: Dict[str, List[COCOAnnotation]] = {}
-            for g in gt_list:
-                gt_by_label.setdefault(getattr(g, "label", None), []).append(g)
-            pred_by_label: Dict[str, List[COCOAnnotation]] = {}
-            for p in preds:
-                pred_by_label.setdefault(getattr(p, "label", None), []).append(p)
-            for label, preds_of_label in pred_by_label.items():
-                if label not in gt_by_label:
-                    continue
-                used: set[int] = set()
-                preds_sorted = sorted(preds_of_label, key=lambda x: getattr(x, "score", 0.0), reverse=True)
-                gts = gt_by_label[label]
-                for p in preds_sorted:
-                    best_iou = 0.0
-                    best_idx = -1
-                    for gi, g in enumerate(gts):
-                        if gi in used:
-                            continue
-                        iou_val = self._mask_or_bbox_iou(g, p)
-                        if iou_val > best_iou:
-                            best_iou = iou_val
-                            best_idx = gi
-                    if best_idx >= 0:
-                        used.add(best_idx)
-                        dice = (2 * best_iou / (1 + best_iou)) if best_iou > 0.0 else 0.0
-                        pairs.append({
-                            "file_name": fname,
-                            "label": label,
-                            "gt_uid": getattr(gts[best_idx], "uid", None),
-                            "pred_uid": getattr(p, "uid", None),
-                            "iou": best_iou,
-                            "dice": dice,
-                        })
-
-        avg_type = (average or "micro").lower().strip()
-        if avg_type == "macro":
-            final_score = macro_mean_iou
-            metric_name = "combined_macro"
-        else:
-            final_score = micro_mean_iou
-            metric_name = "combined_micro"
-
+        map_score = (sum(ap_per_class.values()) / len(ap_per_class)) if ap_per_class else 0.0
+        map_50 = (sum(ap50_per_class.values()) / len(ap50_per_class)) if ap50_per_class else 0.0
+        map_75 = (sum(ap75_per_class.values()) / len(ap75_per_class)) if ap75_per_class else 0.0
+        
         stats = {
-            "mean_iou": micro_mean_iou, 
-            "mAP": map_macro,           
-            "mAP50": map_50_macro,
-            "mAP75": map_75_macro,
-            "jaccard": micro_mean_iou,
-            "dice": micro_mean_dice,
-            "mean_iou_micro": micro_mean_iou,
-            "mean_iou_macro": macro_mean_iou,
-            "dice_micro": micro_mean_dice,
-            "dice_macro": macro_mean_dice,
-            "mAP_macro": map_macro,
-            "mAP50_macro": map_50_macro,
-            "mAP75_macro": map_75_macro,
-            "mAP_micro": map_micro,
-            "mAP50_micro": map50_micro,
-            "mAP75_micro": map75_micro,
-            "num_images_matched": matched_images,
-            "map_iou_thresholds": [t / 100 for t in range(50, 100, 5)],
-            "per_class": {},
-            "pairs": pairs,
+            "mAP": map_score,
+            "mAP@0.5": map_50,
+            "mAP@0.75": map_75,
+            "per_class_AP": ap_per_class,
+            "per_class_AP50": ap50_per_class,
+            "per_class_AP75": ap75_per_class,
+            "iou_thresholds": self.iou_thresholds,
+            "num_classes": len(ap_per_class),
+            "num_gt": len(gt.data_points),
+            "num_predictions": len(prediction)
         }
+        
+        return MetricOutputModel(
+            metric_name=self.name,
+            score=map_score,
+            stats=stats
+        )
 
 
-        for label, st in per_class_stats.items():
-            stats["per_class"][label] = {
-                "mean_iou": st["mean_iou"],
-                "mean_dice": st["mean_dice"],
-                "num_pairs": st["num_pairs"],
-                "num_gt": st["num_gt"],
-                "num_pred": st["num_pred"],
-                "AP": ap_per_class.get(label, 0.0),
-                "AP50": ap50_per_class.get(label, 0.0),
-                "AP75": ap75_per_class.get(label, 0.0),
+class MeanIntersectionOverUnion(Metric):
+    name: str = "mean_intersection_over_union"
+    
+    def __init__(self, iou_threshold: float = 0.5):
+        self.iou_threshold = iou_threshold
+    
+    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
+        per_class_stats = self._compute_per_class_iou_stats(gt, prediction)
+        all_ious = [iou for cls_stats in per_class_stats.values() for iou in cls_stats["ious"]]
+        micro_mean_iou = (sum(all_ious) / len(all_ious)) if all_ious else 0.0
+        classes_with_gt = [c for c, st in per_class_stats.items() if st["num_gt"] > 0]
+        macro_mean_iou = (sum((st["mean_iou"] for c, st in per_class_stats.items() if st["num_gt"] > 0)) / len(classes_with_gt)) if classes_with_gt else 0.0
+        stats = {
+            "micro_mIoU": micro_mean_iou,
+            "macro_mIoU": macro_mean_iou,
+            "iou_threshold": self.iou_threshold,
+            "per_class": {c: {"mean_iou": st["mean_iou"], "num_pairs": st["num_pairs"], "num_gt": st["num_gt"], "num_pred": st["num_pred"]} for c, st in per_class_stats.items()},
+            "num_classes": len(per_class_stats),
+            "num_gt": len(gt.data_points),
+            "num_predictions": len(prediction)
+        }
+        
+        return MetricOutputModel(
+            metric_name=self.name,
+            score=macro_mean_iou,
+            stats=stats
+        )
+
+
+class DiceCoefficient(Metric):
+    name: str = "dice_coefficient"
+    
+    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
+        per_class_stats = self._compute_per_class_iou_stats(gt, prediction)
+        all_dices = [dice for cls_stats in per_class_stats.values() for dice in cls_stats["dices"]]
+        micro_mean_dice = (sum(all_dices) / len(all_dices)) if all_dices else 0.0
+        classes_with_gt = [c for c, st in per_class_stats.items() if st["num_gt"] > 0]
+        macro_mean_dice = (sum((st["mean_dice"] for c, st in per_class_stats.items() if st["num_gt"] > 0)) / len(classes_with_gt)) if classes_with_gt else 0.0
+        stats = {
+            "micro_dice": micro_mean_dice,
+            "macro_dice": macro_mean_dice,
+            "per_class": {c: {"mean_dice": st["mean_dice"], "num_pairs": st["num_pairs"], "num_gt": st["num_gt"], "num_pred": st["num_pred"]} for c, st in per_class_stats.items()},
+            "num_classes": len(per_class_stats),
+            "num_gt": len(gt.data_points),
+            "num_predictions": len(prediction)
+        }
+        
+        return MetricOutputModel(
+            metric_name=self.name,
+            score=macro_mean_dice,
+            stats=stats
+        )
+
+
+class CombinedMetric(Metric):
+    name: str = "combined_metric"
+    
+    def __init__(self, primary_metric: str = "mAP", weights: Optional[Dict[str, float]] = None):
+        self.primary_metric = primary_metric
+        self.weights = weights or {}
+        self.map_metric = MeanAveragePrecision()
+        self.iou_metric = MeanIntersectionOverUnion()
+        self.dice_metric = DiceCoefficient()
+    
+    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
+        map_result = self.map_metric.compute(gt, prediction, **kwargs)
+        iou_result = self.iou_metric.compute(gt, prediction, **kwargs)
+        dice_result = self.dice_metric.compute(gt, prediction, **kwargs)
+        
+        if self.weights:
+            final_score = (
+                self.weights.get("mAP", 0) * map_result.score +
+                self.weights.get("mIoU", 0) * iou_result.score +
+                self.weights.get("dice", 0) * dice_result.score
+            )
+        else:
+            if self.primary_metric == "mIoU":
+                final_score = iou_result.score
+            elif self.primary_metric == "dice":
+                final_score = dice_result.score
+            else: 
+                final_score = map_result.score
+        
+        combined_stats = {
+            "primary_metric": self.primary_metric,
+            "weights": self.weights,
+            "mAP": {
+                "score": map_result.score,
+                "stats": map_result.stats
+            },
+            "mIoU": {
+                "score": iou_result.score,
+                "stats": iou_result.stats
+            },
+            "dice": {
+                "score": dice_result.score,
+                "stats": dice_result.stats
             }
-
-        # Печать сводки метрик непосредственно здесь, где они вычисляются
-        try:
-            print("\n[metrics] Итоговая сводка:")
-            print(f" - metric: {metric_name}, score: {final_score:.4f}")
-            print(f" - GT аннотаций: {len(gt.data_points)}, предсказаний: {len(prediction)}")
-            print(f" - Файлов GT: {len(gt_by_file)}, файлов Pred: {len(pred_by_file)}, пересечений файлов с предсказаниями: {matched_images}")
-            print(f" - Пары (GT↔Pred): {len(pairs)}")
-            print(" - Micro: IoU={:.4f}, Dice={:.4f}, mAP={:.4f}/mAP50={:.4f}/mAP75={:.4f}".format(micro_mean_iou, micro_mean_dice, map_micro, map50_micro, map75_micro))
-            print(" - Macro: IoU={:.4f}, Dice={:.4f}, mAP={:.4f}/mAP50={:.4f}/mAP75={:.4f}".format(macro_mean_iou, macro_mean_dice, map_macro, map_50_macro, map_75_macro))
-            
-            files_only_pred = sorted(set(pred_by_file.keys()) - set(gt_by_file.keys()))
-            files_only_gt = sorted(set(gt_by_file.keys()) - set(pred_by_file.keys()))
-            if files_only_gt:
-                print(f" - Файлы только в GT ({len(files_only_gt)}), пример: {files_only_gt[:5]}")
-            if files_only_pred:
-                print(f" - Файлы только в Pred ({len(files_only_pred)}), пример: {files_only_pred[:5]}")
-
-            print("[metrics] По классам:")
-            for label, st in per_class_stats.items():
-                print(
-                    f"   {label}: GT={st['num_gt']}, Pred={st['num_pred']}, Pairs={st['num_pairs']}, "
-                    f"mIoU={st['mean_iou']:.4f}, Dice={st['mean_dice']:.4f}, "
-                    f"AP={ap_per_class.get(label, 0.0):.4f}, AP50={ap50_per_class.get(label, 0.0):.4f}, AP75={ap75_per_class.get(label, 0.0):.4f}"
-                )
-        except Exception as e:
-            print(f"[metrics][warn] Не удалось вывести сводку метрик: {e}")
-
-        return MetricOutputModel(metric_name=metric_name, score=final_score, stats=stats)
+        }
+        
+        return MetricOutputModel(
+            metric_name=self.name,
+            score=final_score,
+            stats=combined_stats
+        )
 
     def _mask_or_bbox_iou(self, g: COCOAnnotation, p: COCOAnnotation) -> float:
         gm = getattr(g, "mask", None)
@@ -274,7 +272,6 @@ class Metric(abc.ABC):
         return ap_by_class
 
     def _compute_per_class_iou_stats(self, gt: DatasetModel, prediction: List[COCOAnnotation]) -> Dict[str, Dict[str, Any]]:
-        # Собираем файлы и классы
         gt_by_file_label: Dict[Tuple[str, Any], List[COCOAnnotation]] = {}
         pred_by_file_label: Dict[Tuple[str, Any], List[COCOAnnotation]] = {}
         categories = sorted({getattr(g, "label", None) for g in gt.data_points})

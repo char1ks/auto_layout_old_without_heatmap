@@ -8,7 +8,10 @@ import numpy as np
 from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
 from searchdet_pipeline.eval_classes.Dataset import Dataset
 from searchdet_pipeline.eval_classes.detector_base import DetectorBase
-from searchdet_pipeline.eval_classes.metrics import Metric, MetricOutputModel
+from searchdet_pipeline.eval_classes.metrics import (
+    Metric, MetricOutputModel, CombinedMetric, MeanAveragePrecision, 
+    MeanIntersectionOverUnion, DiceCoefficient
+)
 from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
 from searchdet_pipeline.eval_classes.ContextReporter import ContextReporter
 
@@ -23,7 +26,7 @@ class Dataset_Point:
             raise TypeError("dataset must be Dataset or DatasetModel")
 
         self.detector: DetectorBase = detector
-        self.metric: Metric = metric if metric is not None else Metric()
+        self.metric: Metric = metric if metric is not None else CombinedMetric()
         self.reporter: Optional[ContextReporter] = reporter
 
         self._predictions: List[COCOAnnotation] = []

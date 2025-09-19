@@ -45,7 +45,7 @@ def main() -> int:
     config = get_preset_config("balanced")
     detector = SearchDetDetector(config=config)
     reporter = ContextReporter(to_stdout=True, trace_file="context_trace.jsonl")
-    dp = Dataset_Point(dataset=dataset, detector=detector, metric=Metric(), reporter=reporter)
+    dp = Dataset_Point(dataset=dataset, detector=detector, reporter=reporter)
 
     image_root = img_dir if (img_dir is not None and img_dir.exists()) else None
     preds, metrics = dp.run(
@@ -53,6 +53,34 @@ def main() -> int:
         negative_dir=negative_dir,
         image_root=image_root,
     )
+    
+    print("РЕЗУЛЬТАТЫ МЕТРИК")
+    
+    if metrics:
+        print(f"Основная метрика: {metrics.metric_name} = {metrics.score:.4f}")
+        
+        if hasattr(metrics, 'stats') and metrics.stats:
+            stats = metrics.stats
+            print(f"Micro IoU: {stats.get('mean_iou_micro', 0):.4f}")
+            print(f"Macro IoU: {stats.get('mean_iou_macro', 0):.4f}")
+            print(f"Micro Dice: {stats.get('dice_micro', 0):.4f}")
+            print(f"Macro Dice: {stats.get('dice_macro', 0):.4f}")
+            print(f"mAP (micro): {stats.get('mAP_micro', 0):.4f}")
+            print(f"mAP50 (micro): {stats.get('mAP50_micro', 0):.4f}")
+            print(f"mAP75 (micro): {stats.get('mAP75_micro', 0):.4f}")
+            print(f"Совпавших изображений: {stats.get('num_images_matched', 0)}")
+            per_class = stats.get('per_class', {})
+            if per_class:
+                print("\nСтатистика по классам:")
+                for class_name, class_stats in per_class.items():
+                    print(f"  {class_name}:")
+                    print(f"    GT: {class_stats.get('num_gt', 0)}, Pred: {class_stats.get('num_pred', 0)}, Pairs: {class_stats.get('num_pairs', 0)}")
+                    print(f"    IoU: {class_stats.get('mean_iou', 0):.4f}, Dice: {class_stats.get('mean_dice', 0):.4f}")
+                    print(f"    AP: {class_stats.get('AP', 0):.4f}, AP50: {class_stats.get('AP50', 0):.4f}, AP75: {class_stats.get('AP75', 0):.4f}")
+    else:
+        print("Метрики не получены")
+    
+    
     return 0
 
 

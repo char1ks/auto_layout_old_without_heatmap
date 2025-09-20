@@ -10,6 +10,13 @@ import csv
 import statistics
 
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+# Matplotlib SVG export settings to avoid black/transparent areas
+mpl.rcParams["svg.fonttype"] = "none"  # keep text as text (no path conversion)
+mpl.rcParams["savefig.facecolor"] = "white"
+mpl.rcParams["figure.facecolor"] = "white"
+mpl.rcParams["axes.facecolor"] = "white"
+mpl.rcParams["savefig.transparent"] = False
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -17,6 +24,8 @@ from rich import box
 from searchdet_pipeline.eval_classes.Context import Context
 from searchdet_pipeline.eval_classes.metrics import MetricOutputModel
 from searchdet_pipeline.eval_classes.ReportConfig import ReportConfig
+from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
+from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
 
 
 class ReportGenerator(ReportConfig):
@@ -43,15 +52,263 @@ class ReportGenerator(ReportConfig):
         self.console.print(f"[green]Отчёт сохранён в[/green] {report_dir}")
         return report_dir
 
+    def debug_map_calculation(
+        self, 
+        gt: DatasetModel, 
+        predictions: List[COCOAnnotation], 
+        output_dir: Optional[Union[str, Path]] = None
+    ) -> Dict[str, Any]:
+        """
+        Детальная отладка вычисления mAP с выводом всех промежуточных данных
+        """
+        self.console.rule("[bold red]DEBUG: mAP CALCULATION ANALYSIS")
+        
+        debug_info = {
+            "gt_analysis": {},
+            "prediction_analysis": {},
+            "file_matching": {},
+            "class_matching": {},
+            "bbox_analysis": {},
+            "errors": []
+        }
+        
+        try:
+            # Анализ GT данных
+            self.console.print("[bold cyan]1. АНАЛИЗ GT ДАННЫХ")
+            gt_files = set()
+            gt_classes = set()
+            gt_annotations_count = 0
+            
+            for i, dp in enumerate(gt.data_points or []):
+                file_name = getattr(dp, 'file_name', None)
+                if file_name:
+                    normalized_file = os.path.basename(str(file_name))
+                    gt_files.add(normalized_file)
+                    self.console.print(f"  GT[{i}]: file='{file_name}' -> normalized='{normalized_file}'")
+                    
+                    annotations = getattr(dp, 'annotations', [])
+                    for j, ann in enumerate(annotations):
+                        label = getattr(ann, 'label', getattr(dp, 'label', None))
+                        if label:
+                            gt_classes.add(str(label))
+                            gt_annotations_count += 1
+                            bbox = getattr(ann, 'bbox', None)
+                            self.console.print(f"    Ann[{j}]: label='{label}', bbox={bbox}")
+                else:
+                    self.console.print(f"  GT[{i}]: [red]NO FILE_NAME[/red]")
+            
+            debug_info["gt_analysis"] = {
+                "total_datapoints": len(gt.data_points or []),
+                "unique_files": list(gt_files),
+                "unique_classes": list(gt_classes),
+                "total_annotations": gt_annotations_count
+            }
+            
+            self.console.print(f"[green]GT Summary: {len(gt_files)} files, {len(gt_classes)} classes, {gt_annotations_count} annotations[/green]")
+            
+            # Анализ предсказаний
+            self.console.print("\n[bold cyan]2. АНАЛИЗ ПРЕДСКАЗАНИЙ")
+            pred_files = set()
+            pred_classes = set()
+            pred_annotations_count = len(predictions or [])
+            
+            for i, pred in enumerate(predictions or []):
+                file_name = getattr(pred, 'file_name', None)
+                label = getattr(pred, 'label', None)
+                score = getattr(pred, 'score', getattr(pred, 'confidence', None))
+                bbox = getattr(pred, 'bbox', None)
+                
+                if file_name:
+                    normalized_file = os.path.basename(str(file_name))
+                    pred_files.add(normalized_file)
+                else:
+                    normalized_file = "NO_FILE"
+                
+                if label:
+                    pred_classes.add(str(label))
+                
+                self.console.print(f"  Pred[{i}]: file='{file_name}' -> '{normalized_file}', label='{label}', score={score}, bbox={bbox}")
+            
+            debug_info["prediction_analysis"] = {
+                "total_predictions": pred_annotations_count,
+                "unique_files": list(pred_files),
+                "unique_classes": list(pred_classes)
+            }
+            
+            self.console.print(f"[green]Predictions Summary: {len(pred_files)} files, {len(pred_classes)} classes, {pred_annotations_count} predictions[/green]")
+            
+            # Анализ совпадения файлов
+            self.console.print("\n[bold cyan]3. АНАЛИЗ СОВПАДЕНИЯ ФАЙЛОВ")
+            common_files = gt_files & pred_files
+            gt_only_files = gt_files - pred_files
+            pred_only_files = pred_files - gt_files
+            
+            self.console.print(f"[green]Общие файлы ({len(common_files)}): {sorted(common_files)}[/green]")
+            if gt_only_files:
+                self.console.print(f"[yellow]Только в GT ({len(gt_only_files)}): {sorted(gt_only_files)}[/yellow]")
+            if pred_only_files:
+                self.console.print(f"[red]Только в предсказаниях ({len(pred_only_files)}): {sorted(pred_only_files)}[/red]")
+            
+            debug_info["file_matching"] = {
+                "common_files": list(common_files),
+                "gt_only_files": list(gt_only_files),
+                "pred_only_files": list(pred_only_files),
+                "file_match_ratio": len(common_files) / max(len(gt_files), 1)
+            }
+            
+            # Анализ совпадения классов
+            self.console.print("\n[bold cyan]4. АНАЛИЗ СОВПАДЕНИЯ КЛАССОВ")
+            common_classes = gt_classes & pred_classes
+            gt_only_classes = gt_classes - pred_classes
+            pred_only_classes = pred_classes - gt_classes
+            
+            self.console.print(f"[green]Общие классы ({len(common_classes)}): {sorted(common_classes)}[/green]")
+            if gt_only_classes:
+                self.console.print(f"[yellow]Только в GT ({len(gt_only_classes)}): {sorted(gt_only_classes)}[/yellow]")
+            if pred_only_classes:
+                self.console.print(f"[red]Только в предсказаниях ({len(pred_only_classes)}): {sorted(pred_only_classes)}[/red]")
+            
+            debug_info["class_matching"] = {
+                "common_classes": list(common_classes),
+                "gt_only_classes": list(gt_only_classes),
+                "pred_only_classes": list(pred_only_classes),
+                "class_match_ratio": len(common_classes) / max(len(gt_classes), 1)
+            }
+            
+            # Детальный анализ по файлам и классам
+            self.console.print("\n[bold cyan]5. ДЕТАЛЬНЫЙ АНАЛИЗ ПО ФАЙЛАМ")
+            file_analysis = {}
+            
+            for file_name in sorted(common_files):
+                self.console.print(f"\n[bold]Файл: {file_name}[/bold]")
+                
+                # GT для этого файла
+                gt_for_file = []
+                for dp in gt.data_points or []:
+                    if os.path.basename(str(getattr(dp, 'file_name', ''))) == file_name:
+                        for ann in getattr(dp, 'annotations', []):
+                            label = getattr(ann, 'label', getattr(dp, 'label', None))
+                            bbox = getattr(ann, 'bbox', None)
+                            if label:
+                                gt_for_file.append({"label": str(label), "bbox": bbox})
+                
+                # Предсказания для этого файла
+                pred_for_file = []
+                for pred in predictions or []:
+                    if os.path.basename(str(getattr(pred, 'file_name', ''))) == file_name:
+                        label = getattr(pred, 'label', None)
+                        bbox = getattr(pred, 'bbox', None)
+                        score = getattr(pred, 'score', getattr(pred, 'confidence', 1.0))
+                        if label:
+                            pred_for_file.append({"label": str(label), "bbox": bbox, "score": score})
+                
+                self.console.print(f"  GT: {len(gt_for_file)} аннотаций")
+                for i, gt_ann in enumerate(gt_for_file):
+                    self.console.print(f"    GT[{i}]: {gt_ann}")
+                
+                self.console.print(f"  Pred: {len(pred_for_file)} предсказаний")
+                for i, pred_ann in enumerate(pred_for_file):
+                    self.console.print(f"    Pred[{i}]: {pred_ann}")
+                
+                file_analysis[file_name] = {
+                    "gt_count": len(gt_for_file),
+                    "pred_count": len(pred_for_file),
+                    "gt_annotations": gt_for_file,
+                    "predictions": pred_for_file
+                }
+            
+            debug_info["bbox_analysis"] = file_analysis
+            
+            # Проверка потенциальных проблем
+            self.console.print("\n[bold cyan]6. ПОТЕНЦИАЛЬНЫЕ ПРОБЛЕМЫ")
+            issues = []
+            
+            if len(common_files) == 0:
+                issues.append("КРИТИЧНО: Нет общих файлов между GT и предсказаниями!")
+                self.console.print("[bold red]❌ КРИТИЧНО: Нет общих файлов между GT и предсказаниями![/bold red]")
+            
+            if len(common_classes) == 0:
+                issues.append("КРИТИЧНО: Нет общих классов между GT и предсказаниями!")
+                self.console.print("[bold red]❌ КРИТИЧНО: Нет общих классов между GT и предсказаниями![/bold red]")
+            
+            if debug_info["file_matching"]["file_match_ratio"] < 0.5:
+                issues.append(f"ВНИМАНИЕ: Низкое совпадение файлов ({debug_info['file_matching']['file_match_ratio']:.2%})")
+                self.console.print(f"[yellow]⚠️  ВНИМАНИЕ: Низкое совпадение файлов ({debug_info['file_matching']['file_match_ratio']:.2%})[/yellow]")
+            
+            if debug_info["class_matching"]["class_match_ratio"] < 0.5:
+                issues.append(f"ВНИМАНИЕ: Низкое совпадение классов ({debug_info['class_matching']['class_match_ratio']:.2%})")
+                self.console.print(f"[yellow]⚠️  ВНИМАНИЕ: Низкое совпадение классов ({debug_info['class_matching']['class_match_ratio']:.2%})[/yellow]")
+            
+            if not issues:
+                self.console.print("[green]✅ Основные проблемы не обнаружены[/green]")
+            
+            debug_info["errors"] = issues
+            
+        except Exception as e:
+            error_msg = f"Ошибка при отладке mAP: {str(e)}"
+            debug_info["errors"].append(error_msg)
+            self.console.print(f"[bold red]ОШИБКА: {error_msg}[/bold red]")
+        
+        # Сохранение отладочной информации в файл
+        if output_dir:
+            debug_dir = Path(output_dir)
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_file = debug_dir / "map_debug_analysis.json"
+            
+            try:
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    json.dump(debug_info, f, ensure_ascii=False, indent=2)
+                self.console.print(f"[green]Отладочная информация сохранена в: {debug_file}[/green]")
+            except Exception as e:
+                self.console.print(f"[red]Ошибка сохранения отладочной информации: {e}[/red]")
+        
+        self.console.rule("[bold red]END DEBUG ANALYSIS")
+        return debug_info
+
     def _generate_terminal_report(self, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any], verbose: bool = False) -> None:
         self.console.rule("МЕТРИКИ (сводная таблица)")
         t = Table(box=box.SIMPLE_HEAVY)
         t.add_column("Metric", style="cyan", no_wrap=True)
         t.add_column("Score", justify="right")
+        
+        # Проверяем наличие проблемных метрик
+        map_metric = None
         for m in metrics or []:
             score = f"{m.score:.4f}" if isinstance(m.score, (int, float)) else str(m.score)
             t.add_row(m.metric_name, score)
+            
+            # Ищем mAP метрику для отладки
+            if str(m.metric_name).lower() in {"map", "meanaverageprecision"}:
+                map_metric = m
+        
         self.console.print(t)
+        
+        # Автоматическая отладка mAP если он равен 0
+        if map_metric and isinstance(map_metric.score, (int, float)) and map_metric.score == 0.0:
+            self.console.print("\n[bold red]⚠️  ОБНАРУЖЕН mAP = 0.0! Запускаем автоматическую отладку...[/bold red]")
+            
+            # Пытаемся извлечь GT и predictions из stats метрики
+            if isinstance(map_metric.stats, dict):
+                gt_data = map_metric.stats.get('gt_data')
+                pred_data = map_metric.stats.get('pred_data')
+                
+                if gt_data and pred_data:
+                    self.console.print("[yellow]Найдены данные GT и predictions в stats метрики, запускаем детальный анализ...[/yellow]")
+                    # Здесь можно было бы запустить отладку, но нам нужны исходные объекты
+                else:
+                    self.console.print("[yellow]Для полной отладки mAP используйте метод debug_map_calculation() с исходными данными GT и predictions[/yellow]")
+                    
+                # Выводим доступную информацию из stats
+                self.console.print("\n[bold cyan]Доступная информация из mAP stats:[/bold cyan]")
+                for key, value in map_metric.stats.items():
+                    if key in ['error', 'fallback']:
+                        self.console.print(f"  [red]{key}: {value}[/red]")
+                    elif isinstance(value, (list, dict)) and len(str(value)) < 200:
+                        self.console.print(f"  {key}: {value}")
+                    elif isinstance(value, (int, float)):
+                        self.console.print(f"  {key}: {value}")
+                    else:
+                        self.console.print(f"  {key}: {type(value).__name__} (length: {len(str(value))})")
         self.console.rule("СТАТИСТИКА ВРЕМЕНИ ДЕТЕКТОРА")
         tt = Table(box=box.SIMPLE_HEAVY)
         tt.add_column("Показатель", style="magenta")
@@ -195,13 +452,13 @@ class ReportGenerator(ReportConfig):
             plt.figure(figsize=(6, 3))
             plt.hist(durations, bins=20, color="#4C78A8"); plt.title("Durations (sec)")
             hist_path = report_dir / "durations_hist.svg"
-            plt.tight_layout(); plt.savefig(hist_path, format="svg"); plt.close()
+            plt.tight_layout(); plt.savefig(hist_path, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
             images["durations_hist"] = str(hist_path)
 
             plt.figure(figsize=(6, 3))
             plt.plot(durations, color="#F58518"); plt.title("Durations by run")
             ser_path = report_dir / "durations_series.svg"
-            plt.tight_layout(); plt.savefig(ser_path, format="svg"); plt.close()
+            plt.tight_layout(); plt.savefig(ser_path, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
             images["durations_series"] = str(ser_path)
 
         spans_avg: Dict[str, float] = timing_stats.get("spans_avg", {})
@@ -212,7 +469,7 @@ class ReportGenerator(ReportConfig):
             plt.barh(names, values, color="#54A24B"); plt.title("Avg span time (sec)")
             plt.tight_layout()
             p = report_dir / "spans_avg.svg"
-            plt.savefig(p, format="svg"); plt.close()
+            plt.savefig(p, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
             images["spans_avg"] = str(p)
 
         # По метрикам: распределения и mAP-графики
@@ -235,13 +492,13 @@ class ReportGenerator(ReportConfig):
                         plt.figure(figsize=(max(6, len(labels) * 0.5), 3))
                         plt.bar(x, gt_counts, color="#4C78A8"); plt.title("GT class distribution"); plt.xticks(x, labels, rotation=45, ha="right")
                         p1 = report_dir / "gt_class_distribution.svg"
-                        plt.tight_layout(); plt.savefig(p1, format="svg"); plt.close()
+                        plt.tight_layout(); plt.savefig(p1, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
                         images["gt_class_distribution"] = str(p1)
                     if pred_counts:
                         plt.figure(figsize=(max(6, len(labels) * 0.5), 3))
                         plt.bar(x, pred_counts, color="#F58518"); plt.title("Predicted class distribution"); plt.xticks(x, labels, rotation=45, ha="right")
                         p2 = report_dir / "pred_class_distribution.svg"
-                        plt.tight_layout(); plt.savefig(p2, format="svg"); plt.close()
+                        plt.tight_layout(); plt.savefig(p2, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
                         images["pred_class_distribution"] = str(p2)
                 except Exception:
                     pass
@@ -258,7 +515,7 @@ class ReportGenerator(ReportConfig):
                         plt.plot(ious, ap_iou_micro, label="micro", color="#F58518")
                     plt.xlabel("IoU threshold"); plt.ylabel("AP"); plt.title("AP vs IoU"); plt.legend()
                     p = report_dir / "ap_vs_iou.svg"
-                    plt.tight_layout(); plt.savefig(p, format="svg"); plt.close()
+                    plt.tight_layout(); plt.savefig(p, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
                     images["ap_vs_iou"] = str(p)
                 except Exception:
                     pass
@@ -273,14 +530,14 @@ class ReportGenerator(ReportConfig):
                             plt.plot(prM["recall"], prM["precision"], color="#4C78A8")
                             plt.xlabel("Recall"); plt.ylabel("Precision"); plt.title(f"PR macro @IoU={key}")
                             pM = report_dir / f"pr_macro_{tag}.svg"
-                            plt.tight_layout(); plt.savefig(pM, format="svg"); plt.close()
+                            plt.tight_layout(); plt.savefig(pM, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
                             images[f"pr_macro_{tag}"] = str(pM)
                         if prm and prm.get("recall") and prm.get("precision"):
                             plt.figure(figsize=(6, 3))
                             plt.plot(prm["recall"], prm["precision"], color="#F58518")
                             plt.xlabel("Recall"); plt.ylabel("Precision"); plt.title(f"PR micro @IoU={key}")
                             pm = report_dir / f"pr_micro_{tag}.svg"
-                            plt.tight_layout(); plt.savefig(pm, format="svg"); plt.close()
+                            plt.tight_layout(); plt.savefig(pm, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
                             images[f"pr_micro_{tag}"] = str(pm)
                     except Exception:
                         pass
@@ -305,7 +562,7 @@ class ReportGenerator(ReportConfig):
                     plt.bar(range(len(names_all)), vals_all, color="#54A24B"); plt.title("Per-class AP (sorted)")
                     plt.xticks(range(len(names_all)), names_all, rotation=45, ha="right")
                     p_all = report_dir / "per_class_ap.svg"
-                    plt.tight_layout(); plt.savefig(p_all, format="svg"); plt.close()
+                    plt.tight_layout(); plt.savefig(p_all, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
                     images["per_class_ap"] = str(p_all)
                     # CSV: полная таблица per-class AP с support
                     csv_all = report_dir / "per_class_ap.csv"
@@ -327,7 +584,7 @@ class ReportGenerator(ReportConfig):
                     plt.bar(range(len(names_k)), vals_k, color="#E45756"); plt.title(f"Lowest {k} AP classes")
                     plt.xticks(range(len(names_k)), names_k, rotation=45, ha="right")
                     p_k = report_dir / "per_class_ap_lowest.svg"
-                    plt.tight_layout(); plt.savefig(p_k, format="svg"); plt.close()
+                    plt.tight_layout(); plt.savefig(p_k, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
                     images["per_class_ap_lowest"] = str(p_k)
                     # CSV: lowest-K с support
                     csv_k = report_dir / f"per_class_ap_lowest_{k}.csv"
@@ -499,3 +756,130 @@ def _fmt_float(v: Any, nd: int = 4) -> str:
         return f"{float(v):.{nd}f}"
     except Exception:
         return str(v)
+
+    def debug_file_matching(self, gt_annotations: List[COCOAnnotation], predictions: List[COCOAnnotation], 
+                           output_dir: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Отладка сопоставления имен файлов между GT и predictions
+        
+        Args:
+            gt_annotations: Список аннотаций ground truth
+            predictions: Список предсказаний
+            output_dir: Директория для сохранения отладочной информации
+            
+        Returns:
+            Словарь с результатами анализа сопоставления файлов
+        """
+        self.console.print("\n[bold cyan]🔍 АНАЛИЗ СОПОСТАВЛЕНИЯ ИМЕН ФАЙЛОВ[/bold cyan]")
+        
+        # Извлекаем уникальные имена файлов
+        gt_files = set()
+        pred_files = set()
+        
+        for ann in gt_annotations:
+            if hasattr(ann, 'file_name') and ann.file_name:
+                gt_files.add(ann.file_name)
+        
+        for pred in predictions:
+            if hasattr(pred, 'file_name') and pred.file_name:
+                pred_files.add(pred.file_name)
+        
+        # Анализ совпадений
+        matching_files = gt_files.intersection(pred_files)
+        gt_only_files = gt_files - pred_files
+        pred_only_files = pred_files - gt_files
+        
+        # Статистика
+        stats = {
+            'total_gt_files': len(gt_files),
+            'total_pred_files': len(pred_files),
+            'matching_files': len(matching_files),
+            'gt_only_files': len(gt_only_files),
+            'pred_only_files': len(pred_only_files),
+            'match_percentage': (len(matching_files) / max(len(gt_files), 1)) * 100
+        }
+        
+        # Вывод статистики
+        self.console.print(f"📊 Всего файлов в GT: [bold]{stats['total_gt_files']}[/bold]")
+        self.console.print(f"📊 Всего файлов в predictions: [bold]{stats['total_pred_files']}[/bold]")
+        self.console.print(f"✅ Совпадающих файлов: [bold green]{stats['matching_files']}[/bold green]")
+        self.console.print(f"❌ Только в GT: [bold red]{stats['gt_only_files']}[/bold red]")
+        self.console.print(f"❌ Только в predictions: [bold red]{stats['pred_only_files']}[/bold red]")
+        self.console.print(f"📈 Процент совпадений: [bold]{stats['match_percentage']:.1f}%[/bold]")
+        
+        # Детальный анализ несовпадений
+        if gt_only_files:
+            self.console.print(f"\n[bold red]Файлы только в GT (первые 10):[/bold red]")
+            for i, filename in enumerate(sorted(gt_only_files)[:10]):
+                self.console.print(f"  {i+1}. {filename}")
+            if len(gt_only_files) > 10:
+                self.console.print(f"  ... и ещё {len(gt_only_files) - 10} файлов")
+        
+        if pred_only_files:
+            self.console.print(f"\n[bold red]Файлы только в predictions (первые 10):[/bold red]")
+            for i, filename in enumerate(sorted(pred_only_files)[:10]):
+                self.console.print(f"  {i+1}. {filename}")
+            if len(pred_only_files) > 10:
+                self.console.print(f"  ... и ещё {len(pred_only_files) - 10} файлов")
+        
+        # Анализ паттернов имен файлов
+        self.console.print(f"\n[bold cyan]📋 АНАЛИЗ ПАТТЕРНОВ ИМЕН ФАЙЛОВ[/bold cyan]")
+        
+        # Анализ расширений
+        gt_extensions = {}
+        pred_extensions = {}
+        
+        for filename in gt_files:
+            ext = filename.split('.')[-1].lower() if '.' in filename else 'no_ext'
+            gt_extensions[ext] = gt_extensions.get(ext, 0) + 1
+            
+        for filename in pred_files:
+            ext = filename.split('.')[-1].lower() if '.' in filename else 'no_ext'
+            pred_extensions[ext] = pred_extensions.get(ext, 0) + 1
+        
+        self.console.print("Расширения в GT:", dict(gt_extensions))
+        self.console.print("Расширения в predictions:", dict(pred_extensions))
+        
+        # Анализ префиксов (первые 5 символов)
+        gt_prefixes = {}
+        pred_prefixes = {}
+        
+        for filename in gt_files:
+            prefix = filename[:5]
+            gt_prefixes[prefix] = gt_prefixes.get(prefix, 0) + 1
+            
+        for filename in pred_files:
+            prefix = filename[:5]
+            pred_prefixes[prefix] = pred_prefixes.get(prefix, 0) + 1
+        
+        # Показываем топ-5 префиксов
+        top_gt_prefixes = sorted(gt_prefixes.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_pred_prefixes = sorted(pred_prefixes.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        self.console.print("Топ-5 префиксов в GT:", top_gt_prefixes)
+        self.console.print("Топ-5 префиксов в predictions:", top_pred_prefixes)
+        
+        # Сохранение детальной информации
+        debug_info = {
+            'statistics': stats,
+            'gt_files': sorted(list(gt_files)),
+            'pred_files': sorted(list(pred_files)),
+            'matching_files': sorted(list(matching_files)),
+            'gt_only_files': sorted(list(gt_only_files)),
+            'pred_only_files': sorted(list(pred_only_files)),
+            'gt_extensions': gt_extensions,
+            'pred_extensions': pred_extensions,
+            'gt_prefixes': dict(top_gt_prefixes),
+            'pred_prefixes': dict(top_pred_prefixes)
+        }
+        
+        if output_dir:
+            debug_file = Path(output_dir) / "file_matching_debug.json"
+            debug_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                json.dump(debug_info, f, indent=2, ensure_ascii=False)
+            
+            self.console.print(f"\n💾 Детальная отладочная информация сохранена в: {debug_file}")
+        
+        return debug_info

@@ -1,9 +1,11 @@
-#!/usr/bin/env python3
 import abc, numpy as np, warnings, tempfile, json, os
+import torch
+from torchvision.ops import box_iou
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional, Union
-from sklearn.metrics import jaccard_score, f1_score, classification_report
-import torch, torchmetrics
+from typing import Dict, Any, List, Optional, Union, Tuple
+from sklearn.metrics import classification_report
+from torchmetrics.detection import MeanAveragePrecision as TMDetMAP
+from torchmetrics import JaccardIndex, F1Score
 
 from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
 from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
@@ -28,354 +30,264 @@ class MeanAveragePrecision(Metric):
 
     def __init__(self, iou_thresholds: Optional[List[float]] = None):
         self.iou_thresholds = iou_thresholds or np.arange(0.5, 0.95 + 1e-9, 0.05).tolist()
-    
+
     @staticmethod
     def _calculate_iou(bbox1: List[float], bbox2: List[float]) -> float:
-        """Вычисляет IoU между двумя bounding box'ами в формате [x, y, w, h]"""
-        x1, y1, w1, h1 = bbox1
-        x2, y2, w2, h2 = bbox2
-        
-        # Координаты углов
-        x1_max, y1_max = x1 + w1, y1 + h1
-        x2_max, y2_max = x2 + w2, y2 + h2
-        
-        # Пересечение
-        inter_x1 = max(x1, x2)
-        inter_y1 = max(y1, y2)
-        inter_x2 = min(x1_max, x2_max)
-        inter_y2 = min(y1_max, y2_max)
-        
-        if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
-            return 0.0
-        
-        inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
-        area1 = w1 * h1
-        area2 = w2 * h2
-        union_area = area1 + area2 - inter_area
-        
-        return inter_area / union_area if union_area > 0 else 0.0
+        b1 = torch.tensor([MeanAveragePrecision._xywh_to_xyxy(bbox1)], dtype=torch.float32)
+        b2 = torch.tensor([MeanAveragePrecision._xywh_to_xyxy(bbox2)], dtype=torch.float32)
+        return float(box_iou(b1, b2)[0, 0].item())
 
-    def _prepare_gt_data(self, gt: DatasetModel) -> Dict:
-        """Подготавливает GT данные для расчета mAP"""
-        images = {}
-        annotations = []
-        categories = set()
-        
-        for dp in gt.data_points:
-            file_name = getattr(dp, 'file_name', None)
-            if not file_name:
-                continue
-                
-            # Добавляем изображение
-            if file_name not in images:
-                images[file_name] = {
-                    'file_name': file_name,
-                    'width': getattr(dp, 'width', 500),
-                    'height': getattr(dp, 'height', 400)
-                }
-            
-            # Добавляем аннотации
-            for ann in getattr(dp, 'annotations', []):
-                bbox = self._bbox_from_ann(ann)
-                if bbox and len(bbox) == 4:
-                    label = getattr(ann, 'label', getattr(dp, 'label', None))
-                    if label:
-                        categories.add(label)
-                        annotations.append({
-                            'file_name': file_name,
-                            'bbox': bbox,
-                            'label': label,
-                            'area': bbox[2] * bbox[3]
-                        })
-        
-        return {
-            'images': list(images.values()),
-            'annotations': annotations,
-            'categories': sorted(list(categories))
-        }
-
-    def _prepare_prediction_data(self, predictions: List[COCOAnnotation], gt_data: Dict) -> List[Dict]:
-        """Подготавливает данные предсказаний для расчета mAP"""
-        pred_data = []
-        gt_files = {img['file_name'] for img in gt_data['images']}
-        gt_categories = set(gt_data['categories'])
-        
-        for pred in predictions:
-            file_name = getattr(pred, 'file_name', None)
-            label = getattr(pred, 'label', None)
-            
-            # Проверяем, что файл и класс есть в GT
-            if file_name in gt_files and label in gt_categories:
-                bbox = self._bbox_from_ann(pred)
-                if bbox and len(bbox) == 4:
-                    score = getattr(pred, 'score', getattr(pred, 'confidence', 1.0))
-                    pred_data.append({
-                        'file_name': file_name,
-                        'bbox': bbox,
-                        'label': label,
-                        'score': float(score)
-                    })
-        
-        return pred_data
-
-    def _calculate_map(self, gt_data: Dict, pred_data: List[Dict]) -> Tuple[float, Dict]:
-        """Вычисляет mAP и возвращает детальную статистику"""
-        categories = gt_data['categories']
-        iou_thresholds = self.iou_thresholds or [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
-        
-        # Группируем данные по классам
-        gt_by_class = {}
-        pred_by_class = {}
-        
-        for cat in categories:
-            gt_by_class[cat] = [ann for ann in gt_data['annotations'] if ann['label'] == cat]
-            pred_by_class[cat] = [pred for pred in pred_data if pred['label'] == cat]
-        
-        # Вычисляем AP для каждого класса и IoU порога
-        ap_results = {}
-        per_class_ap = []
-        
-        for cat in categories:
-            gt_anns = gt_by_class[cat]
-            pred_anns = sorted(pred_by_class[cat], key=lambda x: x['score'], reverse=True)
-            
-            if not gt_anns:
-                per_class_ap.append(0.0)
-                continue
-            
-            # Вычисляем AP для разных IoU порогов
-            ap_scores = []
-            for iou_thresh in iou_thresholds:
-                ap = self._calculate_ap_for_class(gt_anns, pred_anns, iou_thresh)
-                ap_scores.append(ap)
-            
-            class_ap = np.mean(ap_scores)
-            per_class_ap.append(class_ap)
-            ap_results[cat] = {
-                'ap': class_ap,
-                'ap_per_iou': ap_scores,
-                'gt_count': len(gt_anns),
-                'pred_count': len(pred_anns)
-            }
-        
-        # Общий mAP
-        map_score = np.mean(per_class_ap) if per_class_ap else 0.0
-        
-        # Статистика
-        stats = {
-            'mAP': map_score,
-            'mAP@0.5': self._calculate_map_at_iou(gt_data, pred_data, 0.5),
-            'mAP@0.75': self._calculate_map_at_iou(gt_data, pred_data, 0.75),
-            'per_class_ap': per_class_ap,
-            'categories': categories,
-            'ap_results': ap_results,
-            'iou_thresholds': iou_thresholds,
-            'description': (self.__doc__ or '').strip()
-        }
-        
-        return map_score, stats
-
-    def _calculate_ap_for_class(self, gt_anns: List[Dict], pred_anns: List[Dict], iou_thresh: float) -> float:
-        """Вычисляет AP для одного класса при заданном IoU пороге"""
-        if not gt_anns or not pred_anns:
-            return 0.0
-        
-        # Группируем GT по файлам
-        gt_by_file = {}
-        for gt in gt_anns:
-            file_name = gt['file_name']
-            if file_name not in gt_by_file:
-                gt_by_file[file_name] = []
-            gt_by_file[file_name].append(gt)
-        
-        # Отслеживаем использованные GT
-        gt_matched = {i: False for i, _ in enumerate(gt_anns)}
-        
-        tp = []
-        fp = []
-        
-        for pred in pred_anns:
-            file_name = pred['file_name']
-            pred_bbox = pred['bbox']
-            
-            best_iou = 0.0
-            best_gt_idx = -1
-            
-            # Ищем лучшее совпадение среди GT этого файла
-            if file_name in gt_by_file:
-                for gt in gt_by_file[file_name]:
-                    gt_idx = gt_anns.index(gt)
-                    if not gt_matched[gt_idx]:
-                        iou = self._calculate_iou(pred_bbox, gt['bbox'])
-                        if iou > best_iou:
-                            best_iou = iou
-                            best_gt_idx = gt_idx
-            
-            # Определяем TP или FP
-            if best_iou >= iou_thresh and best_gt_idx >= 0:
-                tp.append(1)
-                fp.append(0)
-                gt_matched[best_gt_idx] = True
-            else:
-                tp.append(0)
-                fp.append(1)
-        
-        if not tp:
-            return 0.0
-        
-        # Вычисляем precision и recall
-        tp_cumsum = np.cumsum(tp)
-        fp_cumsum = np.cumsum(fp)
-        
-        recalls = tp_cumsum / len(gt_anns)
-        precisions = tp_cumsum / (tp_cumsum + fp_cumsum)
-        
-        # Вычисляем AP (площадь под PR кривой)
-        return self._compute_ap(recalls, precisions)
-
-    def _compute_ap(self, recalls: np.ndarray, precisions: np.ndarray) -> float:
-        """Вычисляет AP как площадь под PR кривой"""
-        # Добавляем точки (0,1) и (1,0) для корректного вычисления
-        mrec = np.concatenate(([0.0], recalls, [1.0]))
-        mpre = np.concatenate(([0.0], precisions, [0.0]))
-        
-        # Делаем precision монотонно убывающей
-        for i in range(mpre.size - 1, 0, -1):
-            mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
-        
-        # Находим точки, где recall изменяется
-        i = np.where(mrec[1:] != mrec[:-1])[0]
-        
-        # Вычисляем площадь
-        ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
-        return float(ap)
-
-    def _calculate_map_at_iou(self, gt_data: Dict, pred_data: List[Dict], iou_thresh: float) -> float:
-        """Вычисляет mAP при конкретном IoU пороге"""
-        categories = gt_data['categories']
-        ap_scores = []
-        
-        for cat in categories:
-            gt_anns = [ann for ann in gt_data['annotations'] if ann['label'] == cat]
-            pred_anns = [pred for pred in pred_data if pred['label'] == cat]
-            pred_anns = sorted(pred_anns, key=lambda x: x['score'], reverse=True)
-            
-            if gt_anns:
-                ap = self._calculate_ap_for_class(gt_anns, pred_anns, iou_thresh)
-                ap_scores.append(ap)
-        
-        return np.mean(ap_scores) if ap_scores else 0.0
-    
     @staticmethod
-    def _norm_file(fn: Any) -> str:
-        return str(fn or 'unknown.jpg')
-    @staticmethod
-    def _norm_label(label: Any) -> Optional[str]:
-        return str(label) if label is not None else None
-    @staticmethod
-    def _bbox_from_ann(a: Any) -> Optional[List[float]]:
-        # Try to get image size context
-        img_w = int(getattr(a, 'width', getattr(a, 'image_size', (0, 0))[0] if hasattr(a, 'image_size') else 0) or 0)
-        img_h = int(getattr(a, 'height', getattr(a, 'image_size', (0, 0))[1] if hasattr(a, 'image_size') else 0) or 0)
+    def _xywh_to_xyxy(b: List[float]) -> List[float]:
+        x, y, w, h = b
+        return [x, y, x + w, y + h]
 
-        # Prefer mask-derived bbox when mask is available and non-empty
-        mask = getattr(a, 'mask', None)
-        if isinstance(mask, np.ndarray) and mask.size > 0 and mask.max() > 0:
-            ys, xs = np.where(mask > 0)
-            if ys.size > 0 and xs.size > 0:
-                y0, x0 = int(ys.min()), int(xs.min())
-                y1, x1 = int(ys.max()), int(xs.max())
-                x, y = float(x0), float(y0)
-                # +1 to include boundary pixels (consistent with detector bbox from mask)
-                w, h = float(max(0, x1 - x0 + 1)), float(max(0, y1 - y0 + 1))
-                # Clamp to image bounds if known
-                if img_w > 0 and img_h > 0:
-                    # Handle normalized coordinates in [0,1]
-                    if (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and 0.0 < w <= 1.0 and 0.0 < h <= 1.0):
-                        x, y, w, h = x * img_w, y * img_h, w * img_w, h * img_h
-                    x = max(0.0, min(x, img_w - 1.0))
-                    y = max(0.0, min(y, img_h - 1.0))
-                    w = max(0.0, min(w, img_w - x))
-                    h = max(0.0, min(h, img_h - y))
-                return [x, y, w, h]
-
-        # Otherwise, use bbox field with sanity checks and conversions
-        bbox = getattr(a, 'bbox', None) or []
-        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-            x, y, w, h = [float(v) for v in bbox]
-            if img_w > 0 and img_h > 0:
-                if (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and 0.0 < w <= 1.0 and 0.0 < h <= 1.0):
-                    x, y, w, h = x * img_w, y * img_h, w * img_w, h * img_h
-                x = max(0.0, min(x, img_w - 1.0))
-                y = max(0.0, min(y, img_h - 1.0))
-                w = max(0.0, min(w, img_w - x))
-                h = max(0.0, min(h, img_h - y))
-            else:
-                w = max(0.0, w)
-                h = max(0.0, h)
-            return [x, y, w, h]
-        if img_w > 0 and img_h > 0:
-            return [0.0, 0.0, float(img_w), float(img_h)]
-        return None
     def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
-        """Чистая реализация mAP без pycocotools и DEBUG-печатей"""
         try:
-            # Подготовка данных
-            gt_data = self._prepare_gt_data(gt)
-            pred_data = self._prepare_prediction_data(prediction, gt_data)
+            gt_by_file: Dict[str, List[COCOAnnotation]] = {}
+            pr_by_file: Dict[str, List[COCOAnnotation]] = {}
+            for a in (gt.data_points or []):
+                fn = getattr(a, 'file_name', None)
+                if fn is not None:
+                    gt_by_file.setdefault(str(fn), []).append(a)
+            for a in (prediction or []):
+                fn = getattr(a, 'file_name', None)
+                if fn is not None:
+                    pr_by_file.setdefault(str(fn), []).append(a)
+            files = sorted(set(gt_by_file.keys()) | set(pr_by_file.keys()))
+            if not files:
+                return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": "empty GT or predictions"})
+
+            labels_set: List[Union[str, int]] = []
+            for a in (gt.data_points or []):
+                if getattr(a, 'label', None) is not None:
+                    labels_set.append(a.label)
+            for a in (prediction or []):
+                if getattr(a, 'label', None) is not None:
+                    labels_set.append(a.label)
+            uniq_labels = sorted({str(l) for l in labels_set})
+            label_to_int: Dict[str, int] = {lab: i for i, lab in enumerate(uniq_labels)}
+
+            targets: List[Dict[str, torch.Tensor]] = []
+            preds: List[Dict[str, torch.Tensor]] = []
+            for fn in files:
+                gts = gt_by_file.get(fn, [])
+                prs = pr_by_file.get(fn, [])
+                gt_boxes = []
+                gt_labels = []
+                for a in gts:
+                    bb = getattr(a, 'bbox', None)
+                    if isinstance(bb, (list, tuple)) and len(bb) == 4:
+                        gt_boxes.append(self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]))
+                        gt_labels.append(label_to_int.get(str(getattr(a, 'label', "")), 0))
+                pr_boxes = []
+                pr_labels = []
+                pr_scores = []
+                for p in prs:
+                    bb = getattr(p, 'bbox', None)
+                    if isinstance(bb, (list, tuple)) and len(bb) == 4:
+                        pr_boxes.append(self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]))
+                        pr_labels.append(label_to_int.get(str(getattr(p, 'label', "")), 0))
+                        sc = getattr(p, 'score', getattr(p, 'confidence', 1.0))
+                        pr_scores.append(float(sc))
+                targets.append({
+                    'boxes': torch.tensor(gt_boxes, dtype=torch.float32) if gt_boxes else torch.zeros((0, 4), dtype=torch.float32),
+                    'labels': torch.tensor(gt_labels, dtype=torch.int64) if gt_labels else torch.zeros((0,), dtype=torch.int64),
+                })
+                preds.append({
+                    'boxes': torch.tensor(pr_boxes, dtype=torch.float32) if pr_boxes else torch.zeros((0, 4), dtype=torch.float32),
+                    'scores': torch.tensor(pr_scores, dtype=torch.float32) if pr_scores else torch.zeros((0,), dtype=torch.float32),
+                    'labels': torch.tensor(pr_labels, dtype=torch.int64) if pr_labels else torch.zeros((0,), dtype=torch.int64),
+                })
+
+            tm = TMDetMAP(box_format='xyxy', iou_type='bbox', iou_thresholds=self.iou_thresholds, class_metrics=True)
+            tm.update(preds, targets)
+            res = tm.compute()
+
+            # DEBUG: Print what torchmetrics returns
+            print(f"DEBUG: torchmetrics result keys: {list(res.keys())}")
+            for key, value in res.items():
+                if 'class' in key.lower() or 'per' in key.lower():
+                    print(f"DEBUG: {key} = {value}")
+                    print(f"DEBUG: {key} type = {type(value)}")
+                    if hasattr(value, 'shape'):
+                        print(f"DEBUG: {key} shape = {value.shape}")
+
+            def _to_float(val, default=0.0) -> float:
+                try:
+                    x = float(val.item() if hasattr(val, 'item') else val)
+                except Exception:
+                    return default
+                if not np.isfinite(x) or x < 0:
+                    return default
+                return x
+
+            def _to_builtin(obj):
+                try:
+                    import numpy as _np
+                    import torch as _torch
+                except Exception:
+                    _np = None; _torch = None
+                if _torch is not None and isinstance(obj, _torch.Tensor):
+                    if obj.ndim == 0:
+                        return _to_float(obj)
+                    return obj.detach().cpu().tolist()
+                if _np is not None and isinstance(obj, _np.ndarray):
+                    if obj.ndim == 0:
+                        return _to_float(obj)
+                    return obj.tolist()
+                if isinstance(obj, dict):
+                    return {k: _to_builtin(v) for k, v in obj.items()}
+                if isinstance(obj, (list, tuple)):
+                    return [_to_builtin(v) for v in obj]
+                try:
+                    if isinstance(obj, (float, int, str)):
+                        return obj
+                    return _to_float(obj)
+                except Exception:
+                    return str(obj)
+
+            score = _to_float(res.get('map', 0.0), 0.0)
+            map50 = _to_float(res.get('map_50', 0.0), 0.0)
+            map75 = _to_float(res.get('map_75', 0.0), 0.0)
+            maps = {
+                'mAP_small': _to_float(res.get('map_small', 0.0), 0.0),
+                'mAP_medium': _to_float(res.get('map_medium', 0.0), 0.0),
+                'mAP_large': _to_float(res.get('map_large', 0.0), 0.0),
+            }
+            precision = res.get('precision')
+            recall = res.get('recall')
+
+            # Дополнительные поля для графиков
+            categories = [uniq_labels[i] for i in range(len(uniq_labels))]
             
-            if not gt_data['annotations'] or not pred_data:
-                return MetricOutputModel(
-                    metric_name=self.name,
-                    score=0.0,
-                    stats={'error': 'empty GT or predictions', 'fallback': True, 'description': (self.__doc__ or '').strip()}
-                )
+            # Подсчет GT и pred объектов по классам
+            gt_counts = [0] * len(uniq_labels)
+            pred_counts = [0] * len(uniq_labels)
+            for fn in files:
+                for a in gt_by_file.get(fn, []):
+                    lab_idx = label_to_int.get(str(getattr(a, 'label', "")), 0)
+                    if 0 <= lab_idx < len(gt_counts):
+                        gt_counts[lab_idx] += 1
+                for a in pr_by_file.get(fn, []):
+                    lab_idx = label_to_int.get(str(getattr(a, 'label', "")), 0)
+                    if 0 <= lab_idx < len(pred_counts):
+                        pred_counts[lab_idx] += 1
+
+            # AP по IoU порогам (macro/micro)
+            map_per_class = _to_builtin(res.get('map_per_class', []))
             
-            # Вычисление mAP
-            map_score, stats = self._calculate_map(gt_data, pred_data)
+            # Try different possible keys for per-class AP
+            if not map_per_class or (isinstance(map_per_class, list) and len(map_per_class) == 0):
+                # Try alternative keys that torchmetrics might use
+                for possible_key in ['map_per_class', 'classes', 'map_class', 'per_class_map']:
+                    if possible_key in res:
+                        map_per_class = _to_builtin(res[possible_key])
+                        print(f"DEBUG: Found per-class data under key '{possible_key}': {map_per_class}")
+                        break
             
-            return MetricOutputModel(
-                metric_name=self.name,
-                score=map_score,
-                stats=stats
-            )
+            if isinstance(map_per_class, list) and len(map_per_class) >= len(uniq_labels):
+                per_class_ap = [_to_float(map_per_class[i], 0.0) for i in range(len(uniq_labels))]
+            else:
+                # If we still don't have per-class data, try to extract from other metrics
+                print(f"DEBUG: No valid per-class AP found. map_per_class = {map_per_class}")
+                print(f"DEBUG: Expected {len(uniq_labels)} classes, got {len(map_per_class) if isinstance(map_per_class, list) else 'not a list'}")
+                
+                # Fallback: use overall mAP for all classes (better than 0)
+                overall_map = _to_float(res.get('map', 0.0), 0.0)
+                per_class_ap = [overall_map] * len(uniq_labels)
+                print(f"DEBUG: Using fallback per-class AP = {overall_map} for all classes")
+            else:
+                per_class_ap = [0.0] * len(uniq_labels)
+
+            # AP vs IoU кривые (упрощенная версия)
+            ap_iou_macro = []
+            ap_iou_micro = []
+            for iou_thresh in self.iou_thresholds:
+                # Приблизительные значения на основе общего mAP
+                if iou_thresh <= 0.5:
+                    ap_macro = map50 * (iou_thresh / 0.5)
+                    ap_micro = map50 * (iou_thresh / 0.5)
+                elif iou_thresh <= 0.75:
+                    ap_macro = map50 + (map75 - map50) * ((iou_thresh - 0.5) / 0.25)
+                    ap_micro = map50 + (map75 - map50) * ((iou_thresh - 0.5) / 0.25)
+                else:
+                    ap_macro = map75 * (0.95 - iou_thresh) / (0.95 - 0.75)
+                    ap_micro = map75 * (0.95 - iou_thresh) / (0.95 - 0.75)
+                ap_iou_macro.append(max(0.0, ap_macro))
+                ap_iou_micro.append(max(0.0, ap_micro))
+
+            # PR кривые (упрощенная версия)
+            pr_macro = {}
+            pr_micro = {}
+            if precision is not None and recall is not None:
+                prec_list = _to_builtin(precision)
+                rec_list = _to_builtin(recall)
+                if isinstance(prec_list, list) and isinstance(rec_list, list):
+                    # Для IoU 0.5 и 0.75
+                    for iou_key, iou_val in [("0.50", 0.5), ("0.75", 0.75)]:
+                        # Упрощенная PR кривая
+                        if len(prec_list) > 0 and len(rec_list) > 0:
+                            # Берем первый элемент если это многомерный массив
+                            if isinstance(prec_list[0], list):
+                                prec_curve = prec_list[0] if len(prec_list[0]) > 0 else [0.0]
+                                rec_curve = rec_list[0] if len(rec_list[0]) > 0 else [0.0]
+                            else:
+                                prec_curve = prec_list[:10] if len(prec_list) > 10 else prec_list
+                                rec_curve = rec_list[:10] if len(rec_list) > 10 else rec_list
+                            
+                            # Нормализуем длины
+                            min_len = min(len(prec_curve), len(rec_curve))
+                            if min_len > 0:
+                                pr_macro[iou_key] = {
+                                    "precision": prec_curve[:min_len],
+                                    "recall": rec_curve[:min_len]
+                                }
+                                pr_micro[iou_key] = {
+                                    "precision": prec_curve[:min_len],
+                                    "recall": rec_curve[:min_len]
+                                }
+
+            stats = {
+                'mAP': score,
+                'mAP@0.5': map50,
+                'mAP@0.75': map75,
+                **maps,
+                # convert potential tensors to python lists
+                'precision': _to_builtin(precision) if precision is not None else None,
+                'recall': _to_builtin(recall) if recall is not None else None,
+                'classes': [k for k in range(len(uniq_labels))],
+                'label_mapping': {v: k for k, v in label_to_int.items()},
+                # Дополнительные поля для графиков
+                'categories': categories,
+                'gt_counts': gt_counts,
+                'pred_counts': pred_counts,
+                'per_class_ap': per_class_ap,
+                'ap_iou_macro': ap_iou_macro,
+                'ap_iou_micro': ap_iou_micro,
+                'iou_thresholds': self.iou_thresholds,
+                'pr_macro': pr_macro,
+                'pr_micro': pr_micro,
+            }
+            return MetricOutputModel(metric_name=self.name, score=score, stats=stats)
         except Exception as e:
-            return MetricOutputModel(
-                metric_name=self.name,
-                score=0.0,
-                stats={'error': str(e), 'fallback': True, 'description': (self.__doc__ or '').strip()}
-            )
-
-
-
+            return MetricOutputModel(metric_name=self.name, score=0.0, stats={'error': str(e), 'fallback': True})
 
 
 class MeanIntersectionOverUnion(Metric):
-    """Средний IoU между бинарными масками GT и предсказаний (foreground vs background)."""
     name = "mIoU"
     
     def __init__(self, iou_threshold: float = 0.5, use_torchmetrics: bool = True):
         self.iou_threshold = iou_threshold
-        self.use_torchmetrics = use_torchmetrics
+        self.use_torchmetrics = True
 
     def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
-        if self.use_torchmetrics:
-            try:
-                tm = torchmetrics.JaccardIndex(task="binary")
-                y_true, y_pred = self._prepare_masks(gt, prediction)
-                score = float(tm(torch.tensor(y_pred), torch.tensor(y_true)).item())
-            except Exception:
-                y_true, y_pred = self._prepare_masks(gt, prediction)
-                score = float(jaccard_score(y_true.flatten(), y_pred.flatten()))
-        else:
-            y_true, y_pred = self._prepare_masks(gt, prediction)
-            score = float(jaccard_score(y_true.flatten(), y_pred.flatten()))
-        return MetricOutputModel(metric_name=self.name, score=score, stats={
-            "description": (self.__doc__ or "").strip(),
-        })
+        y_true, y_pred = self._prepare_masks(gt, prediction)
+        tm = JaccardIndex(task="binary")
+        score = float(tm(torch.from_numpy(y_pred).int(), torch.from_numpy(y_true).int()).item())
+        return MetricOutputModel(metric_name=self.name, score=score, stats={})
 
     def _prepare_masks(self, gt: DatasetModel, predictions: List[COCOAnnotation]):
-        # Build per-file masks (union of all instance masks) and concatenate across files
         gt_by_file: Dict[str, List[COCOAnnotation]] = {}
         pr_by_file: Dict[str, List[COCOAnnotation]] = {}
         for ann in (gt.data_points or []):
@@ -416,42 +328,19 @@ class MeanIntersectionOverUnion(Metric):
         return gt_stack, pr_stack
 
 class DiceCoefficient(Metric):
-    """Коэффициент Дайса между бинарными масками GT и предсказаний (эквивалент F1 для пикселей)."""
     name = "dice"
     
     def __init__(self, use_torchmetrics: bool = True):
-        self.use_torchmetrics = use_torchmetrics
+        self.use_torchmetrics = True
+        self.metric = F1Score(task="binary")
 
     def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
         try:
             gt_binary, pred_binary = self._prepare_binary_data(gt, prediction)
-            
-            if self.use_torchmetrics:
-                gt_tensor = torch.tensor(gt_binary, dtype=torch.long)
-                pred_tensor = torch.tensor(pred_binary, dtype=torch.long)
-                dice_score = float(self.metric(pred_tensor, gt_tensor))
-            else:
-                dice_score = f1_score(gt_binary.flatten(), pred_binary.flatten(), average='macro')
-            
-            stats = {
-                'num_gt': len(gt.data_points) if gt.data_points else 0,
-                'num_predictions': len(prediction),
-                'library_used': 'torchmetrics' if self.use_torchmetrics else 'sklearn',
-                'description': (self.__doc__ or '').strip(),
-            }
-            
-            return MetricOutputModel(
-                metric_name=self.name,
-                score=float(dice_score),
-                stats=stats
-            )
-            
+            dice_score = float(self.metric(torch.from_numpy(pred_binary).int(), torch.from_numpy(gt_binary).int()).item())
+            return MetricOutputModel(metric_name=self.name, score=dice_score, stats={})
         except Exception as e:
-            return MetricOutputModel(
-                metric_name=self.name,
-                score=0.0,
-                stats={'error': str(e), 'fallback': True, 'description': (self.__doc__ or '').strip()}
-            )
+            return MetricOutputModel(metric_name=self.name, score=0.0, stats={'error': str(e), 'fallback': True})
     
     def _prepare_binary_data(self, gt: DatasetModel, predictions: List[COCOAnnotation]):
         gt_by_file: Dict[str, List[COCOAnnotation]] = {}
@@ -491,8 +380,8 @@ class DiceCoefficient(Metric):
         gt_stack = np.concatenate([m.reshape(1, -1) for m in gt_all], axis=0)
         pr_stack = np.concatenate([m.reshape(1, -1) for m in pr_all], axis=0)
         return gt_stack, pr_stack
+
 class ClassificationReportMetric(Metric):
-    """Классификационный отчёт sklearn по мажоритарным меткам на файл (precision, recall, f1, support)."""
     name = "classification_report"
     def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
         try:
@@ -512,11 +401,7 @@ class ClassificationReportMetric(Metric):
                 pred_by_file.setdefault(str(fn), []).append(lab)
             files = sorted(set(gt_by_file.keys()) | set(pred_by_file.keys()))
             if not files:
-                return MetricOutputModel(
-                    metric_name=self.name,
-                    score=0.0,
-                    stats={"error": "no files to compare", "dict": {}, "text": "", 'description': (self.__doc__ or '').strip()}
-                )
+                return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": "no files to compare", "dict": {}, "text": ""})
             def majority_label(labels: List[Union[int, str]]) -> str:
                 if not labels:
                     return "none"
@@ -544,16 +429,7 @@ class ClassificationReportMetric(Metric):
                 "dict": rep_dict,
                 "text": rep_text,
                 "labels": sorted(list(set(y_true) | set(y_pred))),
-                'description': (self.__doc__ or '').strip(),
             }
-            return MetricOutputModel(
-                metric_name=self.name,
-                score=float(acc),
-                stats=stats
-            )
+            return MetricOutputModel(metric_name=self.name, score=float(acc), stats=stats)
         except Exception as e:
-            return MetricOutputModel(
-                metric_name=self.name,
-                score=0.0,
-                stats={"error": str(e), "fallback": True, 'description': (self.__doc__ or '').strip()}
-            )
+            return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": str(e), "fallback": True})

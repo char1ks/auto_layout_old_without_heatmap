@@ -61,37 +61,7 @@ def main() -> int:
         dump_report=True,
         report_output_dir=Path.cwd(),
     )
-    print("РЕЗУЛЬТАТЫ МЕТРИК")
-    if metrics:
-        print(f"Получено {len(metrics)} метрик:")
-        print("-" * 50)
-        for metric_result in metrics:
-            print(f"\n{metric_result.metric_name.upper()}: {metric_result.score:.4f}")
-            
-            if hasattr(metric_result, 'stats') and metric_result.stats:
-                stats = metric_result.stats
-                if metric_result.metric_name == "mAP":
-                    print(f"  mAP (micro): {stats.get('mAP_micro', 0):.4f}")
-                    print(f"  mAP50 (micro): {stats.get('mAP50_micro', 0):.4f}")
-                    print(f"  mAP75 (micro): {stats.get('mAP75_micro', 0):.4f}")
-                    print(f"  Совпавших изображений: {stats.get('num_images_matched', 0)}")
-                elif metric_result.metric_name == "mIoU":
-                    print(f"  Micro IoU: {stats.get('mean_iou_micro', 0):.4f}")
-                    print(f"  Macro IoU: {stats.get('mean_iou_macro', 0):.4f}")
-                elif metric_result.metric_name == "dice":
-                    print(f"  Micro Dice: {stats.get('dice_micro', 0):.4f}")
-                    print(f"  Macro Dice: {stats.get('dice_macro', 0):.4f}")
-                per_class = stats.get('per_class', {})
-                if per_class:
-                    print(f"  Статистика по классам:")
-                    for class_name, class_stats in per_class.items():
-                        print(f"    {class_name}: GT={class_stats.get('num_gt', 0)}, "
-                              f"Pred={class_stats.get('num_pred', 0)}, "
-                              f"Score={class_stats.get(metric_result.metric_name.lower(), 0):.4f}")
-    else:
-        print("Метрики не получены")
-    
-    
+    # Отчёт и консольное резюме выводит ReportGenerator; отдельный вывод метрик здесь не требуется.
     return 0
 
 

@@ -215,3 +215,62 @@ def _fmt_float(v: Any, nd: int = 4) -> str:
         return f"{float(v):.{nd}f}"
     except Exception:
         return str(v)
+    if verbose:
+        for m in metrics or []:
+            if m.metric_name.lower() in {"map", "meanaverageprecision"} and isinstance(m.stats, dict):
+                self.console.rule("Детализация mAP")
+                mt = Table(box=box.SIMPLE_HEAVY)
+                mt.add_column("Metric", style="cyan")
+                mt.add_column("Value", justify="right")
+                for key in [
+                    "mAP", "mAP@0.5", "mAP@0.75", "mAP_small", "mAP_medium", "mAP_large"
+                ]:
+                    if key in m.stats:
+                        try:
+                            mt.add_row(key, f"{float(m.stats[key]):.4f}")
+                        except Exception:
+                            mt.add_row(key, str(m.stats[key]))
+                self.console.print(mt)
+                break
+        for m in metrics or []:
+            if m.metric_name == "classification_report" and isinstance(m.stats, dict):
+                self.console.rule("Classification report (sklearn)")
+                rep_dict = m.stats.get("dict")
+                rep_text = m.stats.get("text")
+                if isinstance(rep_dict, dict):
+                    crt = Table(box=box.SIMPLE_HEAVY)
+                    crt.add_column("label", style="cyan")
+                    crt.add_column("precision", justify="right")
+                    crt.add_column("recall", justify="right")
+                    crt.add_column("f1-score", justify="right")
+                    crt.add_column("support", justify="right")
+                    def _is_agg(k: str) -> bool:
+                        lk = k.lower()
+                        return lk in {"accuracy", "macro avg", "weighted avg", "micro avg", "samples avg"}
+                    keys = [k for k in rep_dict.keys() if not _is_agg(str(k))]
+                    for k in keys:
+                        row = rep_dict.get(k, {}) or {}
+                        crt.add_row(
+                            str(k),
+                            _fmt_float(row.get("precision", 0.0), 2),
+                            _fmt_float(row.get("recall", 0.0), 2),
+                            _fmt_float(row.get("f1-score", 0.0), 2),
+                            str(row.get("support", 0)),
+                        )
+                    crt.add_section()
+                    for agg in ["accuracy", "macro avg", "weighted avg", "micro avg", "samples avg"]:
+                        if agg in rep_dict:
+                            row = rep_dict[agg]
+                            if isinstance(row, dict):
+                                prec = _fmt_float(row.get("precision", 0.0), 2)
+                                rec = _fmt_float(row.get("recall", 0.0), 2)
+                                f1 = _fmt_float(row.get("f1-score", 0.0), 2)
+                                sup = str(row.get("support", 0))
+                            else:
+                                prec = rec = f1 = _fmt_float(row, 2)
+                                sup = "-"
+                            crt.add_row(agg, prec, rec, f1, sup)
+                    self.console.print(crt)
+                elif rep_text:
+                    self.console.print(rep_text)
+                break

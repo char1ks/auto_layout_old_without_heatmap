@@ -2,7 +2,7 @@
 import abc, numpy as np, warnings, tempfile, json
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Union
-from sklearn.metrics import jaccard_score, f1_score
+from sklearn.metrics import jaccard_score, f1_score, classification_report
 import torch, torchmetrics
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
@@ -282,3 +282,79 @@ class DiceCoefficient(Metric):
         gt_binary = np.zeros((100, 100))  
         pred_binary = np.zeros((100, 100))
         return gt_binary, pred_binary
+
+
+# --- Simple label comparison metric using sklearn classification_report ---
+class ClassificationReportMetric(Metric):
+    name = "classification_report"
+
+    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
+        try:
+            # Build per-file label lists
+            gt_by_file: Dict[str, List[Union[int, str]]] = {}
+            pred_by_file: Dict[str, List[Union[int, str]]] = {}
+
+            for ann in (gt.data_points or []):
+                fn = getattr(ann, 'file_name', None)
+                lab = getattr(ann, 'label', None)
+                if fn is None or lab is None:
+                    continue
+                gt_by_file.setdefault(str(fn), []).append(lab)
+
+            for ann in (prediction or []):
+                fn = getattr(ann, 'file_name', None)
+                lab = getattr(ann, 'label', None)
+                if fn is None or lab is None:
+                    continue
+                pred_by_file.setdefault(str(fn), []).append(lab)
+
+            files = sorted(set(gt_by_file.keys()) | set(pred_by_file.keys()))
+            if not files:
+                return MetricOutputModel(
+                    metric_name=self.name,
+                    score=0.0,
+                    stats={"error": "no files to compare", "dict": {}, "text": ""}
+                )
+
+            def majority_label(labels: List[Union[int, str]]) -> str:
+                if not labels:
+                    return "none"
+                # Count and pick most frequent; convert to str for normalization
+                counts: Dict[str, int] = {}
+                for l in labels:
+                    s = str(l)
+                    counts[s] = counts.get(s, 0) + 1
+                return max(counts.items(), key=lambda x: x[1])[0]
+
+            y_true: List[str] = []
+            y_pred: List[str] = []
+            for fn in files:
+                gt_lab = majority_label(gt_by_file.get(fn, []))
+                pr_lab = majority_label(pred_by_file.get(fn, []))
+                y_true.append(gt_lab)
+                y_pred.append(pr_lab)
+
+            # classification report
+            rep_dict = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+            rep_text = classification_report(y_true, y_pred, output_dict=False, zero_division=0)
+            # accuracy as primary score
+            correct = sum(1 for a, b in zip(y_true, y_pred) if a == b)
+            acc = float(correct) / float(len(y_true)) if y_true else 0.0
+
+            stats = {
+                "num_files": len(files),
+                "dict": rep_dict,
+                "text": rep_text,
+                "labels": sorted(list(set(y_true) | set(y_pred)))
+            }
+            return MetricOutputModel(
+                metric_name=self.name,
+                score=float(acc),
+                stats=stats
+            )
+        except Exception as e:
+            return MetricOutputModel(
+                metric_name=self.name,
+                score=0.0,
+                stats={"error": str(e), "fallback": True}
+            )

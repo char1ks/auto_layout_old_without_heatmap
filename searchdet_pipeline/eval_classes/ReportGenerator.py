@@ -32,9 +32,11 @@ class ReportGenerator(ReportConfig):
         output_dir: Optional[Union[str, Path]] = None,
     ) -> Optional[Path]:
         timing_stats = self._collect_timing_stats(contexts)
+        # Всегда печатаем в терминал: кратко или подробно в зависимости от dump_report
+        self._generate_terminal_report(metrics, timing_stats, verbose=dump_report)
         if not dump_report:
-            self._generate_terminal_report(metrics, timing_stats)
             return None
+        # Подробный режим: сохраняем полный отчёт с графиками и JSON
         report_dir = self._prepare_report_dir(output_dir)
         images = self._save_graphs(report_dir, timing_stats)
         self._write_markdown(report_dir, metrics, timing_stats, images)
@@ -42,7 +44,8 @@ class ReportGenerator(ReportConfig):
         self.console.print(f"[green]Отчёт сохранён в[/green] {report_dir}")
         return report_dir
 
-    def _generate_terminal_report(self, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any]) -> None:
+    def _generate_terminal_report(self, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any], verbose: bool = False) -> None:
+        # Сводная таблица метрик — всегда
         self.console.rule("МЕТРИКИ (сводная таблица)")
         t = Table(box=box.SIMPLE_HEAVY)
         t.add_column("Metric", style="cyan", no_wrap=True)
@@ -52,6 +55,7 @@ class ReportGenerator(ReportConfig):
             t.add_row(m.metric_name, score)
         self.console.print(t)
 
+        # Статистика времени — всегда
         self.console.rule("СТАТИСТИКА ВРЕМЕНИ ДЕТЕКТОРА")
         tt = Table(box=box.SIMPLE_HEAVY)
         tt.add_column("Показатель", style="magenta")
@@ -77,6 +81,77 @@ class ReportGenerator(ReportConfig):
             for name, val in sorted(spans_avg.items(), key=lambda x: x[1], reverse=True):
                 st.add_row(name, _fmt_float(val))
             self.console.print(st)
+
+        # Подробный режим — детализация метрик
+        if not verbose:
+            return
+
+        # Детализация mAP, если присутствует соответствующая метрика
+        for m in metrics or []:
+            if m.metric_name.lower() in {"map", "meanaverageprecision"} and isinstance(m.stats, dict):
+                self.console.rule("Детализация mAP")
+                mt = Table(box=box.SIMPLE_HEAVY)
+                mt.add_column("Metric", style="cyan")
+                mt.add_column("Value", justify="right")
+                for key in [
+                    "mAP", "mAP@0.5", "mAP@0.75", "mAP_small", "mAP_medium", "mAP_large"
+                ]:
+                    if key in m.stats:
+                        try:
+                            mt.add_row(key, f"{float(m.stats[key]):.4f}")
+                        except Exception:
+                            mt.add_row(key, str(m.stats[key]))
+                self.console.print(mt)
+                break
+
+        # Сквозной отчёт в стиле sklearn.metrics.classification_report
+        for m in metrics or []:
+            if m.metric_name == "classification_report" and isinstance(m.stats, dict):
+                self.console.rule("Classification report (sklearn)")
+                rep_dict = m.stats.get("dict")
+                rep_text = m.stats.get("text")
+                if isinstance(rep_dict, dict):
+                    # Таблица: label | precision | recall | f1-score | support
+                    crt = Table(box=box.SIMPLE_HEAVY)
+                    crt.add_column("label", style="cyan")
+                    crt.add_column("precision", justify="right")
+                    crt.add_column("recall", justify="right")
+                    crt.add_column("f1-score", justify="right")
+                    crt.add_column("support", justify="right")
+                    # сначала классы (не агрегаты), затем агрегаты
+                    def _is_agg(k: str) -> bool:
+                        lk = str(k).lower()
+                        return lk in {"accuracy", "macro avg", "weighted avg", "micro avg", "samples avg"}
+                    keys = [k for k in rep_dict.keys() if not _is_agg(k)]
+                    for k in keys:
+                        row = rep_dict.get(k, {}) or {}
+                        crt.add_row(
+                            str(k),
+                            _fmt_float(row.get("precision", 0.0), 2),
+                            _fmt_float(row.get("recall", 0.0), 2),
+                            _fmt_float(row.get("f1-score", 0.0), 2),
+                            str(row.get("support", 0)),
+                        )
+                    # Разделитель и агрегаты
+                    crt.add_section()
+                    for agg in ["accuracy", "macro avg", "weighted avg", "micro avg", "samples avg"]:
+                        if agg in rep_dict:
+                            row = rep_dict[agg]
+                            if isinstance(row, dict):
+                                prec = _fmt_float(row.get("precision", 0.0), 2)
+                                rec = _fmt_float(row.get("recall", 0.0), 2)
+                                f1 = _fmt_float(row.get("f1-score", 0.0), 2)
+                                sup = str(row.get("support", 0))
+                            else:
+                                # accuracy может быть скаляром
+                                prec = rec = f1 = _fmt_float(row, 2)
+                                sup = "-"
+                            crt.add_row(agg, prec, rec, f1, sup)
+                    self.console.print(crt)
+                elif rep_text:
+                    # Фолбэк — печать текстового отчёта sklearn
+                    self.console.print(rep_text)
+                break
 
     def _collect_timing_stats(self, contexts: List[Context]) -> Dict[str, Any]:
         durations: List[float] = []
@@ -122,51 +197,37 @@ class ReportGenerator(ReportConfig):
         return stats
 
     def _prepare_report_dir(self, output_dir: Optional[Union[str, Path]]) -> Path:
-        base = Path(output_dir) if output_dir else Path.cwd()
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        report_dir = base / f"eval_report_{ts}"
-        report_dir.mkdir(parents=True, exist_ok=True)
-        (report_dir / "images").mkdir(exist_ok=True)
-        return report_dir
+        out = Path(output_dir) if output_dir else Path(os.getcwd()) / "report"
+        out.mkdir(parents=True, exist_ok=True)
+        return out
 
     def _save_graphs(self, report_dir: Path, timing_stats: Dict[str, Any]) -> Dict[str, str]:
-        images_dir = report_dir / "images"
-        saved: Dict[str, str] = {}
+        images: Dict[str, str] = {}
         durations = timing_stats.get("durations", [])
         if durations:
-            plt.figure(figsize=(6, 4))
-            plt.hist(durations, bins=max(5, min(30, len(durations)//2)), color="#4C78A8")
-            plt.xlabel("Duration, sec")
-            plt.ylabel("Count")
-            plt.tight_layout()
-            p = images_dir / "durations_hist.png"
-            plt.savefig(p)
-            plt.close()
-            saved["durations_hist"] = str(p.relative_to(report_dir))
+            plt.figure(figsize=(6, 3))
+            plt.hist(durations, bins=20, color="#4C78A8"); plt.title("Durations (sec)")
+            hist_path = report_dir / "durations_hist.png"
+            plt.tight_layout(); plt.savefig(hist_path); plt.close()
+            images["durations_hist"] = str(hist_path)
 
             plt.figure(figsize=(6, 3))
-            plt.plot(range(1, len(durations) + 1), durations, marker="o", linestyle="-", color="#F58518")
-            plt.xlabel("Run #")
-            plt.ylabel("Duration, sec")
-            plt.tight_layout()
-            p2 = images_dir / "durations_series.png"
-            plt.savefig(p2)
-            plt.close()
-            saved["durations_series"] = str(p2.relative_to(report_dir))
+            plt.plot(durations, color="#F58518"); plt.title("Durations by run")
+            ser_path = report_dir / "durations_series.png"
+            plt.tight_layout(); plt.savefig(ser_path); plt.close()
+            images["durations_series"] = str(ser_path)
+
         spans_avg: Dict[str, float] = timing_stats.get("spans_avg", {})
         if spans_avg:
-            items = sorted(spans_avg.items(), key=lambda x: x[1], reverse=True)
-            names = [k for k, _ in items]
-            vals = [v for _, v in items]
-            plt.figure(figsize=(7, 4))
-            plt.barh(names, vals, color="#54A24B")
-            plt.xlabel("Avg duration, sec")
+            names = list(spans_avg.keys())
+            values = [spans_avg[k] for k in names]
+            plt.figure(figsize=(6, 3))
+            plt.barh(names, values, color="#54A24B"); plt.title("Avg span time (sec)")
             plt.tight_layout()
-            p3 = images_dir / "spans_avg.png"
-            plt.savefig(p3)
-            plt.close()
-            saved["spans_avg"] = str(p3.relative_to(report_dir))
-        return saved
+            p = report_dir / "spans_avg.png"
+            plt.savefig(p); plt.close()
+            images["spans_avg"] = str(p)
+        return images
 
     def _write_markdown(
         self,
@@ -176,7 +237,7 @@ class ReportGenerator(ReportConfig):
         images: Dict[str, str],
     ) -> None:
         lines: List[str] = []
-        lines.append(f"# Evaluation Report\n")
+        lines.append(f"# Detection Report\n\n")
         lines.append(f"Generated: {datetime.utcnow().isoformat()} UTC\n")
         lines.append("\n## Summary\n")
         lines.append(f"- Runs: {timing_stats.get('total_runs', 0)}\n")
@@ -210,67 +271,9 @@ class ReportGenerator(ReportConfig):
         (report_dir / "report.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# Утилита форматирования чисел для таблиц
 def _fmt_float(v: Any, nd: int = 4) -> str:
     try:
         return f"{float(v):.{nd}f}"
     except Exception:
         return str(v)
-    if verbose:
-        for m in metrics or []:
-            if m.metric_name.lower() in {"map", "meanaverageprecision"} and isinstance(m.stats, dict):
-                self.console.rule("Детализация mAP")
-                mt = Table(box=box.SIMPLE_HEAVY)
-                mt.add_column("Metric", style="cyan")
-                mt.add_column("Value", justify="right")
-                for key in [
-                    "mAP", "mAP@0.5", "mAP@0.75", "mAP_small", "mAP_medium", "mAP_large"
-                ]:
-                    if key in m.stats:
-                        try:
-                            mt.add_row(key, f"{float(m.stats[key]):.4f}")
-                        except Exception:
-                            mt.add_row(key, str(m.stats[key]))
-                self.console.print(mt)
-                break
-        for m in metrics or []:
-            if m.metric_name == "classification_report" and isinstance(m.stats, dict):
-                self.console.rule("Classification report (sklearn)")
-                rep_dict = m.stats.get("dict")
-                rep_text = m.stats.get("text")
-                if isinstance(rep_dict, dict):
-                    crt = Table(box=box.SIMPLE_HEAVY)
-                    crt.add_column("label", style="cyan")
-                    crt.add_column("precision", justify="right")
-                    crt.add_column("recall", justify="right")
-                    crt.add_column("f1-score", justify="right")
-                    crt.add_column("support", justify="right")
-                    def _is_agg(k: str) -> bool:
-                        lk = k.lower()
-                        return lk in {"accuracy", "macro avg", "weighted avg", "micro avg", "samples avg"}
-                    keys = [k for k in rep_dict.keys() if not _is_agg(str(k))]
-                    for k in keys:
-                        row = rep_dict.get(k, {}) or {}
-                        crt.add_row(
-                            str(k),
-                            _fmt_float(row.get("precision", 0.0), 2),
-                            _fmt_float(row.get("recall", 0.0), 2),
-                            _fmt_float(row.get("f1-score", 0.0), 2),
-                            str(row.get("support", 0)),
-                        )
-                    crt.add_section()
-                    for agg in ["accuracy", "macro avg", "weighted avg", "micro avg", "samples avg"]:
-                        if agg in rep_dict:
-                            row = rep_dict[agg]
-                            if isinstance(row, dict):
-                                prec = _fmt_float(row.get("precision", 0.0), 2)
-                                rec = _fmt_float(row.get("recall", 0.0), 2)
-                                f1 = _fmt_float(row.get("f1-score", 0.0), 2)
-                                sup = str(row.get("support", 0))
-                            else:
-                                prec = rec = f1 = _fmt_float(row, 2)
-                                sup = "-"
-                            crt.add_row(agg, prec, rec, f1, sup)
-                    self.console.print(crt)
-                elif rep_text:
-                    self.console.print(rep_text)
-                break

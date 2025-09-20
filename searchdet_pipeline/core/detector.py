@@ -324,7 +324,7 @@ class SearchDetDetector(DetectorBase):
         image_np = context.extra['original_image']
         height, width = image_np.shape[:2]
         
-        # Prefer file_name provided via Dataset_Point -> DetectorBase.detect(context.extra['file_name'])
+        # Prefer file_name provided via DatasetPoint -> DetectorBase.detect(context.extra['file_name'])
         file_name = None
         try:
             if hasattr(context, 'extra') and isinstance(context.extra, dict):

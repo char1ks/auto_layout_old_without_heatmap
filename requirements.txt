@@ -31,6 +31,7 @@ timm>=0.6.7
 matplotlib>=3.7.0
 tqdm>=4.65.0
 requests>=2.31.0
+rich>=13.7.0
 
 # LLaVA зависимости
 protobuf>=3.20.0

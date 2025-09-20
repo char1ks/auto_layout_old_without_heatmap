@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
-from searchdet_pipeline.eval_classes.Dataset_Point import Dataset_Point
+from searchdet_pipeline.eval_classes.DatasetPoint import DatasetPoint
 from searchdet_pipeline.eval_classes.metrics import (
     Metric, MeanAveragePrecision, MeanIntersectionOverUnion, DiceCoefficient
 )
@@ -52,12 +52,14 @@ def main() -> int:
         MeanIntersectionOverUnion(),
         DiceCoefficient()
     ]
-    dp = Dataset_Point(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter)
+    dp = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter)
     image_root = img_dir if (img_dir is not None and img_dir.exists()) else None
     preds, metrics = dp.run(
         positive_dir=positive_dir,
         negative_dir=negative_dir,
         image_root=image_root,
+        dump_report=True,
+        report_output_dir=Path.cwd(),
     )
     print("РЕЗУЛЬТАТЫ МЕТРИК")
     if metrics:

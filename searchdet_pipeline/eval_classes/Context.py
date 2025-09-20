@@ -28,6 +28,11 @@ class Context:
         self.ended_at = datetime.utcnow()
         self.success = success
         self.error = error
+        try:
+            if self.started_at and self.ended_at:
+                self.duration = (self.ended_at - self.started_at).total_seconds()
+        except Exception:
+            pass
 
     def add_metric(self, key: str, value: Any) -> None:
         self.metrics[key] = value
@@ -48,9 +53,18 @@ class Context:
         try:
             yield span
             span["ended_at"] = datetime.utcnow()
+            # Добавляем длительность для удобного сбора статистики
+            try:
+                span["duration"] = (span["ended_at"] - span["started_at"]).total_seconds()
+            except Exception:
+                pass
         except Exception as e:
             span["ended_at"] = datetime.utcnow()
             span["attributes"]["error"] = str(e)
+            try:
+                span["duration"] = (span["ended_at"] - span["started_at"]).total_seconds()
+            except Exception:
+                pass
             raise
 
     def start_span(self, name: str, **attrs: Any) -> int:
@@ -69,3 +83,8 @@ class Context:
             span["ended_at"] = datetime.utcnow()
             if attrs:
                 span["attributes"].update(attrs)
+            # Вычисляем длительность span
+            try:
+                span["duration"] = (span["ended_at"] - span["started_at"]).total_seconds()
+            except Exception:
+                pass

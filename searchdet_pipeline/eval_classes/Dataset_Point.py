@@ -9,15 +9,15 @@ from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
 from searchdet_pipeline.eval_classes.Dataset import Dataset
 from searchdet_pipeline.eval_classes.detector_base import DetectorBase
 from searchdet_pipeline.eval_classes.metrics import (
-    Metric, MetricOutputModel, CombinedMetric, MeanAveragePrecision, 
+    Metric, MetricOutputModel, MeanAveragePrecision, 
     MeanIntersectionOverUnion, DiceCoefficient
 )
 from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
-from searchdet_pipeline.eval_classes.ContextReporter import ContextReporter
+from searchdet_pipeline.eval_classes.Tracer import Tracer
 
 
 class Dataset_Point:
-    def __init__(self,dataset: Union[Dataset, DatasetModel],detector: DetectorBase,metric: Optional[Metric] = None, reporter: Optional[ContextReporter] = None,) -> None:
+    def __init__(self,dataset: Union[Dataset, DatasetModel],detector: DetectorBase,metrics: Optional[List[Metric]] = None, reporter: Optional[Tracer] = None,) -> None:
         if isinstance(dataset, Dataset):
             self.dataset_model: DatasetModel = dataset.data
         elif isinstance(dataset, DatasetModel):
@@ -26,11 +26,15 @@ class Dataset_Point:
             raise TypeError("dataset must be Dataset or DatasetModel")
 
         self.detector: DetectorBase = detector
-        self.metric: Metric = metric if metric is not None else CombinedMetric()
-        self.reporter: Optional[ContextReporter] = reporter
+        self.metrics: List[Metric] = metrics if metrics is not None else [
+            MeanAveragePrecision(),
+            MeanIntersectionOverUnion(),
+            DiceCoefficient()
+        ]
+        self.reporter: Optional[Tracer] = reporter
 
         self._predictions: List[COCOAnnotation] = []
-        self._last_metrics: Optional[MetricOutputModel] = None
+        self._last_metrics: Optional[List[MetricOutputModel]] = None
     def set_references(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,) -> None:
         pos_by_class, neg_imgs = self.detector.read_reference_images(positive_dir, negative_dir)
         self.detector.set_references(pos_by_class, neg_imgs)
@@ -67,13 +71,19 @@ class Dataset_Point:
         self._predictions = predictions
         return predictions
 
-    def evaluate(self,predictions: Optional[List[COCOAnnotation]] = None,average: str = "micro",) -> MetricOutputModel:
+    def evaluate(self,predictions: Optional[List[COCOAnnotation]] = None,average: str = "micro",) -> List[MetricOutputModel]:
         preds = predictions if predictions is not None else self._predictions
-        result = self.metric.compute(self.dataset_model, preds, average=average)
-        self._last_metrics = result
-        return result
+        results = []
+        for metric in self.metrics:
+            try:
+                result = metric.compute(self.dataset_model, preds, average=average)
+                results.append(result)
+            except Exception as e:
+                print(f"Ошибка при вычислении метрики {metric.name}: {e}")
+        self._last_metrics = results
+        return results
 
-    def run(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,image_root: Optional[Union[str, Path]] = None,average: str = "micro",progress: Optional[Callable[[int, int, str | None], None]] = None,*args,**kwargs,) -> Tuple[List[COCOAnnotation], MetricOutputModel]:
+    def run(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,image_root: Optional[Union[str, Path]] = None,average: str = "micro",progress: Optional[Callable[[int, int, str | None], None]] = None,*args,**kwargs,) -> Tuple[List[COCOAnnotation], List[MetricOutputModel]]:
         self.set_references(positive_dir, negative_dir)
         
         preds = self.detect_all(image_root=image_root, progress=progress, *args, **kwargs)
@@ -84,5 +94,5 @@ class Dataset_Point:
         return list(self._predictions)
 
     @property
-    def last_metrics(self) -> Optional[MetricOutputModel]:
+    def last_metrics(self) -> Optional[List[MetricOutputModel]]:
         return self._last_metrics

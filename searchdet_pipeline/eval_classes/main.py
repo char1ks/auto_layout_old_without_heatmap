@@ -5,10 +5,12 @@ import sys
 
 from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
 from searchdet_pipeline.eval_classes.Dataset_Point import Dataset_Point
-from searchdet_pipeline.eval_classes.metrics import Metric
+from searchdet_pipeline.eval_classes.metrics import (
+    Metric, MeanAveragePrecision, MeanIntersectionOverUnion, DiceCoefficient
+)
 from searchdet_pipeline.core.detector import SearchDetDetector
 from searchdet_pipeline.core.config import get_preset_config
-from searchdet_pipeline.eval_classes.ContextReporter import ContextReporter
+from searchdet_pipeline.eval_classes.Tracer import Tracer
 
 
 def main() -> int:
@@ -44,39 +46,46 @@ def main() -> int:
 
     config = get_preset_config("balanced")
     detector = SearchDetDetector(config=config)
-    reporter = ContextReporter(to_stdout=True, trace_file="context_trace.jsonl")
-    dp = Dataset_Point(dataset=dataset, detector=detector, reporter=reporter)
-
+    reporter = Tracer(to_stdout=True, trace_file="context_trace.jsonl")
+    metrics_list = [
+        MeanAveragePrecision(),
+        MeanIntersectionOverUnion(),
+        DiceCoefficient()
+    ]
+    dp = Dataset_Point(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter)
     image_root = img_dir if (img_dir is not None and img_dir.exists()) else None
     preds, metrics = dp.run(
         positive_dir=positive_dir,
         negative_dir=negative_dir,
         image_root=image_root,
     )
-    
     print("РЕЗУЛЬТАТЫ МЕТРИК")
-    
     if metrics:
-        print(f"Основная метрика: {metrics.metric_name} = {metrics.score:.4f}")
-        
-        if hasattr(metrics, 'stats') and metrics.stats:
-            stats = metrics.stats
-            print(f"Micro IoU: {stats.get('mean_iou_micro', 0):.4f}")
-            print(f"Macro IoU: {stats.get('mean_iou_macro', 0):.4f}")
-            print(f"Micro Dice: {stats.get('dice_micro', 0):.4f}")
-            print(f"Macro Dice: {stats.get('dice_macro', 0):.4f}")
-            print(f"mAP (micro): {stats.get('mAP_micro', 0):.4f}")
-            print(f"mAP50 (micro): {stats.get('mAP50_micro', 0):.4f}")
-            print(f"mAP75 (micro): {stats.get('mAP75_micro', 0):.4f}")
-            print(f"Совпавших изображений: {stats.get('num_images_matched', 0)}")
-            per_class = stats.get('per_class', {})
-            if per_class:
-                print("\nСтатистика по классам:")
-                for class_name, class_stats in per_class.items():
-                    print(f"  {class_name}:")
-                    print(f"    GT: {class_stats.get('num_gt', 0)}, Pred: {class_stats.get('num_pred', 0)}, Pairs: {class_stats.get('num_pairs', 0)}")
-                    print(f"    IoU: {class_stats.get('mean_iou', 0):.4f}, Dice: {class_stats.get('mean_dice', 0):.4f}")
-                    print(f"    AP: {class_stats.get('AP', 0):.4f}, AP50: {class_stats.get('AP50', 0):.4f}, AP75: {class_stats.get('AP75', 0):.4f}")
+        print(f"Получено {len(metrics)} метрик:")
+        print("-" * 50)
+        for metric_result in metrics:
+            print(f"\n{metric_result.metric_name.upper()}: {metric_result.score:.4f}")
+            
+            if hasattr(metric_result, 'stats') and metric_result.stats:
+                stats = metric_result.stats
+                if metric_result.metric_name == "mAP":
+                    print(f"  mAP (micro): {stats.get('mAP_micro', 0):.4f}")
+                    print(f"  mAP50 (micro): {stats.get('mAP50_micro', 0):.4f}")
+                    print(f"  mAP75 (micro): {stats.get('mAP75_micro', 0):.4f}")
+                    print(f"  Совпавших изображений: {stats.get('num_images_matched', 0)}")
+                elif metric_result.metric_name == "mIoU":
+                    print(f"  Micro IoU: {stats.get('mean_iou_micro', 0):.4f}")
+                    print(f"  Macro IoU: {stats.get('mean_iou_macro', 0):.4f}")
+                elif metric_result.metric_name == "dice":
+                    print(f"  Micro Dice: {stats.get('dice_micro', 0):.4f}")
+                    print(f"  Macro Dice: {stats.get('dice_macro', 0):.4f}")
+                per_class = stats.get('per_class', {})
+                if per_class:
+                    print(f"  Статистика по классам:")
+                    for class_name, class_stats in per_class.items():
+                        print(f"    {class_name}: GT={class_stats.get('num_gt', 0)}, "
+                              f"Pred={class_stats.get('num_pred', 0)}, "
+                              f"Score={class_stats.get(metric_result.metric_name.lower(), 0):.4f}")
     else:
         print("Метрики не получены")
     

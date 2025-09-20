@@ -14,7 +14,7 @@ import os
 from searchdet_pipeline.eval_classes.Context import Context
 
 
-class ContextReporter:
+class Tracer:
     def __init__(
         self,
         to_stdout: bool = True,

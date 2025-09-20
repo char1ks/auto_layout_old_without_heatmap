@@ -104,15 +104,6 @@ class MeanAveragePrecision(Metric):
             tm.update(preds, targets)
             res = tm.compute()
 
-            # DEBUG: Print what torchmetrics returns
-            print(f"DEBUG: torchmetrics result keys: {list(res.keys())}")
-            for key, value in res.items():
-                if 'class' in key.lower() or 'per' in key.lower():
-                    print(f"DEBUG: {key} = {value}")
-                    print(f"DEBUG: {key} type = {type(value)}")
-                    if hasattr(value, 'shape'):
-                        print(f"DEBUG: {key} shape = {value.shape}")
-
             def _to_float(val, default=0.0) -> float:
                 try:
                     x = float(val.item() if hasattr(val, 'item') else val)
@@ -176,27 +167,8 @@ class MeanAveragePrecision(Metric):
 
             # AP по IoU порогам (macro/micro)
             map_per_class = _to_builtin(res.get('map_per_class', []))
-            
-            # Try different possible keys for per-class AP
-            if not map_per_class or (isinstance(map_per_class, list) and len(map_per_class) == 0):
-                # Try alternative keys that torchmetrics might use
-                for possible_key in ['map_per_class', 'classes', 'map_class', 'per_class_map']:
-                    if possible_key in res:
-                        map_per_class = _to_builtin(res[possible_key])
-                        print(f"DEBUG: Found per-class data under key '{possible_key}': {map_per_class}")
-                        break
-            
             if isinstance(map_per_class, list) and len(map_per_class) >= len(uniq_labels):
                 per_class_ap = [_to_float(map_per_class[i], 0.0) for i in range(len(uniq_labels))]
-            else:
-                # If we still don't have per-class data, try to extract from other metrics
-                print(f"DEBUG: No valid per-class AP found. map_per_class = {map_per_class}")
-                print(f"DEBUG: Expected {len(uniq_labels)} classes, got {len(map_per_class) if isinstance(map_per_class, list) else 'not a list'}")
-                
-                # Fallback: use overall mAP for all classes (better than 0)
-                overall_map = _to_float(res.get('map', 0.0), 0.0)
-                per_class_ap = [overall_map] * len(uniq_labels)
-                print(f"DEBUG: Using fallback per-class AP = {overall_map} for all classes")
             else:
                 per_class_ap = [0.0] * len(uniq_labels)
 

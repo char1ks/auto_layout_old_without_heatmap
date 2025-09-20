@@ -370,7 +370,9 @@ class SearchDetDetector(DetectorBase):
                 height=height,
                 area=float(area),
                 file_name=file_name,
-                bbox=[float(x) for x in bbox]
+                bbox=[float(x) for x in bbox],
+                score=float(element.get('confidence', mask_data.get('score', 0.0)) if isinstance(element.get('confidence', None) or mask_data.get('score', None), (int, float)) else 0.0),
+                confidence=float(element.get('confidence', None) if isinstance(element.get('confidence', None), (int, float)) else mask_data.get('score', 0.0) if isinstance(mask_data.get('score', None), (int, float)) else 0.0)
             )
             
             annotations.append(annotation)

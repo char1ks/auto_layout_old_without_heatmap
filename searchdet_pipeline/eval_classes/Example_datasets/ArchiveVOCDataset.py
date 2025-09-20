@@ -186,86 +186,107 @@ class ArchiveVOCDataset(Dataset):
 
     @staticmethod
     def _parse_single_voc_xml(xml_path: Path, img_dir: Path) -> Tuple[List[COCOAnnotation], List[str]]:
+        import numpy as np
         tree = ET.parse(xml_path)
         root = tree.getroot()
-        filename_el = root.find("filename")
-        file_name = filename_el.text.strip() if filename_el is not None and filename_el.text else ""
-        size_el = root.find("size")
-        width = int(size_el.findtext("width", default="0")) if size_el is not None else 0
-        height = int(size_el.findtext("height", default="0")) if size_el is not None else 0
 
-        # Путь к изображению: поддержка абсолютного и относительного путей
+        file_name = (root.findtext("filename") or "").strip()
+        xml_w = int(root.findtext("size/width",  "0") or 0)
+        xml_h = int(root.findtext("size/height", "0") or 0)
+
+        # Найдём картинку и возьмём РЕАЛЬНЫЕ размеры
         img_path: Optional[Path] = None
         if file_name:
-            fn_path = Path(file_name)
-            if fn_path.is_absolute():
-                img_path = fn_path
+            p = Path(file_name)
+            if p.is_absolute():
+                img_path = p
             else:
-                candidate = img_dir / file_name
-                if candidate.exists():
-                    img_path = candidate
-                else:
-                    alt = img_dir.parent / file_name
-                    img_path = alt if alt.exists() else candidate
+                cand = img_dir / file_name
+                img_path = cand if cand.exists() else (img_dir.parent / file_name)
+
         if img_path and img_path.exists():
             try:
-                img_pil = Image.open(img_path).convert("RGB")
-                img_arr = np.array(img_pil)
-                if (width <= 0 or height <= 0):
-                    height, width = img_arr.shape[0], img_arr.shape[1]
+                img_arr = np.array(Image.open(img_path).convert("RGB"))
+                H_img, W_img = img_arr.shape[0], img_arr.shape[1]
             except Exception:
-                img_arr = np.zeros((height, width, 3), dtype=np.uint8)
+                W_img, H_img = xml_w, xml_h
+                img_arr = np.zeros((H_img, W_img, 3), dtype=np.uint8)
         else:
-            img_arr = np.zeros((height, width, 3), dtype=np.uint8)
+            W_img, H_img = xml_w, xml_h
+            img_arr = np.zeros((H_img, W_img, 3), dtype=np.uint8)
+
+        # XML-размеры «переставлены» относительно картинки?
+        swapped = (xml_w > 0 and xml_h > 0 and xml_w == H_img and xml_h == W_img)
+
+        def voc_xyxy_to_xywh_inclusive(xmin, ymin, xmax, ymax, W, H):
+            # VOC обычно 1-based inclusive -> 0-based inclusive + xywh (+1 к ширине/высоте)
+            x = max(0.0, float(xmin) - 1.0)
+            y = max(0.0, float(ymin) - 1.0)
+            w = max(0.0, float(xmax) - float(xmin) + 1.0)
+            h = max(0.0, float(ymax) - float(ymin) + 1.0)
+            if W > 0 and H > 0:
+                x = max(0.0, min(x, W - 1.0))
+                y = max(0.0, min(y, H - 1.0))
+                w = max(0.0, min(w, W - x))
+                h = max(0.0, min(h, H - y))
+            return x, y, w, h
+
+        def rotate90_ccw_xywh(x, y, w, h, Wsrc):
+            # поворот прямоугольника на 90° CCW в 0-based inclusive системе
+            x0, y0 = x, y
+            x1, y1 = x + w - 1.0, y + h - 1.0
+            pts = np.array([[x0, y0], [x1, y0], [x0, y1], [x1, y1]], float)
+            xr = pts[:, 1]
+            yr = (Wsrc - 1.0) - pts[:, 0]
+            xr0, yr0, xr1, yr1 = xr.min(), yr.min(), xr.max(), yr.max()
+            nx, ny = xr0, yr0
+            nw, nh = xr1 - xr0 + 1.0, yr1 - yr0 + 1.0
+            return nx, ny, nw, nh
 
         anns: List[COCOAnnotation] = []
         cats: List[str] = []
 
         for obj in root.findall("object"):
-            name_el = obj.find("name")
-            label = name_el.text.strip() if name_el is not None and name_el.text else "object"
+            label = (obj.findtext("name") or "object").strip()
             cats.append(label)
-
             bnd = obj.find("bndbox")
-            if bnd is not None:
-                try:
-                    xmin = float(bnd.findtext("xmin", default="0"))
-                    ymin = float(bnd.findtext("ymin", default="0"))
-                    xmax = float(bnd.findtext("xmax", default="0"))
-                    ymax = float(bnd.findtext("ymax", default="0"))
-                except Exception:
-                    xmin = ymin = 0.0
-                    xmax = float(width)
-                    ymax = float(height)
+            xmin = float(bnd.findtext("xmin", "0")) if bnd is not None else 0.0
+            ymin = float(bnd.findtext("ymin", "0")) if bnd is not None else 0.0
+            xmax = float(bnd.findtext("xmax", str(xml_w or W_img))) if bnd is not None else float(xml_w or W_img)
+            ymax = float(bnd.findtext("ymax", str(xml_h or H_img))) if bnd is not None else float(xml_h or H_img)
+
+            if swapped and xml_w > 0 and xml_h > 0:
+                # 1) переводим VOC-бокс в систему XML (xml_w x xml_h)
+                x, y, w, h = voc_xyxy_to_xywh_inclusive(xmin, ymin, xmax, ymax, W=xml_w, H=xml_h)
+                # 2) поворачиваем в систему реального изображения (W_img x H_img)
+                x, y, w, h = rotate90_ccw_xywh(x, y, w, h, Wsrc=xml_w)
+                # 3) клиппим по реальным размерам
+                x = max(0.0, min(x, W_img - 1.0))
+                y = max(0.0, min(y, H_img - 1.0))
+                w = max(0.0, min(w, W_img - x))
+                h = max(0.0, min(h, H_img - y))
             else:
-                xmin = ymin = 0.0
-                xmax = float(width)
-                ymax = float(height)
-            x = max(0.0, xmin)
-            y = max(0.0, ymin)
-            w = max(0.0, xmax - xmin)
-            h = max(0.0, ymax - ymin)
-            bbox = [x, y, w, h]
+                # Обычный путь (без перестановки осей)
+                x, y, w, h = voc_xyxy_to_xywh_inclusive(xmin, ymin, xmax, ymax, W=W_img, H=H_img)
+
             area = float(w * h)
-            mask_np = np.zeros((height, width), dtype=np.uint8)
+            mask_np = np.zeros((H_img, W_img), dtype=np.uint8)
             x1, y1 = int(max(0, np.floor(x))), int(max(0, np.floor(y)))
-            x2 = int(min(width, np.ceil(x + w)))
-            y2 = int(min(height, np.ceil(y + h)))
+            x2 = int(min(W_img, np.ceil(x + w)))
+            y2 = int(min(H_img, np.ceil(y + h)))
             if x2 > x1 and y2 > y1:
                 mask_np[y1:y2, x1:x2] = 1
 
-            anns.append(
-                COCOAnnotation(
-                    img=img_arr,
-                    mask=mask_np,
-                    label=label,
-                    image_size=(int(width), int(height)),
-                    width=int(width),
-                    height=int(height),
-                    area=area,
-                    file_name=file_name,
-                    bbox=bbox,
-                )
-            )
+            anns.append(COCOAnnotation(
+                img=img_arr,
+                mask=mask_np,
+                label=label,
+                image_size=(int(W_img), int(H_img)),
+                width=int(W_img),
+                height=int(H_img),
+                area=area,
+                file_name=file_name,
+                bbox=[x, y, w, h],
+            ))
 
         return anns, cats

@@ -18,6 +18,9 @@ def main() -> int:
     dataset_dir = Path("archive")
     ann_dir: Path | None = None
     img_dir: Path | None = None
+    # Новые параметры: директории с эталонными примерами
+    positive_dir: str | None = "examples/positive"
+    negative_dir: str | None = None
 
     i = 0
     while i < len(args):
@@ -30,6 +33,15 @@ def main() -> int:
             img_dir = Path(args[i + 1])
             i += 2
             continue
+        # Новые флаги: позитивные/негативные примеры
+        if arg in ("--positive", "--positive-dir", "-p") and i + 1 < len(args):
+            positive_dir = args[i + 1]
+            i += 2
+            continue
+        if arg in ("--negative", "--negative-dir", "-n") and i + 1 < len(args):
+            negative_dir = args[i + 1]
+            i += 2
+            continue
         if not arg.startswith("-") and str(dataset_dir) == "archive":
             dataset_dir = Path(arg)
             i += 1
@@ -38,9 +50,6 @@ def main() -> int:
 
     if not dataset_dir.exists():
         return 1
-
-    positive_dir = "examples/positive"
-    negative_dir = None
 
     dataset = ArchiveVOCDataset.from_path(dataset_dir, ann_dir=ann_dir, img_dir=img_dir)
 
@@ -55,7 +64,7 @@ def main() -> int:
     dp = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter)
     image_root = img_dir if (img_dir is not None and img_dir.exists()) else None
     preds, metrics = dp.run(
-        positive_dir=positive_dir,
+        positive_dir=positive_dir if positive_dir is not None else "examples/positive",
         negative_dir=negative_dir,
         image_root=image_root,
         dump_report=True,

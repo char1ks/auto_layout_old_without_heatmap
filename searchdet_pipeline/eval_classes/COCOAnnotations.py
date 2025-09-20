@@ -18,6 +18,8 @@ class COCOAnnotation:
     area: float
     file_name: str
     bbox: List[float] = field(default_factory=list)
+    score: float | None = None
+    confidence: float | None = None
     
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
 

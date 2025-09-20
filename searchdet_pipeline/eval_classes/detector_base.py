@@ -48,6 +48,12 @@ class DetectorBase(abc.ABC):
         if file_name is not None:
             context.extra['file_name'] = file_name
         try:
+            context.extra['detector_doc'] = (self.__class__.__doc__ or '').strip()
+            context.extra['detector_cls'] = self.__class__.__name__
+            context.extra['detector_module'] = self.__class__.__module__
+        except Exception:
+            pass
+        try:
             results = self.find_present_elements(image_np, context, *args, **kwargs)
             annotations = self._convert_to_coco_annotations(results, context)
             context.finish(success=True)

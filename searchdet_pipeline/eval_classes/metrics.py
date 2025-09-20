@@ -25,7 +25,6 @@ class Metric(abc.ABC):
     def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
         pass
 
-
 class MeanAveragePrecision(Metric):
     name = "mAP"
     def __init__(self, iou_thresholds: Optional[List[float]] = None):

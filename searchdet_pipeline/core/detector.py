@@ -27,7 +27,7 @@ from .enhanced_heatmap_processor import EnhancedHeatmapProcessor
 from .fastsam_integration import FastSAMHeatmapProcessor
 from .models import DetectorConfig ,ProcessingResult ,MaskData ,DetectionResult
 from ..utils .validation import ImageValidator ,DirectoryValidator ,ValidationError ,validate_processing_pipeline_inputs
-from ..eval_classes.detector_base import DetectorBase 
+from ..eval_classes.DetectorBase import DetectorBase 
 from ..eval_classes.Context import Context
 import torch
 from .models import MaskBackend ,BackboneType

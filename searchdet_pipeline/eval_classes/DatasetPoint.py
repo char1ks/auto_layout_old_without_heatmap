@@ -7,7 +7,7 @@ import numpy as np
 
 from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
 from searchdet_pipeline.eval_classes.Dataset import Dataset
-from searchdet_pipeline.eval_classes.detector_base import DetectorBase
+from searchdet_pipeline.eval_classes.DetectorBase import DetectorBase
 from searchdet_pipeline.eval_classes.metrics import (
     Metric, MetricOutputModel, MeanAveragePrecision, 
     MeanIntersectionOverUnion, DiceCoefficient
@@ -37,7 +37,6 @@ class DatasetPoint:
 
         self._predictions: List[COCOAnnotation] = []
         self._last_metrics: Optional[List[MetricOutputModel]] = None
-        # Собираем Context'ы каждого запуска для отчёта
         self._contexts: List[Context] = []
     def set_references(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,) -> None:
         pos_by_class, neg_imgs = self.detector.read_reference_images(positive_dir, negative_dir)

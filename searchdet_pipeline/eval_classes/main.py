@@ -61,7 +61,10 @@ def main() -> int:
         MeanIntersectionOverUnion(),
         DiceCoefficient()
     ]
+
+
     dp = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter)
+
     image_root = img_dir if (img_dir is not None and img_dir.exists()) else None
     preds, metrics = dp.run(
         positive_dir=positive_dir if positive_dir is not None else "examples/positive",
@@ -70,7 +73,6 @@ def main() -> int:
         dump_report=True,
         report_output_dir=Path.cwd(),
     )
-    # Отчёт и консольное резюме выводит ReportGenerator; отдельный вывод метрик здесь не требуется.
     return 0
 
 

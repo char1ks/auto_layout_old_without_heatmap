@@ -190,19 +190,23 @@ class ReportGenerator(ReportConfig):
             ap_iou_macro = st.get("ap_iou_macro") or []
             ap_iou_micro = st.get("ap_iou_micro") or []
             ious = st.get("iou_thresholds") or []
-            if self.include_ap_graphs and ious and (ap_iou_macro or ap_iou_micro):
-                try:
-                    plt.figure(figsize=(6, 3))
-                    if ap_iou_macro:
-                        plt.plot(ious, ap_iou_macro, label="macro", color="#4C78A8")
-                    if ap_iou_micro:
-                        plt.plot(ious, ap_iou_micro, label="micro", color="#F58518")
+            if self.include_ap_graphs and ious:
+                plt.figure(figsize=(6, 3))
+                has_data = False
+                if ap_iou_macro and len(ap_iou_macro) == len(ious):
+                    plt.plot(ious, ap_iou_macro, label="macro", color="#4C78A8", linewidth=2)
+                    has_data = True
+                if ap_iou_micro and len(ap_iou_micro) == len(ious):
+                    plt.plot(ious, ap_iou_micro, label="micro", color="#F58518", linewidth=2)
+                    has_data = True
+                if has_data:
                     plt.xlabel("IoU threshold"); plt.ylabel("AP"); plt.title("AP vs IoU"); plt.legend()
+                    plt.grid(True, alpha=0.3)
                     p = report_dir / "ap_vs_iou.svg"
                     plt.tight_layout(); plt.savefig(p, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
                     images["ap_vs_iou"] = str(p)
-                except Exception:
-                    pass
+                else:
+                    plt.close()
 
             if self.include_ap_graphs:
                 for key, tag in [("0.50", "050"), ("0.75", "075")]:

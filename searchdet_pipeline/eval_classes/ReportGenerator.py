@@ -59,8 +59,7 @@ class ReportGenerator(ReportConfig):
             t.add_row(m.metric_name, score)
         self.console.print(t)
 
-        # Упрощённый вывод: только сводка по времени без детальной отладки и дополнительных пайплайнов
-        self.console.rule("СТАТИСТИКА ВРЕМЕНИ ДЕТЕКТОРА")
+        self.console.rule("Статистика времени ")
         tt = Table(box=box.SIMPLE_HEAVY)
         tt.add_column("Показатель", style="magenta")
         tt.add_column("Значение", justify="right")
@@ -79,13 +78,12 @@ class ReportGenerator(ReportConfig):
 
         spans_avg: Dict[str, float] = timing_stats.get("spans_avg", {})
         if spans_avg and self.include_spans:
-            st = Table(title="Среднее время по этапам", box=box.SIMPLE_HEAVY)
+            st = Table(title="Среднее время по спанам", box=box.SIMPLE_HEAVY)
             st.add_column("Этап")
             st.add_column("Среднее, сек", justify="right")
             for name, val in sorted(spans_avg.items(), key=lambda x: x[1], reverse=True):
                 st.add_row(name, f"{float(val):.4f}")
             self.console.print(st)
-        # Никаких дополнительных блоков детальной отладки ниже
 
     def _collect_timing_stats(self, contexts: List[Context]) -> Dict[str, Any]:
         durations: List[float] = []
@@ -172,7 +170,7 @@ class ReportGenerator(ReportConfig):
             categories = st.get("categories") or []
             gt_counts = st.get("gt_counts") or []
             pred_counts = st.get("pred_counts") or []
-            # Распределения классов
+
             if self.include_class_distributions and categories and (gt_counts or pred_counts):
                 try:
                     x = list(range(len(categories)))
@@ -191,7 +189,7 @@ class ReportGenerator(ReportConfig):
                         images["pred_class_distribution"] = str(p2)
                 except Exception:
                     pass
-            # AP vs IoU (macro/micro)
+
             ap_iou_macro = st.get("ap_iou_macro") or []
             ap_iou_micro = st.get("ap_iou_micro") or []
             ious = st.get("iou_thresholds") or []
@@ -208,7 +206,7 @@ class ReportGenerator(ReportConfig):
                     images["ap_vs_iou"] = str(p)
                 except Exception:
                     pass
-            # PR curves (macro/micro) для 0.50 и 0.75
+
             if self.include_ap_graphs:
                 for key, tag in [("0.50", "050"), ("0.75", "075")]:
                     try:

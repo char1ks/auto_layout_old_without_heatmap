@@ -101,11 +101,8 @@ class ReportGenerator(ReportConfig):
                 for s in c.spans:
                     name = str(s.get("name", s.get("stage", "span")))
                     val = s.get("duration") or s.get("time") or 0
-                    try:
-                        val = float(val)
-                        spans.setdefault(name, []).append(val)
-                    except Exception:
-                        pass
+                    if isinstance(val, (int, float)):
+                        spans.setdefault(name, []).append(float(val))
         stats: Dict[str, Any] = {
             "total_runs": len(contexts or []),
             "success": success,
@@ -353,10 +350,7 @@ class ReportGenerator(ReportConfig):
             lines.append("\n## mAP details\n")
             for key in ["mAP", "mAP@0.5", "mAP@0.75", "mAP_small", "mAP_medium", "mAP_large"]:
                 if key in st:
-                    try:
-                        lines.append(f"- {key}: {float(st[key]):.4f}\n")
-                    except Exception:
-                        lines.append(f"- {key}: {st[key]}\n")
+                    lines.append(f"- {key}: {float(st[key]):.4f}\n")
             if "ap_vs_iou" in images:
                 lines.append(f"\n![AP vs IoU]({images['ap_vs_iou']})\n")
             for tag, title in [("050", "PR curves @IoU=0.50"), ("075", "PR curves @IoU=0.75")]:

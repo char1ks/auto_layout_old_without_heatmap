@@ -66,21 +66,12 @@ class Tracer:
     def emit(self, ctx: Context) -> Dict[str, Any]:
         payload = self.serialize(ctx)
         if self.to_stdout:
-            try:
-                print(json.dumps(payload, ensure_ascii=False, default=str), file=sys.stdout)
-            except Exception:
-                print(str(payload), file=sys.stdout)
+            print(json.dumps(payload, ensure_ascii=False, default=str), file=sys.stdout)
         for sink in self.sinks:
-            try:
-                sink(payload)
-            except Exception:
-                pass
+            sink(payload)
         if self.trace_file:
-            try:
-                with open(self.trace_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
-            except Exception:
-                pass
+            with open(self.trace_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
         return payload
 
     def dump_chrome_trace(self, ctx: Context, path: str) -> str:
@@ -123,13 +114,10 @@ class Tracer:
         return path
 
     def frame_graph(self, prof_path: str, svg_path: str) -> None:
-        try:
-            result = subprocess.run([sys.executable, "-m", "flameprof", prof_path], capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout:
-                with open(svg_path, "w", encoding="utf-8") as f:
-                    f.write(result.stdout)
-        except Exception:
-            pass
+        result = subprocess.run([sys.executable, "-m", "flameprof", prof_path], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout:
+            with open(svg_path, "w", encoding="utf-8") as f:
+                f.write(result.stdout)
 
     @contextmanager
     def profile(self, sort: str = "cumtime", top_k: int = 20, dump_path: Optional[str] = None, flamegraph_path: Optional[str] = None):
@@ -141,32 +129,17 @@ class Tracer:
         finally:
             profiler.disable()
             stats = pstats.Stats(profiler)
-            try:
-                stats.strip_dirs().sort_stats(sort).print_stats(top_k)
-            except Exception:
-                stats.print_stats(top_k)
+            stats.strip_dirs().sort_stats(sort).print_stats(top_k)
             if flamegraph_path:
                 if not dump_path:
-                    try:
-                        tmp = tempfile.NamedTemporaryFile(prefix="ctx_", suffix=".prof", delete=False)
-                        tmp_prof_path = tmp.name
-                        tmp.close()
-                        dump_path = tmp_prof_path
-                    except Exception:
-                        tmp_prof_path = None
-                try:
-                    stats.dump_stats(dump_path)
-                except Exception:
-                    pass
-                self.frame_graph(dump_path, flamegraph_path)
-                if tmp_prof_path:
-                    try:
-                        os.unlink(tmp_prof_path)
-                    except Exception:
-                        pass
-            else:
+                    tmp = tempfile.NamedTemporaryFile(prefix="ctx_", suffix=".prof", delete=False)
+                    tmp_prof_path = tmp.name
+                    tmp.close()
+                    dump_path = tmp_prof_path
                 if dump_path:
-                    try:
-                        stats.dump_stats(dump_path)
-                    except Exception:
-                        pass
+                    stats.dump_stats(dump_path)
+                    self.frame_graph(dump_path, flamegraph_path)
+                if tmp_prof_path:
+                    os.unlink(tmp_prof_path)
+            elif dump_path:
+                stats.dump_stats(dump_path)

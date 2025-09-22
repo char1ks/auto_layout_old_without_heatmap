@@ -22,7 +22,6 @@ class COCOAnnotation:
     confidence: float | None = None
     
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
-
     #Необходимость этих полей спорна,хотя в COCO Format они есть,куча этих полей вроде как можно откинуть :
     # license: Optional[int] = None
     # flickr_url: Optional[str] = None

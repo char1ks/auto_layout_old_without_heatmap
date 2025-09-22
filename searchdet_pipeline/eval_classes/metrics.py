@@ -54,6 +54,7 @@ class MeanAveragePrecision(Metric):
                 fn = getattr(a, 'file_name', None)
                 if fn is not None:
                     pr_by_file.setdefault(str(fn), []).append(a)
+            
             files = sorted(set(gt_by_file.keys()) | set(pr_by_file.keys()))
             if not files:
                 return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": "empty GT or predictions"})
@@ -73,23 +74,27 @@ class MeanAveragePrecision(Metric):
             for fn in files:
                 gts = gt_by_file.get(fn, [])
                 prs = pr_by_file.get(fn, [])
+                
                 gt_boxes = []
                 gt_labels = []
                 for a in gts:
                     bb = getattr(a, 'bbox', None)
+                    label = getattr(a, 'label', None)
                     if isinstance(bb, (list, tuple)) and len(bb) == 4:
                         gt_boxes.append(self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]))
-                        gt_labels.append(label_to_int.get(str(getattr(a, 'label', "")), 0))
+                        gt_labels.append(label_to_int.get(str(label), 0))
+                        
                 pr_boxes = []
                 pr_labels = []
                 pr_scores = []
                 for p in prs:
                     bb = getattr(p, 'bbox', None)
+                    label = getattr(p, 'label', None)
+                    score = getattr(p, 'score', getattr(p, 'confidence', 1.0))
                     if isinstance(bb, (list, tuple)) and len(bb) == 4:
                         pr_boxes.append(self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]))
-                        pr_labels.append(label_to_int.get(str(getattr(p, 'label', "")), 0))
-                        sc = getattr(p, 'score', getattr(p, 'confidence', 1.0))
-                        pr_scores.append(float(sc))
+                        pr_labels.append(label_to_int.get(str(label), 0))
+                        pr_scores.append(float(score))
                 targets.append({
                     'boxes': torch.tensor(gt_boxes, dtype=torch.float32) if gt_boxes else torch.zeros((0, 4), dtype=torch.float32),
                     'labels': torch.tensor(gt_labels, dtype=torch.int64) if gt_labels else torch.zeros((0,), dtype=torch.int64),
@@ -115,26 +120,18 @@ class MeanAveragePrecision(Metric):
 
             def _to_builtin(obj):
                 try:
-                    import numpy as _np
-                    import torch as _torch
-                except Exception:
-                    _np = None; _torch = None
-                if _torch is not None and isinstance(obj, _torch.Tensor):
-                    if obj.ndim == 0:
-                        return _to_float(obj)
-                    return obj.detach().cpu().tolist()
-                if _np is not None and isinstance(obj, _np.ndarray):
-                    if obj.ndim == 0:
-                        return _to_float(obj)
-                    return obj.tolist()
-                if isinstance(obj, dict):
-                    return {k: _to_builtin(v) for k, v in obj.items()}
-                if isinstance(obj, (list, tuple)):
-                    return [_to_builtin(v) for v in obj]
-                try:
-                    if isinstance(obj, (float, int, str)):
-                        return obj
-                    return _to_float(obj)
+                    handlers = {
+                        torch.Tensor: lambda x: _to_float(x) if x.ndim == 0 else x.detach().cpu().tolist(),
+                        np.ndarray: lambda x: _to_float(x) if x.ndim == 0 else x.tolist(),
+                        dict: lambda x: {k: _to_builtin(v) for k, v in x.items()},
+                        (list, tuple): lambda x: [_to_builtin(v) for v in x]
+                    }
+                    
+                    for types, handler in handlers.items():
+                        if isinstance(obj, types):
+                            return handler(obj)
+                    
+                    return obj if isinstance(obj, (float, int, str)) else _to_float(obj)
                 except Exception:
                     return str(obj)
 
@@ -149,10 +146,8 @@ class MeanAveragePrecision(Metric):
             precision = res.get('precision')
             recall = res.get('recall')
 
-            # Дополнительные поля для графиков
             categories = [uniq_labels[i] for i in range(len(uniq_labels))]
             
-            # Подсчет GT и pred объектов по классам
             gt_counts = [0] * len(uniq_labels)
             pred_counts = [0] * len(uniq_labels)
             for fn in files:
@@ -165,82 +160,65 @@ class MeanAveragePrecision(Metric):
                     if 0 <= lab_idx < len(pred_counts):
                         pred_counts[lab_idx] += 1
 
-            # AP по IoU порогам (macro/micro)
             map_per_class = _to_builtin(res.get('map_per_class', []))
-            if isinstance(map_per_class, list) and len(map_per_class) >= len(uniq_labels):
-                per_class_ap = [_to_float(map_per_class[i], 0.0) for i in range(len(uniq_labels))]
+            per_class_ap = ([_to_float(map_per_class, 0.0)] if isinstance(map_per_class, (int, float)) else
+                           [_to_float(map_per_class[i], 0.0) for i in range(len(uniq_labels))] if isinstance(map_per_class, list) and len(map_per_class) >= len(uniq_labels) else
+                           [_to_float(score, 0.0)] * len(uniq_labels))
+
+            def _calculate_fallback_ap(iou_thresh):
+                return float(np.interp(iou_thresh, [0.5, 0.75, 0.95], [map50, map75, 0.0]))
+
+            def _process_precision_data(prec_array):
+                ap_values = []
+                for i, iou_thresh in enumerate(self.iou_thresholds):
+                    if i >= len(prec_array):
+                        ap_values.append(0.0)
+                        continue
+                    
+                    prec_for_iou = prec_array[i]
+                    if not isinstance(prec_for_iou, list) or len(prec_for_iou) == 0:
+                        ap_values.append(0.0)
+                        continue
+                    
+                    if isinstance(prec_for_iou[0], list):
+                        avg_prec = np.mean([np.mean(p) for p in prec_for_iou if isinstance(p, list) and len(p) > 0])
+                    else:
+                        avg_prec = np.mean(prec_for_iou)
+                    
+                    ap_values.append(max(0.0, float(avg_prec)))
+                return ap_values
+
+            precision_tensor = res.get('precision')
+            recall_tensor = res.get('recall')
+            
+            if (precision_tensor is not None and recall_tensor is not None and 
+                isinstance(_to_builtin(precision_tensor), list) and 
+                len(_to_builtin(precision_tensor)) >= len(self.iou_thresholds)):
+                ap_values = _process_precision_data(_to_builtin(precision_tensor))
+                ap_iou_macro = ap_iou_micro = ap_values
             else:
-                per_class_ap = [0.0] * len(uniq_labels)
+                ap_iou_macro = ap_iou_micro = [max(0.0, _calculate_fallback_ap(iou_thresh)) for iou_thresh in self.iou_thresholds]
 
-            # AP vs IoU кривые (упрощенная версия)
-            ap_iou_macro = []
-            ap_iou_micro = []
-            for iou_thresh in self.iou_thresholds:
-                # Приблизительные значения на основе общего mAP
-                if iou_thresh <= 0.5:
-                    ap_macro = map50 * (iou_thresh / 0.5)
-                    ap_micro = map50 * (iou_thresh / 0.5)
-                elif iou_thresh <= 0.75:
-                    ap_macro = map50 + (map75 - map50) * ((iou_thresh - 0.5) / 0.25)
-                    ap_micro = map50 + (map75 - map50) * ((iou_thresh - 0.5) / 0.25)
-                else:
-                    ap_macro = map75 * (0.95 - iou_thresh) / (0.95 - 0.75)
-                    ap_micro = map75 * (0.95 - iou_thresh) / (0.95 - 0.75)
-                ap_iou_macro.append(max(0.0, ap_macro))
-                ap_iou_micro.append(max(0.0, ap_micro))
-
-            # PR кривые (упрощенная версия)
-            pr_macro = {}
-            pr_micro = {}
+            pr_macro = pr_micro = {}
             if precision is not None and recall is not None:
                 prec_list = _to_builtin(precision)
                 rec_list = _to_builtin(recall)
-                if isinstance(prec_list, list) and isinstance(rec_list, list):
-                    # Для IoU 0.5 и 0.75
-                    for iou_key, iou_val in [("0.50", 0.5), ("0.75", 0.75)]:
-                        # Упрощенная PR кривая
-                        if len(prec_list) > 0 and len(rec_list) > 0:
-                            # Берем первый элемент если это многомерный массив
-                            if isinstance(prec_list[0], list):
-                                prec_curve = prec_list[0] if len(prec_list[0]) > 0 else [0.0]
-                                rec_curve = rec_list[0] if len(rec_list[0]) > 0 else [0.0]
-                            else:
-                                prec_curve = prec_list[:10] if len(prec_list) > 10 else prec_list
-                                rec_curve = rec_list[:10] if len(rec_list) > 10 else rec_list
-                            
-                            # Нормализуем длины
-                            min_len = min(len(prec_curve), len(rec_curve))
-                            if min_len > 0:
-                                pr_macro[iou_key] = {
-                                    "precision": prec_curve[:min_len],
-                                    "recall": rec_curve[:min_len]
-                                }
-                                pr_micro[iou_key] = {
-                                    "precision": prec_curve[:min_len],
-                                    "recall": rec_curve[:min_len]
-                                }
-
-            stats = {
-                'mAP': score,
-                'mAP@0.5': map50,
-                'mAP@0.75': map75,
-                **maps,
-                # convert potential tensors to python lists
-                'precision': _to_builtin(precision) if precision is not None else None,
-                'recall': _to_builtin(recall) if recall is not None else None,
-                'classes': [k for k in range(len(uniq_labels))],
-                'label_mapping': {v: k for k, v in label_to_int.items()},
-                # Дополнительные поля для графиков
-                'categories': categories,
-                'gt_counts': gt_counts,
-                'pred_counts': pred_counts,
-                'per_class_ap': per_class_ap,
-                'ap_iou_macro': ap_iou_macro,
-                'ap_iou_micro': ap_iou_micro,
-                'iou_thresholds': self.iou_thresholds,
-                'pr_macro': pr_macro,
-                'pr_micro': pr_micro,
-            }
+                if isinstance(prec_list, list) and isinstance(rec_list, list) and prec_list and rec_list:
+                    for iou_key in ["0.50", "0.75"]:
+                        if isinstance(prec_list[0], list):
+                            prec_curve = prec_list[0] if prec_list[0] else [0.0]
+                            rec_curve = rec_list[0] if rec_list[0] else [0.0]
+                        else:
+                            prec_curve = prec_list[:10]
+                            rec_curve = rec_list[:10]
+                        min_len = min(len(prec_curve), len(rec_curve))
+                        if min_len > 0:
+                            curve_data = {
+                                "precision": prec_curve[:min_len],
+                                "recall": rec_curve[:min_len]
+                            }
+                            pr_macro[iou_key] = pr_micro[iou_key] = curve_data
+            stats = {'mAP': score,'mAP@0.5': map50,'mAP@0.75': map75,**maps,'precision': _to_builtin(precision) if precision is not None else None,'recall': _to_builtin(recall) if recall is not None else None,'classes': [k for k in range(len(uniq_labels))],'label_mapping': {v: k for k, v in label_to_int.items()},'categories': categories,'gt_counts': gt_counts,'pred_counts': pred_counts,'per_class_ap': per_class_ap,'ap_iou_macro': ap_iou_macro,'ap_iou_micro': ap_iou_micro,'iou_thresholds': self.iou_thresholds,'pr_macro': pr_macro,'pr_micro': pr_micro,}
             return MetricOutputModel(metric_name=self.name, score=score, stats=stats)
         except Exception as e:
             return MetricOutputModel(metric_name=self.name, score=0.0, stats={'error': str(e), 'fallback': True})
@@ -294,9 +272,9 @@ class MeanIntersectionOverUnion(Metric):
             pr_all.append(pr_mask)
 
         if not gt_all:
-            return np.zeros((1, 1), dtype=np.uint8), np.zeros((1, 1), dtype=np.uint8)
-        gt_stack = np.concatenate([m.reshape(1, -1) for m in gt_all], axis=0)
-        pr_stack = np.concatenate([m.reshape(1, -1) for m in pr_all], axis=0)
+            return np.zeros((1,), dtype=np.uint8), np.zeros((1,), dtype=np.uint8)
+        gt_stack = np.concatenate([m.ravel() for m in gt_all], axis=0)
+        pr_stack = np.concatenate([m.ravel() for m in pr_all], axis=0)
         return gt_stack, pr_stack
 
 class DiceCoefficient(Metric):
@@ -348,9 +326,9 @@ class DiceCoefficient(Metric):
             gt_all.append(gt_mask)
             pr_all.append(pr_mask)
         if not gt_all:
-            return np.zeros((1, 1), dtype=np.uint8), np.zeros((1, 1), dtype=np.uint8)
-        gt_stack = np.concatenate([m.reshape(1, -1) for m in gt_all], axis=0)
-        pr_stack = np.concatenate([m.reshape(1, -1) for m in pr_all], axis=0)
+            return np.zeros((1,), dtype=np.uint8), np.zeros((1,), dtype=np.uint8)
+        gt_stack = np.concatenate([m.ravel() for m in gt_all], axis=0)
+        pr_stack = np.concatenate([m.ravel() for m in pr_all], axis=0)
         return gt_stack, pr_stack
 
 class ClassificationReportMetric(Metric):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
-from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
+from searchdet_pipeline.eval_classes.Example_datasets.SheepDataset import SheepDataset
 from searchdet_pipeline.eval_classes.DatasetPoint import DatasetPoint
 from searchdet_pipeline.eval_classes.metrics import (
     Metric, MeanAveragePrecision, MeanIntersectionOverUnion, DiceCoefficient
@@ -18,7 +18,6 @@ def main() -> int:
     dataset_dir = Path("archive")
     ann_dir: Path | None = None
     img_dir: Path | None = None
-    # Новые параметры: директории с эталонными примерами
     positive_dir: str | None = "examples/positive"
     negative_dir: str | None = None
 
@@ -51,8 +50,7 @@ def main() -> int:
     if not dataset_dir.exists():
         return 1
 
-    dataset = ArchiveVOCDataset.from_path(dataset_dir, ann_dir=ann_dir, img_dir=img_dir)
-
+    dataset = SheepDataset.from_path(dataset_dir)
     config = get_preset_config("balanced")
     detector = SearchDetDetector(config=config)
     reporter = Tracer(to_stdout=True, trace_file="context_trace.jsonl")

@@ -20,7 +20,6 @@ def main() -> int:
     img_dir: Path | None = None
     positive_dir: str | None = "examples/positive"
     negative_dir: str | None = None
-    print("1212313")
     i = 0
     while i < len(args):
         arg = args[i]

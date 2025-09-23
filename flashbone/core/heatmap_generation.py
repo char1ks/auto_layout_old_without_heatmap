@@ -133,6 +133,7 @@ class HeatmapGenerator:
 
         return pooled_keys
 
+
 def crop_by_mask(image: Image.Image, mask: Image.Image):
     mask_array = np.array(mask)
     nonzero = np.nonzero(mask_array)

@@ -15,12 +15,12 @@ from searchdet_pipeline.eval_classes.Tracer import Tracer
 
 def main() -> int:
     args = sys.argv[1:]
-    dataset_dir = Path("archive")
+    dataset_dir = Path("sheep-detection")
     ann_dir: Path | None = None
     img_dir: Path | None = None
     positive_dir: str | None = "examples/positive"
     negative_dir: str | None = None
-
+    print("1212313")
     i = 0
     while i < len(args):
         arg = args[i]
@@ -32,7 +32,6 @@ def main() -> int:
             img_dir = Path(args[i + 1])
             i += 2
             continue
-        # Новые флаги: позитивные/негативные примеры
         if arg in ("--positive", "--positive-dir", "-p") and i + 1 < len(args):
             positive_dir = args[i + 1]
             i += 2
@@ -41,14 +40,11 @@ def main() -> int:
             negative_dir = args[i + 1]
             i += 2
             continue
-        if not arg.startswith("-") and str(dataset_dir) == "archive":
+        if not arg.startswith("-") and str(dataset_dir) == "sheep-detection":
             dataset_dir = Path(arg)
             i += 1
             continue
         i += 1
-
-    if not dataset_dir.exists():
-        return 1
 
     dataset = ArchiveVOCDataset.from_path(dataset_dir)
     config = get_preset_config("balanced")
@@ -59,8 +55,6 @@ def main() -> int:
         MeanIntersectionOverUnion(),
         DiceCoefficient()
     ]
-
-
     dp = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter)
 
     image_root = img_dir if (img_dir is not None and img_dir.exists()) else None

@@ -1,385 +1,349 @@
-import abc, numpy as np, warnings, tempfile, json, os
-import torch
-from torchvision.ops import box_iou
+from __future__ import annotations
+
+import abc
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional, Union, Tuple
-from sklearn.metrics import classification_report
-from torchmetrics.detection import MeanAveragePrecision as TMDetMAP
-from torchmetrics import JaccardIndex, F1Score
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import torch
+from sklearn.metrics import (
+    classification_report,
+    f1_score,
+    jaccard_score,
+    precision_recall_curve,
+    average_precision_score,
+)
+from torchmetrics.detection.mean_ap import MeanAveragePrecision as TMDetMAP
 
 from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
 from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
-
-
 @dataclass
 class MetricOutputModel:
     metric_name: str
     score: float
     stats: Dict[str, Any]
 
-
 class Metric(abc.ABC):
     name: str = "metric"
-    
-    @abc.abstractmethod
-    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
-        pass
 
+    @abc.abstractmethod
+    def compute(
+        self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs: Any
+    ) -> MetricOutputModel:  # pragma: no cover - interface
+        ...
+
+
+# ----------------------------
+# Helpers
+# ----------------------------
+def _to_xyxy_xywh(box: List[float]) -> Tuple[List[float], List[float]]:
+    """Accepts an xywh box; returns (xyxy, xywh) with floats."""
+    x, y, w, h = [float(v) for v in box]
+    return [x, y, x + w, y + h], [x, y, w, h]
+
+
+def _group_by_file(
+    anns: List[COCOAnnotation],
+) -> Dict[str, List[COCOAnnotation]]:
+    out: Dict[str, List[COCOAnnotation]] = {}
+    for a in anns or []:
+        fn = getattr(a, "file_name", None)
+        if fn is None:
+            # fall back to uid if missing
+            fn = getattr(a, "uid", None)
+        if fn is None:
+            continue
+        out.setdefault(str(fn), []).append(a)
+    return out
+
+
+def _as_bool_mask(m: Any, expected_hw: Optional[Tuple[int, int]] = None) -> np.ndarray:
+    """Safely coerce to boolean HxW numpy mask."""
+    if m is None:
+        return None  # type: ignore[return-value]
+    if isinstance(m, torch.Tensor):
+        m = m.detach().cpu().numpy()
+    m = np.asarray(m)
+    if m.ndim == 3:
+        # (H, W, C) -> single channel by argmax/any
+        if m.shape[-1] == 1:
+            m = m[..., 0]
+        else:
+            m = (m > 0).any(-1)
+    if expected_hw is not None and (m.shape[0], m.shape[1]) != expected_hw:
+        # naive resize via padding/cropping to keep code compact
+        h, w = expected_hw
+        m = m[:h, :w]
+        if m.shape[0] < h or m.shape[1] < w:
+            pad_h = max(0, h - m.shape[0])
+            pad_w = max(0, w - m.shape[1])
+            m = np.pad(m, ((0, pad_h), (0, pad_w)), mode="constant")
+    return m.astype(bool)
+
+
+# ----------------------------
+# Detection mAP (COCO-style IoU matching via torchmetrics)
+# ----------------------------
 class MeanAveragePrecision(Metric):
     name = "mAP"
 
-    def __init__(self, iou_thresholds: Optional[List[float]] = None):
-        self.iou_thresholds = iou_thresholds or np.arange(0.5, 0.95 + 1e-9, 0.05).tolist()
+    def __init__(self, iou_thresholds: Optional[List[float]] = None) -> None:
+        # Default COCO thresholds: 0.50:0.95
+        self.iou_thresholds = (
+            iou_thresholds
+            if iou_thresholds is not None
+            else list(np.arange(0.50, 0.95 + 1e-9, 0.05))
+        )
 
     @staticmethod
-    def _calculate_iou(bbox1: List[float], bbox2: List[float]) -> float:
-        b1 = torch.tensor([MeanAveragePrecision._xywh_to_xyxy(bbox1)], dtype=torch.float32)
-        b2 = torch.tensor([MeanAveragePrecision._xywh_to_xyxy(bbox2)], dtype=torch.float32)
-        return float(box_iou(b1, b2)[0, 0].item())
-
-    @staticmethod
-    def _xywh_to_xyxy(b: List[float]) -> List[float]:
-        x, y, w, h = b
-        return [x, y, x + w, y + h]
-
-    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
-        try:
-            gt_by_file: Dict[str, List[COCOAnnotation]] = {}
-            pr_by_file: Dict[str, List[COCOAnnotation]] = {}
-            for a in (gt.data_points or []):
-                fn = getattr(a, 'file_name', None)
-                if fn is not None:
-                    gt_by_file.setdefault(str(fn), []).append(a)
-            for a in (prediction or []):
-                fn = getattr(a, 'file_name', None)
-                if fn is not None:
-                    pr_by_file.setdefault(str(fn), []).append(a)
-            
-            files = sorted(set(gt_by_file.keys()) | set(pr_by_file.keys()))
-            if not files:
-                return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": "empty GT or predictions"})
-
-            labels_set: List[Union[str, int]] = []
-            for a in (gt.data_points or []):
-                if getattr(a, 'label', None) is not None:
-                    labels_set.append(a.label)
-            for a in (prediction or []):
-                if getattr(a, 'label', None) is not None:
-                    labels_set.append(a.label)
-            uniq_labels = sorted({str(l) for l in labels_set})
-            label_to_int: Dict[str, int] = {lab: i for i, lab in enumerate(uniq_labels)}
-
-            targets: List[Dict[str, torch.Tensor]] = []
-            preds: List[Dict[str, torch.Tensor]] = []
-            for fn in files:
-                gts = gt_by_file.get(fn, [])
-                prs = pr_by_file.get(fn, [])
-                
-                gt_boxes = []
-                gt_labels = []
-                for a in gts:
-                    bb = getattr(a, 'bbox', None)
-                    label = getattr(a, 'label', None)
-                    if isinstance(bb, (list, tuple)) and len(bb) == 4:
-                        gt_boxes.append(self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]))
-                        gt_labels.append(label_to_int.get(str(label), 0))
-                        
-                pr_boxes = []
-                pr_labels = []
-                pr_scores = []
-                for p in prs:
-                    bb = getattr(p, 'bbox', None)
-                    label = getattr(p, 'label', None)
-                    score = getattr(p, 'score', getattr(p, 'confidence', 1.0))
-                    if isinstance(bb, (list, tuple)) and len(bb) == 4:
-                        pr_boxes.append(self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]))
-                        pr_labels.append(label_to_int.get(str(label), 0))
-                        pr_scores.append(float(score))
-                targets.append({
-                    'boxes': torch.tensor(gt_boxes, dtype=torch.float32) if gt_boxes else torch.zeros((0, 4), dtype=torch.float32),
-                    'labels': torch.tensor(gt_labels, dtype=torch.int64) if gt_labels else torch.zeros((0,), dtype=torch.int64),
-                })
-                preds.append({
-                    'boxes': torch.tensor(pr_boxes, dtype=torch.float32) if pr_boxes else torch.zeros((0, 4), dtype=torch.float32),
-                    'scores': torch.tensor(pr_scores, dtype=torch.float32) if pr_scores else torch.zeros((0,), dtype=torch.float32),
-                    'labels': torch.tensor(pr_labels, dtype=torch.int64) if pr_labels else torch.zeros((0,), dtype=torch.int64),
-                })
-
-            tm = TMDetMAP(box_format='xyxy', iou_type='bbox', iou_thresholds=self.iou_thresholds, class_metrics=True)
-            tm.update(preds, targets)
-            res = tm.compute()
-
-            def _to_float(val, default=0.0) -> float:
+    def _build_tm_item(anns: List[COCOAnnotation]) -> Dict[str, torch.Tensor]:
+        boxes: List[List[float]] = []
+        labels: List[int] = []
+        scores: List[float] = []
+        for a in anns or []:
+            bb = getattr(a, "bbox", None)
+            if not (isinstance(bb, (list, tuple)) and len(bb) == 4):
+                continue
+            xyxy, _ = _to_xyxy_xywh(list(bb))
+            boxes.append(xyxy)
+            lbl = getattr(a, "label", 0)
+            if isinstance(lbl, str):
                 try:
-                    x = float(val.item() if hasattr(val, 'item') else val)
+                    lbl = int(lbl)
                 except Exception:
-                    return default
-                if not np.isfinite(x) or x < 0:
-                    return default
-                return x
+                    # hash stable to int range
+                    lbl = abs(hash(lbl)) % (2**31)
+            labels.append(int(lbl))
+            sc = getattr(a, "score", getattr(a, "confidence", None))
+            if sc is None:
+                sc = 1.0
+            scores.append(float(sc))
+        res = {
+            "boxes": torch.tensor(boxes, dtype=torch.float32)
+            if boxes
+            else torch.zeros((0, 4), dtype=torch.float32),
+            "labels": torch.tensor(labels, dtype=torch.int64)
+            if labels
+            else torch.zeros((0,), dtype=torch.int64),
+        }
+        if scores:
+            res["scores"] = torch.tensor(scores, dtype=torch.float32)
+        return res
 
-            def _to_builtin(obj):
-                try:
-                    handlers = {
-                        torch.Tensor: lambda x: _to_float(x) if x.ndim == 0 else x.detach().cpu().tolist(),
-                        np.ndarray: lambda x: _to_float(x) if x.ndim == 0 else x.tolist(),
-                        dict: lambda x: {k: _to_builtin(v) for k, v in x.items()},
-                        (list, tuple): lambda x: [_to_builtin(v) for v in x]
-                    }
-                    
-                    for types, handler in handlers.items():
-                        if isinstance(obj, types):
-                            return handler(obj)
-                    
-                    return obj if isinstance(obj, (float, int, str)) else _to_float(obj)
-                except Exception:
-                    return str(obj)
+    def compute(
+        self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs: Any
+    ) -> MetricOutputModel:
+        gt_by_file = _group_by_file(getattr(gt, "data_points", []) or [])
+        pr_by_file = _group_by_file(prediction or [])
 
-            score = _to_float(res.get('map', 0.0), 0.0)
-            map50 = _to_float(res.get('map_50', 0.0), 0.0)
-            map75 = _to_float(res.get('map_75', 0.0), 0.0)
-            maps = {
-                'mAP_small': _to_float(res.get('map_small', 0.0), 0.0),
-                'mAP_medium': _to_float(res.get('map_medium', 0.0), 0.0),
-                'mAP_large': _to_float(res.get('map_large', 0.0), 0.0),
-            }
-            precision = res.get('precision')
-            recall = res.get('recall')
+        # Align files present in either set
+        files = sorted(set(gt_by_file.keys()) | set(pr_by_file.keys()))
 
-            categories = [uniq_labels[i] for i in range(len(uniq_labels))]
-            
-            gt_counts = [0] * len(uniq_labels)
-            pred_counts = [0] * len(uniq_labels)
-            for fn in files:
-                for a in gt_by_file.get(fn, []):
-                    lab_idx = label_to_int.get(str(getattr(a, 'label', "")), 0)
-                    if 0 <= lab_idx < len(gt_counts):
-                        gt_counts[lab_idx] += 1
-                for a in pr_by_file.get(fn, []):
-                    lab_idx = label_to_int.get(str(getattr(a, 'label', "")), 0)
-                    if 0 <= lab_idx < len(pred_counts):
-                        pred_counts[lab_idx] += 1
+        targets: List[Dict[str, torch.Tensor]] = []
+        preds: List[Dict[str, torch.Tensor]] = []
 
-            map_per_class = _to_builtin(res.get('map_per_class', []))
-            per_class_ap = ([_to_float(map_per_class, 0.0)] if isinstance(map_per_class, (int, float)) else
-                           [_to_float(map_per_class[i], 0.0) for i in range(len(uniq_labels))] if isinstance(map_per_class, list) and len(map_per_class) >= len(uniq_labels) else
-                           [_to_float(score, 0.0)] * len(uniq_labels))
+        for f in files:
+            targets.append(self._build_tm_item(gt_by_file.get(f, [])))
+            preds.append(self._build_tm_item(pr_by_file.get(f, [])))
 
-            def _calculate_fallback_ap(iou_thresh):
-                return float(np.interp(iou_thresh, [0.5, 0.75, 0.95], [map50, map75, 0.0]))
+        metric = TMDetMAP(iou_type="bbox")
+        metric.iou_thresholds = torch.tensor(self.iou_thresholds, dtype=torch.float32)
+        metric.update(preds=preds, target=targets)
+        out = metric.compute()
 
-            def _process_precision_data(prec_array):
-                ap_values = []
-                for i, iou_thresh in enumerate(self.iou_thresholds):
-                    if i >= len(prec_array):
-                        ap_values.append(0.0)
-                        continue
-                    
-                    prec_for_iou = prec_array[i]
-                    if not isinstance(prec_for_iou, list) or len(prec_for_iou) == 0:
-                        ap_values.append(0.0)
-                        continue
-                    
-                    if isinstance(prec_for_iou[0], list):
-                        avg_prec = np.mean([np.mean(p) for p in prec_for_iou if isinstance(p, list) and len(p) > 0])
-                    else:
-                        avg_prec = np.mean(prec_for_iou)
-                    
-                    ap_values.append(max(0.0, float(avg_prec)))
-                return ap_values
+        # torchmetrics returns tensors; convert
+        def _t2f(x: Any) -> Any:
+            if isinstance(x, torch.Tensor):
+                return x.detach().cpu().item() if x.ndim == 0 else x.detach().cpu().tolist()
+            if isinstance(x, dict):
+                return {k: _t2f(v) for k, v in x.items()}
+            return x
 
-            precision_tensor = res.get('precision')
-            recall_tensor = res.get('recall')
-            
-            if (precision_tensor is not None and recall_tensor is not None and 
-                isinstance(_to_builtin(precision_tensor), list) and 
-                len(_to_builtin(precision_tensor)) >= len(self.iou_thresholds)):
-                ap_values = _process_precision_data(_to_builtin(precision_tensor))
-                ap_iou_macro = ap_iou_micro = ap_values
-            else:
-                ap_iou_macro = ap_iou_micro = [max(0.0, _calculate_fallback_ap(iou_thresh)) for iou_thresh in self.iou_thresholds]
-
-            pr_macro = pr_micro = {}
-            if precision is not None and recall is not None:
-                prec_list = _to_builtin(precision)
-                rec_list = _to_builtin(recall)
-                if isinstance(prec_list, list) and isinstance(rec_list, list) and prec_list and rec_list:
-                    for iou_key in ["0.50", "0.75"]:
-                        if isinstance(prec_list[0], list):
-                            prec_curve = prec_list[0] if prec_list[0] else [0.0]
-                            rec_curve = rec_list[0] if rec_list[0] else [0.0]
-                        else:
-                            prec_curve = prec_list[:10]
-                            rec_curve = rec_list[:10]
-                        min_len = min(len(prec_curve), len(rec_curve))
-                        if min_len > 0:
-                            curve_data = {
-                                "precision": prec_curve[:min_len],
-                                "recall": rec_curve[:min_len]
-                            }
-                            pr_macro[iou_key] = pr_micro[iou_key] = curve_data
-            stats = {'mAP': score,'mAP@0.5': map50,'mAP@0.75': map75,**maps,'precision': _to_builtin(precision) if precision is not None else None,'recall': _to_builtin(recall) if recall is not None else None,'classes': [k for k in range(len(uniq_labels))],'label_mapping': {v: k for k, v in label_to_int.items()},'categories': categories,'gt_counts': gt_counts,'pred_counts': pred_counts,'per_class_ap': per_class_ap,'ap_iou_macro': ap_iou_macro,'ap_iou_micro': ap_iou_micro,'iou_thresholds': self.iou_thresholds,'pr_macro': pr_macro,'pr_micro': pr_micro,}
-            return MetricOutputModel(metric_name=self.name, score=score, stats=stats)
-        except Exception as e:
-            return MetricOutputModel(metric_name=self.name, score=0.0, stats={'error': str(e), 'fallback': True})
-
+        stats = {k: _t2f(v) for k, v in out.items()}
+        score = float(stats.get("map", 0.0) or 0.0)
+        return MetricOutputModel(metric_name=self.name, score=score, stats=stats)
 
 class MeanIntersectionOverUnion(Metric):
     name = "mIoU"
-    
-    def __init__(self, iou_threshold: float = 0.5, use_torchmetrics: bool = True):
-        self.iou_threshold = iou_threshold
-        self.use_torchmetrics = True
 
-    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
-        y_true, y_pred = self._prepare_masks(gt, prediction)
-        tm = JaccardIndex(task="binary")
-        score = float(tm(torch.from_numpy(y_pred).int(), torch.from_numpy(y_true).int()).item())
-        return MetricOutputModel(metric_name=self.name, score=score, stats={})
-
-    def _prepare_masks(self, gt: DatasetModel, predictions: List[COCOAnnotation]):
-        gt_by_file: Dict[str, List[COCOAnnotation]] = {}
-        pr_by_file: Dict[str, List[COCOAnnotation]] = {}
-        for ann in (gt.data_points or []):
-            fn = str(getattr(ann, 'file_name', None) or 'unknown.jpg')
-            gt_by_file.setdefault(fn, []).append(ann)
-        for ann in (predictions or []):
-            fn = str(getattr(ann, 'file_name', None) or 'unknown.jpg')
-            pr_by_file.setdefault(fn, []).append(ann)
+    def compute(
+        self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs: Any
+    ) -> MetricOutputModel:
+        gt_by_file = _group_by_file(getattr(gt, "data_points", []) or [])
+        pr_by_file = _group_by_file(prediction or [])
 
         files = sorted(set(gt_by_file.keys()) | set(pr_by_file.keys()))
-        gt_all: List[np.ndarray] = []
-        pr_all: List[np.ndarray] = []
-        for fn in files:
-            H = W = 0
-            src = gt_by_file.get(fn) or pr_by_file.get(fn) or []
-            if src:
-                H = int(getattr(src[0], 'height', getattr(src[0], 'image_size', (0, 0))[1] if hasattr(src[0], 'image_size') else 0) or 0)
-                W = int(getattr(src[0], 'width', getattr(src[0], 'image_size', (0, 0))[0] if hasattr(src[0], 'image_size') else 0) or 0)
-            if H <= 0 or W <= 0:
-                continue
-            gt_mask = np.zeros((H, W), dtype=np.uint8)
-            pr_mask = np.zeros((H, W), dtype=np.uint8)
-            for a in gt_by_file.get(fn, []):
-                m = getattr(a, 'mask', None)
-                if isinstance(m, np.ndarray) and m.shape[:2] == (H, W):
-                    gt_mask |= (m > 0).astype(np.uint8)
-            for a in pr_by_file.get(fn, []):
-                m = getattr(a, 'mask', None)
-                if isinstance(m, np.ndarray) and m.shape[:2] == (H, W):
-                    pr_mask |= (m > 0).astype(np.uint8)
-            gt_all.append(gt_mask)
-            pr_all.append(pr_mask)
+        per_image_iou: List[float] = []
 
-        if not gt_all:
-            return np.zeros((1,), dtype=np.uint8), np.zeros((1,), dtype=np.uint8)
-        gt_stack = np.concatenate([m.ravel() for m in gt_all], axis=0)
-        pr_stack = np.concatenate([m.ravel() for m in pr_all], axis=0)
-        return gt_stack, pr_stack
+        for f in files:
+            gms: List[np.ndarray] = []
+            h = w = None
+            for g in gt_by_file.get(f, []):
+                h = getattr(g, "height", None) or (getattr(g, "image_size", (None, None))[1] if getattr(g, "image_size", None) else None)
+                w = getattr(g, "width", None) or (getattr(g, "image_size", (None, None))[0] if getattr(g, "image_size", None) else None)
+                gm = _as_bool_mask(getattr(g, "mask", None))
+                if gm is not None:
+                    gms.append(gm)
+            if gms:
+                gm = np.logical_or.reduce(gms)
+            else:
+                # Empty mask
+                if h is None or w is None:
+                    continue
+                gm = np.zeros((h, w), dtype=bool)
 
+            # Union all predicted masks
+            pms: List[np.ndarray] = []
+            for p in pr_by_file.get(f, []):
+                pm = _as_bool_mask(getattr(p, "mask", None), expected_hw=gm.shape)
+                if pm is not None:
+                    pms.append(pm)
+            pm = np.logical_or.reduce(pms) if pms else np.zeros_like(gm, dtype=bool)
+
+            # sklearn operates on 1D arrays
+            y_true = gm.reshape(-1).astype(int)
+            y_pred = pm.reshape(-1).astype(int)
+            iou = jaccard_score(y_true, y_pred, average="binary", zero_division=0)
+            per_image_iou.append(float(iou))
+
+        score = float(np.mean(per_image_iou)) if per_image_iou else 0.0
+        stats = {"per_image": per_image_iou, "num_images": len(per_image_iou)}
+        return MetricOutputModel(metric_name=self.name, score=score, stats=stats)
+
+
+# ----------------------------
+# Segmentation Dice via sklearn (F1 for binary masks)
+# ----------------------------
 class DiceCoefficient(Metric):
-    name = "dice"
-    
-    def __init__(self, use_torchmetrics: bool = True):
-        self.use_torchmetrics = True
-        self.metric = F1Score(task="binary")
+    name = "Dice"
 
-    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
-        try:
-            gt_binary, pred_binary = self._prepare_binary_data(gt, prediction)
-            dice_score = float(self.metric(torch.from_numpy(pred_binary).int(), torch.from_numpy(gt_binary).int()).item())
-            return MetricOutputModel(metric_name=self.name, score=dice_score, stats={})
-        except Exception as e:
-            return MetricOutputModel(metric_name=self.name, score=0.0, stats={'error': str(e), 'fallback': True})
-    
-    def _prepare_binary_data(self, gt: DatasetModel, predictions: List[COCOAnnotation]):
-        gt_by_file: Dict[str, List[COCOAnnotation]] = {}
-        pr_by_file: Dict[str, List[COCOAnnotation]] = {}
-        for ann in (gt.data_points or []):
-            fn = str(getattr(ann, 'file_name', None) or 'unknown.jpg')
-            gt_by_file.setdefault(fn, []).append(ann)
-        for ann in (predictions or []):
-            fn = str(getattr(ann, 'file_name', None) or 'unknown.jpg')
-            pr_by_file.setdefault(fn, []).append(ann)
+    def compute(
+        self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs: Any
+    ) -> MetricOutputModel:
+        gt_by_file = _group_by_file(getattr(gt, "data_points", []) or [])
+        pr_by_file = _group_by_file(prediction or [])
+        files = sorted(set(gt_by_file.keys()) | set(pr_by_file.keys()))
+        per_image_dice: List[float] = []
+
+        for f in files:
+            gms: List[np.ndarray] = []
+            h = w = None
+            for g in gt_by_file.get(f, []):
+                h = getattr(g, "height", None) or (getattr(g, "image_size", (None, None))[1] if getattr(g, "image_size", None) else None)
+                w = getattr(g, "width", None) or (getattr(g, "image_size", (None, None))[0] if getattr(g, "image_size", None) else None)
+                gm = _as_bool_mask(getattr(g, "mask", None))
+                if gm is not None:
+                    gms.append(gm)
+            if gms:
+                gm = np.logical_or.reduce(gms)
+            else:
+                if h is None or w is None:
+                    continue
+                gm = np.zeros((h, w), dtype=bool)
+
+            pms: List[np.ndarray] = []
+            for p in pr_by_file.get(f, []):
+                pm = _as_bool_mask(getattr(p, "mask", None), expected_hw=gm.shape)
+                if pm is not None:
+                    pms.append(pm)
+            pm = np.logical_or.reduce(pms) if pms else np.zeros_like(gm, dtype=bool)
+
+            y_true = gm.reshape(-1).astype(int)
+            y_pred = pm.reshape(-1).astype(int)
+            dice = f1_score(y_true, y_pred, average="binary", zero_division=0)
+            per_image_dice.append(float(dice))
+
+        score = float(np.mean(per_image_dice)) if per_image_dice else 0.0
+        stats = {"per_image": per_image_dice, "num_images": len(per_image_dice)}
+        return MetricOutputModel(metric_name=self.name, score=score, stats=stats)
+
+
+# ----------------------------
+# Optional: simple classification report per-image using top-1 label
+# ----------------------------
+class ClassificationReportMetric(Metric):
+    """Build a per-image classification report by taking the most confident
+    predicted label in each image and comparing with the most frequent GT label.
+    Uses sklearn.classification_report + precision_recall_curve."""
+
+    name = "classification_report"
+
+    def compute(
+        self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs: Any
+    ) -> MetricOutputModel:
+        gt_by_file = _group_by_file(getattr(gt, "data_points", []) or [])
+        pr_by_file = _group_by_file(prediction or [])
 
         files = sorted(set(gt_by_file.keys()) | set(pr_by_file.keys()))
-        gt_all: List[np.ndarray] = []
-        pr_all: List[np.ndarray] = []
-        for fn in files:
-            H = W = 0
-            src = gt_by_file.get(fn) or pr_by_file.get(fn) or []
-            if src:
-                H = int(getattr(src[0], 'height', getattr(src[0], 'image_size', (0, 0))[1] if hasattr(src[0], 'image_size') else 0) or 0)
-                W = int(getattr(src[0], 'width', getattr(src[0], 'image_size', (0, 0))[0] if hasattr(src[0], 'image_size') else 0) or 0)
-            if H <= 0 or W <= 0:
+        if not files:
+            return MetricOutputModel(self.name, 0.0, {"error": "no data"})
+
+        # map arbitrary labels to ints for sklearn
+        labels_set: List[Any] = []
+        for f in files:
+            for a in gt_by_file.get(f, []):
+                labels_set.append(getattr(a, "label", 0))
+            for p in pr_by_file.get(f, []):
+                labels_set.append(getattr(p, "label", 0))
+        uniq = sorted({str(x) for x in labels_set})
+        l2i = {k: i for i, k in enumerate(uniq)}
+
+        y_true: List[int] = []
+        y_pred: List[int] = []
+        y_scores: List[float] = []
+
+        for f in files:
+            # GT = most frequent label in this image
+            g_labels = [l2i[str(getattr(a, "label", 0))] for a in gt_by_file.get(f, [])]
+            if not g_labels:
                 continue
-            gt_mask = np.zeros((H, W), dtype=np.uint8)
-            pr_mask = np.zeros((H, W), dtype=np.uint8)
-            for a in gt_by_file.get(fn, []):
-                m = getattr(a, 'mask', None)
-                if isinstance(m, np.ndarray) and m.shape[:2] == (H, W):
-                    gt_mask |= (m > 0).astype(np.uint8)
-            for a in pr_by_file.get(fn, []):
-                m = getattr(a, 'mask', None)
-                if isinstance(m, np.ndarray) and m.shape[:2] == (H, W):
-                    pr_mask |= (m > 0).astype(np.uint8)
-            gt_all.append(gt_mask)
-            pr_all.append(pr_mask)
-        if not gt_all:
-            return np.zeros((1,), dtype=np.uint8), np.zeros((1,), dtype=np.uint8)
-        gt_stack = np.concatenate([m.ravel() for m in gt_all], axis=0)
-        pr_stack = np.concatenate([m.ravel() for m in pr_all], axis=0)
-        return gt_stack, pr_stack
+            gt_label = int(np.bincount(np.array(g_labels)).argmin() if len(set(g_labels)) == 0 else np.bincount(np.array(g_labels)).argmax())
 
-class ClassificationReportMetric(Metric):
-    name = "classification_report"
-    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
-        try:
-            gt_by_file: Dict[str, List[Union[int, str]]] = {}
-            pred_by_file: Dict[str, List[Union[int, str]]] = {}
-            for ann in (gt.data_points or []):
-                fn = getattr(ann, 'file_name', None)
-                lab = getattr(ann, 'label', None)
-                if fn is None or lab is None:
-                    continue
-                gt_by_file.setdefault(str(fn), []).append(lab)
-            for ann in (prediction or []):
-                fn = getattr(ann, 'file_name', None)
-                lab = getattr(ann, 'label', None)
-                if fn is None or lab is None:
-                    continue
-                pred_by_file.setdefault(str(fn), []).append(lab)
-            files = sorted(set(gt_by_file.keys()) | set(pred_by_file.keys()))
-            if not files:
-                return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": "no files to compare", "dict": {}, "text": ""})
-            def majority_label(labels: List[Union[int, str]]) -> str:
-                if not labels:
-                    return "none"
-                counts: Dict[str, int] = {}
-                for l in labels:
-                    s = str(l)
-                    counts[s] = counts.get(s, 0) + 1
-                return max(counts.items(), key=lambda x: x[1])[0]
+            # Prediction = most confident label in this image
+            best = None
+            for p in pr_by_file.get(f, []):
+                sc = getattr(p, "score", getattr(p, "confidence", 1.0))
+                best = max(best, (float(sc), l2i[str(getattr(p, "label", 0))])) if best else (float(sc), l2i[str(getattr(p, "label", 0))])
+            if best is None:
+                # treat as background: predict GT to avoid dropping the sample
+                pred_label = gt_label
+                score = 0.0
+            else:
+                score, pred_label = best
 
-            y_true: List[str] = []
-            y_pred: List[str] = []
-            for fn in files:
-                gt_lab = majority_label(gt_by_file.get(fn, []))
-                pr_lab = majority_label(pred_by_file.get(fn, []))
-                y_true.append(gt_lab)
-                y_pred.append(pr_lab)
+            y_true.append(gt_label)
+            y_pred.append(pred_label)
+            # positive score only meaningful for binary; still store for PR curve across 1-vs-rest of the GT label
+            y_scores.append(float(score))
 
-            rep_dict = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
-            rep_text = classification_report(y_true, y_pred, output_dict=False, zero_division=0)
-            correct = sum(1 for a, b in zip(y_true, y_pred) if a == b)
-            acc = float(correct) / float(len(y_true)) if y_true else 0.0
+        # Build sklearn reports
+        rep_dict = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+        rep_text = classification_report(y_true, y_pred, output_dict=False, zero_division=0)
+        acc = float(np.mean(np.array(y_true) == np.array(y_pred))) if y_true else 0.0
 
-            stats = {
-                "num_files": len(files),
-                "dict": rep_dict,
-                "text": rep_text,
-                "labels": sorted(list(set(y_true) | set(y_pred))),
-            }
-            return MetricOutputModel(metric_name=self.name, score=float(acc), stats=stats)
-        except Exception as e:
-            return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": str(e), "fallback": True})
+        # Binary PR curve using the majority GT class as positive (fallback)
+        pr_stats: Dict[str, Any] = {}
+        if len(set(y_true)) >= 2:
+            pos_label = max(set(y_true), key=y_true.count)
+            y_true_bin = [1 if t == pos_label else 0 for t in y_true]
+            try:
+                precision, recall, thresholds = precision_recall_curve(y_true_bin, y_scores)
+                ap = average_precision_score(y_true_bin, y_scores)
+                pr_stats = {
+                    "precision": precision.tolist(),
+                    "recall": recall.tolist(),
+                    "thresholds": thresholds.tolist() if thresholds is not None else [],
+                    "average_precision": float(ap),
+                    "positive_class": pos_label,
+                }
+            except Exception as e:
+                pr_stats = {"error": str(e)}
+
+        stats = {
+            "report_dict": rep_dict,
+            "report_text": rep_text,
+            "labels": uniq,
+            "pr_curve": pr_stats,
+            "num_samples": len(y_true),
+        }
+        return MetricOutputModel(metric_name=self.name, score=float(acc), stats=stats)

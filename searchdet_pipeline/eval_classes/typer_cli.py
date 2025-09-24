@@ -13,13 +13,13 @@ from rich.table import Table
 from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
 from searchdet_pipeline.eval_classes.DatasetPoint import DatasetPoint
 from searchdet_pipeline.eval_classes.metrics import (
-    MetricOutputModel, MeanAveragePrecision, MeanIntersectionOverUnion, DiceCoefficient
+    MetricOutputModel, MeanAveragePrecision, MeanIntersectionOverUnion, DiceCoefficient, ClassificationReportMetric
 )
 from searchdet_pipeline.core.detector import SearchDetDetector
 from searchdet_pipeline.core.config import get_preset_config
 from searchdet_pipeline.eval_classes.Tracer import Tracer
 
-App = typer.Typer(help="Evaluation CLI for SearchDet pipeline (Typer)")
+App = typer.Typer()
 console = Console()
 
 
@@ -31,7 +31,6 @@ class EvalCLI:
         img_dir: Optional[Path] = None,
         positive_dir: Union[str, Path] = "examples/positive",
         negative_dir: Optional[Union[str, Path]] = None,
-        config_name: str = "balanced",
         average: str = "micro",
         output_dir: Optional[Path] = None,
         save_predictions: bool = True,
@@ -43,7 +42,6 @@ class EvalCLI:
         self.img_dir = Path(img_dir) if img_dir is not None else None
         self.positive_dir = str(positive_dir)
         self.negative_dir = str(negative_dir) if negative_dir is not None else None
-        self.config_name = config_name
         self.average = average
         self.output_dir = output_dir
         self.save_predictions = save_predictions
@@ -122,11 +120,11 @@ class EvalCLI:
 
     def run(self) -> int:
         out_dir = self._ensure_results_dir()
-        config = get_preset_config(self.config_name)
+        config = get_preset_config("balanced")
         detector = SearchDetDetector(config=config)
         reporter = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
         dataset = ArchiveVOCDataset.from_path(self.dataset_dir, ann_dir=self.ann_dir, img_dir=self.img_dir)
-        metrics_list = [MeanAveragePrecision(), MeanIntersectionOverUnion(), DiceCoefficient()]
+        metrics_list = [MeanAveragePrecision(), MeanIntersectionOverUnion(), DiceCoefficient(), ClassificationReportMetric()]
         dp = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter)
         image_root = self.img_dir if (self.img_dir is not None and self.img_dir.exists()) else None
         preds, metrics = dp.run(
@@ -150,7 +148,6 @@ def eval_command(
     img_dir: Optional[Path] = typer.Option(None, help="Path to images directory (optional)", exists=False),
     positive_dir: Optional[Path] = typer.Option("examples/positive", help="Directory with positive reference images"),
     negative_dir: Optional[Path] = typer.Option(None, help="Directory with negative reference images"),
-    config_name: str = typer.Option("balanced", help="Detector preset config name"),
     average: str = typer.Option("micro", help="Averaging for evaluation (micro/macro)"),
     output_dir: Optional[Path] = typer.Option(None, help="Base output dir; a timestamped run subfolder will be created"),
     run_name: Optional[str] = typer.Option(None, help="Optional custom run subfolder name"),
@@ -163,7 +160,6 @@ def eval_command(
         img_dir=img_dir,
         positive_dir=str(positive_dir) if positive_dir is not None else "examples/positive",
         negative_dir=str(negative_dir) if negative_dir is not None else None,
-        config_name=config_name,
         average=average,
         output_dir=output_dir,
         save_predictions=save_predictions,

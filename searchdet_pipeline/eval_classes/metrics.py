@@ -407,10 +407,21 @@ class ClassificationReportMetric(Metric):
             y_true: List[str] = []
             y_pred: List[str] = []
             for fn in files:
-                gt_lab = majority_label(gt_by_file.get(fn, []))
-                pr_lab = majority_label(pred_by_file.get(fn, []))
+                gt_labels = gt_by_file.get(fn, [])
+                pr_labels = pred_by_file.get(fn, [])
+                if not gt_labels and not pr_labels:
+                    continue
+                gt_lab = majority_label(gt_labels)
+                pr_lab = majority_label(pr_labels)
+                if gt_lab == "none" or pr_lab == "none":
+                    continue
+                    
                 y_true.append(gt_lab)
                 y_pred.append(pr_lab)
+
+            # Проверяем, что остались данные для анализа
+            if not y_true or not y_pred:
+                return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": "no valid labels after filtering", "dict": {}, "text": ""})
 
             rep_dict = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
             rep_text = classification_report(y_true, y_pred, output_dict=False, zero_division=0)

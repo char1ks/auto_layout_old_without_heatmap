@@ -395,57 +395,48 @@ class ReportGenerator(ReportConfig):
             
             # Duration graphs
             if images.get("durations_hist"):
-                lines.append("Пояснение: Гистограмма времени выполнения одного запуска (секунды). Источник данных: Context.duration для каждого запуска; вычисление: распределение по 20 бинам.\n\n")
-                lines.append(f"![Гистограмма времени выполнения]({images['durations_hist']})\n\n")
+                lines.append("Гистограмма времени: показывает распределение длительности запусков 'Histogram(duration_values, bins=20)'\n\n")
+                lines.append(f"![Гистограмма времени]({images['durations_hist']})\n\n")
             if images.get("durations_series"):
-                lines.append("Пояснение: Время выполнения по порядку запусков. Источник данных: Context.duration; вычисление: линейный график последовательности длительностей.\n\n")
-                lines.append(f"![Время выполнения по запускам]({images['durations_series']})\n\n")
+                lines.append("Время по запускам: показывает изменение времени выполнения 'plot(run_index, duration)'\n\n")
+                lines.append(f"![Время по запускам]({images['durations_series']})\n\n")
             if images.get("spans_avg"):
-                lines.append("Пояснение: Среднее время по этапам (спанам). Источник данных: Context.spans[].duration; вычисление: среднее значение по каждому этапу.\n\n")
-                lines.append(f"![Среднее время по этапам]({images['spans_avg']})\n\n")
+                lines.append("Среднее время этапов: показывает среднюю длительность каждого этапа 'mean(span_durations)'\n\n")
+                lines.append(f"![Среднее время этапов]({images['spans_avg']})\n\n")
             
             # Class distributions
             if images.get("gt_class_distribution"):
-                lines.append("Пояснение: Распределение количества GT-объектов по классам. Источник данных: stats['gt_counts'] и stats['categories']; вычисление: столбчатая диаграмма подсчётов по классам.\n\n")
-                lines.append(f"![Распределение GT классов]({images['gt_class_distribution']})\n\n")
+                lines.append("Распределение GT: показывает количество объектов по классам 'bar(classes, gt_counts)'\n\n")
+                lines.append(f"![Распределение GT]({images['gt_class_distribution']})\n\n")
             if images.get("pred_class_distribution"):
-                lines.append("Пояснение: Распределение количества предсказанных объектов по классам. Источник данных: stats['pred_counts'] и stats['categories']; вычисление: столбчатая диаграмма подсчётов по классам.\n\n")
-                lines.append(f"![Распределение предсказанных классов]({images['pred_class_distribution']})\n\n")
+                lines.append("Распределение предсказаний: показывает количество предсказанных объектов 'bar(classes, pred_counts)'\n\n")
+                lines.append(f"![Распределение предсказаний]({images['pred_class_distribution']})\n\n")
             
             if images.get("ap_vs_iou"):
-                lines.append("Пояснение: Зависимость AP от порога IoU (macro/micro). Источник данных: stats['ap_iou_macro'], stats['ap_iou_micro'], пороги из stats['iou_thresholds']; вычисление: линии AP по каждому порогу IoU.\n\n")
+                lines.append("AP vs IoU: показывает зависимость точности от порога пересечения 'plot(iou_thresholds, ap_values)'\n\n")
                 lines.append(f"![AP vs IoU]({images['ap_vs_iou']})\n\n")
             
-            # PR curves
+            # PR curves formulas only
             for tag in ["050", "075"]:
                 if images.get(f"pr_macro_{tag}"):
-                    lines.append(f"Пояснение: PR-кривая (макро) при IoU={tag[0]}.{tag[1:]}. Источник: stats['pr_macro'][\"{tag[0]}.{tag[1:]}\"]; вычисление: график precision от recall по агрегированным макро-предсказаниям; AP — площадь под кривой.\n\n")
-                    lines.append(f"![PR Macro @IoU={tag[0]}.{tag[1:]}]({images[f'pr_macro_{tag}']})\n\n")
+                    lines.append(f"PR макро @{tag[0]}.{tag[1:]}: показывает точность и полноту 'Precision = TP/(TP+FP), Recall = TP/(TP+FN)'\n\n")
+                    lines.append(f"![PR макро @{tag[0]}.{tag[1:]}]({images[f'pr_macro_{tag}']})\n\n")
                 if images.get(f"pr_micro_{tag}"):
-                    lines.append(f"Пояснение: PR-кривая (микро) при IoU={tag[0]}.{tag[1:]}. Источник: stats['pr_micro'][\"{tag[0]}.{tag[1:]}\"]; вычисление: график precision от recall по агрегированным микро-предсказаниям; AP — площадь под кривой.\n\n")
-                    lines.append(f"![PR Micro @IoU={tag[0]}.{tag[1:]}]({images[f'pr_micro_{tag}']})\n\n")
+                    lines.append(f"PR микро @{tag[0]}.{tag[1:]}: показывает агрегированную точность 'Precision_micro = Σ(TP_i)/Σ(TP_i+FP_i)'\n\n")
+                    lines.append(f"![PR микро @{tag[0]}.{tag[1:]}]({images[f'pr_micro_{tag}']})\n\n")
             
-            # PR best-points scatter
+            # PR best-points formulas only
             if images.get("ap_pr_points_macro"):
-                lines.append("Пояснение: Лучшие точки PR по IoU (макро). Расчёт: для каждой кривой PR выбирается точка с максимальным F1 = 2·P·R/(P+R); метки показывают соответствующий порог IoU.\n\n")
-                lines.append(f"![Macro PR best-points per IoU]({images['ap_pr_points_macro']})\n\n")
+                lines.append("Лучшие точки PR макро: показывает оптимальные точки по F1 'F1 = 2·P·R/(P+R)'\n\n")
+                lines.append(f"![Лучшие точки PR макро]({images['ap_pr_points_macro']})\n\n")
             if images.get("ap_pr_points_micro"):
-                lines.append("Пояснение: Лучшие точки PR по IoU (микро). Расчёт: для каждой кривой PR выбирается точка с максимальным F1 = 2·P·R/(P+R); метки показывают соответствующий порог IoU.\n\n")
-                lines.append(f"![Micro PR best-points per IoU]({images['ap_pr_points_micro']})\n\n")
+                lines.append("Лучшие точки PR микро: показывает оптимальные микро точки 'F1_micro = 2·P_micro·R_micro/(P_micro+R_micro)'\n\n")
+                lines.append(f"![Лучшие точки PR микро]({images['ap_pr_points_micro']})\n\n")
             
-            # Per-class AP images and CSVs
+            # Per-class AP formula only
             if images.get("per_class_ap"):
-                lines.append("Пояснение: AP по классам (средний AP) с сортировкой по убыванию. Источник: stats['per_class_ap_avg'] (или stats['per_class_ap']) вместе с stats['categories']; вычисление: столбцы — значения AP для каждого класса.\n\n")
-                lines.append(f"![Per-class AP]({images['per_class_ap']})\n\n")
-            if images.get("per_class_ap_csv"):
-                lines.append("CSV: список пар (класс, AP) для соответствующего графика per-class AP.\n\n")
-                lines.append(f"[CSV per-class AP]({images['per_class_ap_csv']})\n\n")
-            if images.get("per_class_ap_lowest"):
-                lines.append("Пояснение: Самые низкие по AP классы (нижние k). Источник: те же per-class AP; вычисление: сортировка по возрастанию и выбор нижних k классов.\n\n")
-                lines.append(f"![Lowest AP classes]({images['per_class_ap_lowest']})\n\n")
-            if images.get("per_class_ap_lowest_csv"):
-                lines.append("CSV: список нижних k классов с их AP.\n\n")
-                lines.append(f"[CSV lowest]({images['per_class_ap_lowest_csv']})\n\n")
+                lines.append("AP по классам: показывает точность для каждого класса 'AP_class = ∫₀¹ P(R) dR'\n\n")
+                lines.append(f"![AP по классам]({images['per_class_ap']})\n\n")
 
         # mAP numeric details
         map_metric = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
@@ -473,8 +464,6 @@ class ReportGenerator(ReportConfig):
                     for name, ap, sup in pairs_low:
                         lines.append(f"| {name} | {ap:.4f} | {sup} |\n")
             lines.append("\n")
-
-        # Classification report
         cr = next((m for m in (metrics or []) if m.metric_name == "classification_report" and isinstance(m.stats, dict)), None)
         if cr:
             text = cr.stats.get("text")
@@ -486,7 +475,7 @@ class ReportGenerator(ReportConfig):
                     lines.append("\n")
                 lines.append("```\n")
 
-        (report_dir / "readme.md").write_text("".join(lines), encoding="utf-8")
+        (report_dir / "report.md").write_text("".join(lines), encoding="utf-8")
 
     def _write_json(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any]) -> None:
         data = {

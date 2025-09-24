@@ -30,22 +30,13 @@ class ArchiveVOCDataset(Dataset):
 
     @classmethod
     def from_path(cls, path: Path, ann_dir: Optional[Path] = None, img_dir: Optional[Path] = None) -> "ArchiveVOCDataset":
-        base = Path(path)
-        base_dir = base.parent if base.is_dir() and base.name.lower() in {"annotations", "annotation"} else base
+        base_dir = Path(path)
 
         xml_files = []
-        if ann_dir and (ann_dir := Path(ann_dir)).exists():
-            xml_files = sorted(p for p in ann_dir.rglob("*.xml") if p.is_file())
-        else:
-            for candidate in [base_dir / name for name in ["annotations", "Annotations", "annotation", "Annotation"]]:
-                if candidate.exists():
-                    xml_files.extend(sorted(p for p in candidate.rglob("*.xml") if p.is_file()))
-            if not xml_files:
-                xml_files = sorted(p for p in base_dir.rglob("*.xml") if p.is_file())
+        if ann_dir and Path(ann_dir).exists():
+            xml_files = sorted(p for p in Path(ann_dir).rglob("*.xml") if p.is_file())
 
-        chosen_img_dir = (Path(img_dir) if img_dir and Path(img_dir).exists() else 
-                         next((base_dir / name for name in ["images", "Images", "JPEGImages", "jpegimages"] 
-                              if (base_dir / name).exists()), base_dir))
+        chosen_img_dir = Path(img_dir) if img_dir and Path(img_dir).exists() else base_dir
 
         anns, categories = [], []
         for xml_path in xml_files:

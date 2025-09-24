@@ -132,242 +132,161 @@ class ReportGenerator(ReportConfig):
 
     def _save_graphs(self, report_dir: Path, timing_stats: Dict[str, Any], metrics: List[MetricOutputModel]) -> Dict[str, str]:
         images: Dict[str, str] = {}
+
+        def save(filename: str, key: str) -> None:
+            p = report_dir / filename
+            plt.tight_layout()
+            plt.savefig(p, format="svg", facecolor="white", bbox_inches="tight", transparent=False, dpi=150)
+            plt.close()
+            images[key] = str(p)
+
         durations = timing_stats.get("durations", [])
         if durations:
             plt.figure(figsize=(6, 3))
-            plt.hist(durations, bins=20, color="#4C78A8"); plt.title("Durations (sec)")
-            hist_path = report_dir / "durations_hist.svg"
-            plt.tight_layout(); plt.savefig(hist_path, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
-            images["durations_hist"] = str(hist_path)
+            plt.hist(durations, bins=20, color="#4C78A8")
+            plt.title("Durations (sec)")
+            save("durations_hist.svg", "durations_hist")
 
             plt.figure(figsize=(6, 3))
-            plt.plot(durations, color="#F58518"); plt.title("Durations by run")
-            ser_path = report_dir / "durations_series.svg"
-            plt.tight_layout(); plt.savefig(ser_path, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
-            images["durations_series"] = str(ser_path)
+            plt.plot(durations, color="#F58518")
+            plt.title("Durations by run")
+            save("durations_series.svg", "durations_series")
 
         spans_avg: Dict[str, float] = timing_stats.get("spans_avg", {})
         if spans_avg:
             names = list(spans_avg.keys())
             values = [spans_avg[k] for k in names]
             plt.figure(figsize=(6, 3))
-            plt.barh(names, values, color="#54A24B"); plt.title("Avg span time (sec)")
-            plt.tight_layout()
-            p = report_dir / "spans_avg.svg"
-            plt.savefig(p, format="svg", facecolor="white", bbox_inches="tight", transparent=False); plt.close()
-            images["spans_avg"] = str(p)
+            plt.barh(names, values, color="#54A24B")
+            plt.title("Avg span time (sec)")
+            save("spans_avg.svg", "spans_avg")
 
-        map_metric: Optional[MetricOutputModel] = None
-        for m in metrics or []:
-            if str(m.metric_name).lower() in {"map", "meanaverageprecision"}:
-                map_metric = m
-                break
+        map_metric: Optional[MetricOutputModel] = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
         if map_metric and isinstance(map_metric.stats, dict):
             st = map_metric.stats
             categories = st.get("categories") or []
             gt_counts = st.get("gt_counts") or []
             pred_counts = st.get("pred_counts") or []
 
-            if self.include_class_distributions and categories and (gt_counts or pred_counts):
-                try:
-                    x = list(range(len(categories)))
-                    labels = [str(c) for c in categories]
-                    if gt_counts:
+            if self.include_class_distributions and categories:
+                for title, counts, color, key, fname in [
+                    ("GT class distribution", gt_counts, "#4C78A8", "gt_class_distribution", "gt_class_distribution.svg"),
+                    ("Predicted class distribution", pred_counts, "#F58518", "pred_class_distribution", "pred_class_distribution.svg"),
+                ]:
+                    if counts:
+                        x = list(range(len(categories)))
+                        labels = [str(c) for c in categories]
                         plt.figure(figsize=(max(6, len(labels) * 0.5), 3))
-                        plt.bar(x, gt_counts, color="#4C78A8")
-                        plt.title("GT class distribution")
+                        plt.bar(x, counts, color=color)
+                        plt.title(title)
                         plt.xticks(x, labels, rotation=45, ha="right")
-                        p1 = report_dir / "gt_class_distribution.svg"
-                        plt.tight_layout()
-                        plt.savefig(p1, format="svg", facecolor="white", bbox_inches="tight", transparent=False)
-                        plt.close()
-                        images["gt_class_distribution"] = str(p1)
-                    if pred_counts:
-                        plt.figure(figsize=(max(6, len(labels) * 0.5), 3))
-                        plt.bar(x, pred_counts, color="#F58518")
-                        plt.title("Predicted class distribution")
-                        plt.xticks(x, labels, rotation=45, ha="right")
-                        p2 = report_dir / "pred_class_distribution.svg"
-                        plt.tight_layout()
-                        plt.savefig(p2, format="svg", facecolor="white", bbox_inches="tight", transparent=False)
-                        plt.close()
-                        images["pred_class_distribution"] = str(p2)
-                except Exception:
-                    pass
+                        save(fname, key)
 
-            ap_iou_macro = st.get("ap_iou_macro") or []
-            ap_iou_micro = st.get("ap_iou_micro") or []
+            ap_macro = st.get("ap_iou_macro") or []
+            ap_micro = st.get("ap_iou_micro") or []
             ious = st.get("iou_thresholds") or []
             if self.include_ap_graphs and ious:
                 plt.figure(figsize=(6, 3))
-                has_data = False
-                if ap_iou_macro and len(ap_iou_macro) == len(ious):
-                    plt.plot(ious, ap_iou_macro, label="macro", color="#4C78A8", linewidth=2, linestyle='-', marker='o', markersize=4)
-                    has_data = True
-                if ap_iou_micro and len(ap_iou_micro) == len(ious):
-                    plt.plot(ious, ap_iou_micro, label="micro", color="#F58518", linewidth=2, linestyle='--', marker='s', markersize=4)
-                    has_data = True
-                if has_data:
+                plotted = False
+                if ap_macro and len(ap_macro) == len(ious):
+                    plt.plot(ious, ap_macro, label="macro", color="#4C78A8", linewidth=2, linestyle='-', marker='o', markersize=4)
+                    plotted = True
+                if ap_micro and len(ap_micro) == len(ious):
+                    plt.plot(ious, ap_micro, label="micro", color="#F58518", linewidth=2, linestyle='--', marker='s', markersize=4)
+                    plotted = True
+                if plotted:
                     plt.xlabel("IoU threshold")
                     plt.ylabel("AP")
                     plt.title("AP vs IoU")
                     plt.legend()
                     plt.grid(True, alpha=0.3)
-                    p = report_dir / "ap_vs_iou.svg"
-                    plt.tight_layout()
-                    plt.savefig(p, format="svg", facecolor="white", bbox_inches="tight", transparent=False)
-                    plt.close()
-                    images["ap_vs_iou"] = str(p)
+                    save("ap_vs_iou.svg", "ap_vs_iou")
                 else:
                     plt.close()
 
+            def get_pr(d: Dict[str, Any], k: str) -> Optional[Dict[str, Any]]:
+                v = d.get(k)
+                if v:
+                    return v
+                try:
+                    kf = float(k)
+                    for mk in list(d.keys()):
+                        try:
+                            if abs(float(mk) - kf) < 1e-6:
+                                return d[mk]
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                return None
+
             if self.include_ap_graphs:
                 for key, tag in [("0.50", "050"), ("0.75", "075")]:
-                    try:
-                        macro_dict = st.get("pr_macro", {}) or {}
-                        micro_dict = st.get("pr_micro", {}) or {}
-                        
-                        prM = macro_dict.get(key)
-                        prm = micro_dict.get(key)
-                        
-                        if not prM:
-                            kf = float(key)
-                            for mk in macro_dict.keys():
-                                try:
-                                    mv = float(mk)
-                                    if abs(mv - kf) < 1e-6:
-                                        prM = macro_dict[mk]
-                                        break
-                                except:
-                                    continue
-                        
-                        if not prm:
-                            kf = float(key)
-                            for mk in micro_dict.keys():
-                                try:
-                                    mv = float(mk)
-                                    if abs(mv - kf) < 1e-6:
-                                        prm = micro_dict[mk]
-                                        break
-                                except:
-                                    continue
-                        
-                        if prM and prM.get("recall") and prM.get("precision"):
-                            recall_data = prM["recall"]
-                            precision_data = prM["precision"]
-                            
-                            if len(recall_data) > 1 and len(precision_data) > 1:
-                                plt.figure(figsize=(8, 6))
-                                plt.plot(recall_data, precision_data, color="#4C78A8", linewidth=2, marker='o', markersize=3, alpha=0.8)
-                                plt.xlabel("Recall", fontsize=12)
-                                plt.ylabel("Precision", fontsize=12)
-                                plt.title(f"PR Curve (Macro) @IoU={key}", fontsize=14, fontweight='bold')
-                                plt.grid(True, alpha=0.3)
-                                plt.xlim(0, 1)
-                                plt.ylim(0, 1)
-                                
-                                if st.get("mAP@0.5") and key == "0.50":
-                                    ap_score = st["mAP@0.5"]
-                                    plt.text(0.6, 0.2, f'AP@0.5: {ap_score:.3f}', fontsize=10, 
-                                            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-                                elif st.get("mAP@0.75") and key == "0.75":
-                                    ap_score = st["mAP@0.75"]
-                                    plt.text(0.6, 0.2, f'AP@0.75: {ap_score:.3f}', fontsize=10,
-                                            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-                                
-                                pM = report_dir / f"pr_macro_{tag}.svg"
-                                plt.tight_layout()
-                                plt.savefig(pM, format="svg", facecolor="white", bbox_inches="tight", transparent=False, dpi=150)
-                                plt.close()
-                                images[f"pr_macro_{tag}"] = str(pM)
-                        
-                        if prm and prm.get("recall") and prm.get("precision"):
-                            recall_data = prm["recall"]
-                            precision_data = prm["precision"]
-                             
-                            if len(recall_data) > 1 and len(precision_data) > 1:
-                                 plt.figure(figsize=(8, 6))
-                                 plt.plot(recall_data, precision_data, color="#F58518", linewidth=2, marker='s', markersize=3, alpha=0.8)
-                                 plt.xlabel("Recall", fontsize=12)
-                                 plt.ylabel("Precision", fontsize=12)
-                                 plt.title(f"PR Curve (Micro) @IoU={key}", fontsize=14, fontweight='bold')
-                                 plt.grid(True, alpha=0.3)
-                                 plt.xlim(0, 1)
-                                 plt.ylim(0, 1)
-                                 
-                                 if st.get("mAP@0.5") and key == "0.50":
-                                     ap_score = st["mAP@0.5"]
-                                     plt.text(0.6, 0.2, f'AP@0.5: {ap_score:.3f}', fontsize=10,
-                                             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-                                 elif st.get("mAP@0.75") and key == "0.75":
-                                     ap_score = st["mAP@0.75"]
-                                     plt.text(0.6, 0.2, f'AP@0.75: {ap_score:.3f}', fontsize=10,
-                                             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-                                 
-                                 pm = report_dir / f"pr_micro_{tag}.svg"
-                                 plt.tight_layout()
-                                 plt.savefig(pm, format="svg", facecolor="white", bbox_inches="tight", transparent=False, dpi=150)
-                                 plt.close()
-                                 images[f"pr_micro_{tag}"] = str(pm)
-                    except Exception as e:
-                         pass
+                    macro_dict = st.get("pr_macro", {}) or {}
+                    micro_dict = st.get("pr_micro", {}) or {}
+                    prM = get_pr(macro_dict, key)
+                    prm = get_pr(micro_dict, key)
+                    for pr, color, label, fname_key, marker in [
+                        (prM, "#4C78A8", f"PR Curve (Macro) @IoU={key}", f"pr_macro_{tag}", 'o'),
+                        (prm, "#F58518", f"PR Curve (Micro) @IoU={key}", f"pr_micro_{tag}", 's'),
+                    ]:
+                        if pr and pr.get("recall") and pr.get("precision") and len(pr["recall"]) > 1 and len(pr["precision"]) > 1:
+                            plt.figure(figsize=(8, 6))
+                            plt.plot(pr["recall"], pr["precision"], color=color, linewidth=2, marker=marker, markersize=3, alpha=0.8)
+                            plt.xlabel("Recall")
+                            plt.ylabel("Precision")
+                            plt.title(label)
+                            plt.grid(True, alpha=0.3)
+                            plt.xlim(0, 1)
+                            plt.ylim(0, 1)
+                            if key == "0.50" and st.get("mAP@0.5"):
+                                ap_score = st["mAP@0.5"]
+                                plt.text(0.6, 0.2, f'AP@0.5: {ap_score:.3f}', fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+                            if key == "0.75" and st.get("mAP@0.75"):
+                                ap_score = st["mAP@0.75"]
+                                plt.text(0.6, 0.2, f'AP@0.75: {ap_score:.3f}', fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+                            save(f"{fname_key}.svg", fname_key)
+
             per_class_ap = st.get("per_class_ap") or []
             if categories and per_class_ap:
+                pairs = [
+                    (categories[i], float(per_class_ap[i]), int(gt_counts[i]) if i < len(gt_counts) else 0)
+                    for i in range(min(len(categories), len(per_class_ap)))
+                ]
+                pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
+                names_all = [p[0] for p in pairs_sorted]
+                vals_all = [p[1] for p in pairs_sorted]
+                plt.figure(figsize=(max(6, len(names_all) * 0.5), 3))
+                plt.bar(range(len(names_all)), vals_all, color="#54A24B")
+                plt.title("Per-class AP (sorted)")
+                plt.xticks(range(len(names_all)), names_all, rotation=45, ha="right")
+                save("per_class_ap.svg", "per_class_ap")
+                csv_all = report_dir / "per_class_ap.csv"
                 try:
-                    pairs_full = [
-                        (
-                            categories[i],
-                            float(per_class_ap[i]),
-                            int(gt_counts[i]) if i < len(gt_counts) else 0,
-                        )
-                        for i in range(min(len(categories), len(per_class_ap)))
-                    ]
-                    pairs_sorted = sorted(pairs_full, key=lambda x: x[1], reverse=True)
-                    names_all = [p[0] for p in pairs_sorted]
-                    vals_all = [p[1] for p in pairs_sorted]
-                    plt.figure(figsize=(max(6, len(names_all) * 0.5), 3))
-                    plt.bar(range(len(names_all)), vals_all, color="#54A24B")
-                    plt.title("Per-class AP (sorted)")
-                    plt.xticks(range(len(names_all)), names_all, rotation=45, ha="right")
-                    p_all = report_dir / "per_class_ap.svg"
-                    plt.tight_layout()
-                    plt.savefig(p_all, format="svg", facecolor="white", bbox_inches="tight", transparent=False)
-                    plt.close()
-                    images["per_class_ap"] = str(p_all)
-                    csv_all = report_dir / "per_class_ap.csv"
-                    try:
-                        with open(csv_all, "w", newline="", encoding="utf-8") as fcsv:
-                            w = csv.writer(fcsv)
-                            w.writerow(["class", "AP", "support"])
-                            for name, ap, sup in pairs_sorted:
-                                w.writerow([name, f"{ap:.6f}", sup])
-                        images["per_class_ap_csv"] = str(csv_all)
-                    except Exception:
-                        pass
-                    k = max(1, int(self.top_k_lowest_map or 5))
-                    pairs_low = sorted(pairs_full, key=lambda x: x[1])[:k]
-                    names_k = [p[0] for p in pairs_low]
-                    vals_k = [p[1] for p in pairs_low]
-                    plt.figure(figsize=(max(6, len(names_k) * 0.6), 3))
-                    plt.bar(range(len(names_k)), vals_k, color="#E45756")
-                    plt.title(f"Lowest {k} AP classes")
-                    plt.xticks(range(len(names_k)), names_k, rotation=45, ha="right")
-                    p_k = report_dir / "per_class_ap_lowest.svg"
-                    plt.tight_layout()
-                    plt.savefig(p_k, format="svg", facecolor="white", bbox_inches="tight", transparent=False)
-                    plt.close()
-                    images["per_class_ap_lowest"] = str(p_k)
+                    with open(csv_all, "w", newline="", encoding="utf-8") as fcsv:
+                        w = csv.writer(fcsv)
+                        w.writerow(["class", "AP", "support"])
+                        [w.writerow([n, f"{a:.6f}", s]) for n, a, s in pairs_sorted]
+                    images["per_class_ap_csv"] = str(csv_all)
+                except Exception:
+                    pass
 
-                    csv_k = report_dir / f"per_class_ap_lowest_{k}.csv"
-                    try:
-                        with open(csv_k, "w", newline="", encoding="utf-8") as fcsv:
-                            w = csv.writer(fcsv)
-                            w.writerow(["class", "AP", "support"])
-                            for name, ap, sup in pairs_low:
-                                w.writerow([name, f"{ap:.6f}", sup])
-                        images["per_class_ap_lowest_csv"] = str(csv_k)
-                    except Exception:
-                        pass
+                k = max(1, int(self.top_k_lowest_map or 5))
+                pairs_low = sorted(pairs, key=lambda x: x[1])[:k]
+                names_k = [p[0] for p in pairs_low]
+                vals_k = [p[1] for p in pairs_low]
+                plt.figure(figsize=(max(6, len(names_k) * 0.6), 3))
+                plt.bar(range(len(names_k)), vals_k, color="#E45756")
+                plt.title(f"Lowest {k} AP classes")
+                plt.xticks(range(len(names_k)), names_k, rotation=45, ha="right")
+                save("per_class_ap_lowest.svg", "per_class_ap_lowest")
+                csv_k = report_dir / f"per_class_ap_lowest_{k}.csv"
+                try:
+                    with open(csv_k, "w", newline="", encoding="utf-8") as fcsv:
+                        w = csv.writer(fcsv)
+                        w.writerow(["class", "AP", "support"])
+                        [w.writerow([n, f"{a:.6f}", s]) for n, a, s in pairs_low]
+                    images["per_class_ap_lowest_csv"] = str(csv_k)
                 except Exception:
                     pass
 

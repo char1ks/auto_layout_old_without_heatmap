@@ -142,8 +142,7 @@ class EvalCLI:
         return 0
 
 
-App = typer.Typer()
-
+# Use the single App instance defined above
 @App.command("eval")
 def eval_command(
     dataset_dir: Path = typer.Argument(..., exists=True, readable=True, help="Path to dataset root (VOC-like)"),
@@ -174,10 +173,9 @@ def eval_command(
     return evl.run()
 
 
-def main() -> int:
-    return App()  
+def main() -> None:
+    App()
 
 
 if __name__ == "__main__":
-    import sys
-    sys.exit(main())
+    main()

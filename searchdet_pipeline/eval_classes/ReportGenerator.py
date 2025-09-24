@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 # from dataclasses import dataclass
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Tuple
 from pathlib import Path
 from datetime import datetime
 import os
 import json
 import csv
 import statistics
+import numpy as np
 
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -44,7 +45,7 @@ class ReportGenerator(ReportConfig):
         if not dump_report:
             return None
         report_dir = self._prepare_report_dir(output_dir)
-        images = self._save_graphs(report_dir, timing_stats, metrics)
+        images = self._save_graphs(report_dir, metrics, timing_stats, contexts)
         self._write_markdown(report_dir, metrics, timing_stats, images, contexts)
         self._write_json(report_dir, metrics, timing_stats)
         self.console.print(f"[green]Отчёт сохранён в[/green] {report_dir}")
@@ -130,7 +131,7 @@ class ReportGenerator(ReportConfig):
         out.mkdir(parents=True, exist_ok=True)
         return out
 
-    def _save_graphs(self, report_dir: Path, timing_stats: Dict[str, Any], metrics: List[MetricOutputModel]) -> Dict[str, str]:
+    def _save_graphs(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any], contexts: List[Context]) -> Dict[str, str]:
         images: Dict[str, str] = {}
 
         def save(filename: str, key: str) -> None:
@@ -247,163 +248,245 @@ class ReportGenerator(ReportConfig):
                                 plt.text(0.6, 0.2, f'AP@0.75: {ap_score:.3f}', fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
                             save(f"{fname_key}.svg", fname_key)
 
-            per_class_ap = st.get("per_class_ap") or []
-            if categories and per_class_ap:
-                pairs = [
-                    (categories[i], float(per_class_ap[i]), int(gt_counts[i]) if i < len(gt_counts) else 0)
-                    for i in range(min(len(categories), len(per_class_ap)))
-                ]
-                pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
-                names_all = [p[0] for p in pairs_sorted]
-                vals_all = [p[1] for p in pairs_sorted]
-                plt.figure(figsize=(max(6, len(names_all) * 0.5), 3))
-                plt.bar(range(len(names_all)), vals_all, color="#54A24B")
-                plt.title("Per-class AP (sorted)")
-                plt.xticks(range(len(names_all)), names_all, rotation=45, ha="right")
-                save("per_class_ap.svg", "per_class_ap")
-                csv_all = report_dir / "per_class_ap.csv"
-                try:
-                    with open(csv_all, "w", newline="", encoding="utf-8") as fcsv:
-                        w = csv.writer(fcsv)
-                        w.writerow(["class", "AP", "support"])
-                        [w.writerow([n, f"{a:.6f}", s]) for n, a, s in pairs_sorted]
-                    images["per_class_ap_csv"] = str(csv_all)
-                except Exception:
-                    pass
+            # Scatter of best PR points per IoU threshold (each point is a thr)
+            if self.include_ap_graphs:
+                macro_pts: List[Tuple[float, float, str]] = []  # (recall, precision, label)
+                micro_pts: List[Tuple[float, float, str]] = []
+                prM_all = st.get("pr_macro", {}) or {}
+                prm_all = st.get("pr_micro", {}) or {}
+                for thr in ious:
+                    key = f"{float(thr):.2f}"
+                    for pr_dict, store in [(prM_all, macro_pts), (prm_all, micro_pts)]:
+                        pr = pr_dict.get(key)
+                        if pr and pr.get("recall") and pr.get("precision") and len(pr["recall"]) == len(pr["precision"]) and len(pr["recall"]) > 0:
+                            r = np.array(pr["recall"], dtype=float)
+                            p = np.array(pr["precision"], dtype=float)
+                            # choose point with max F1
+                            f1 = (2 * p * r) / (p + r + 1e-12)
+                            idx = int(np.nanargmax(f1))
+                            store.append((float(r[idx]), float(p[idx]), key))
+                if macro_pts:
+                    plt.figure(figsize=(6, 6))
+                    plt.scatter([x for x, _, _ in macro_pts], [y for _, y, _ in macro_pts], c="#4C78A8")
+                    for x, y, label in macro_pts:
+                        plt.annotate(label, (x, y), textcoords="offset points", xytext=(4, 2), fontsize=8)
+                    plt.xlabel("Recall")
+                    plt.ylabel("Precision")
+                    plt.title("Macro PR best-points per IoU threshold")
+                    plt.xlim(0, 1)
+                    plt.ylim(0, 1)
+                    plt.grid(True, alpha=0.3)
+                    save("ap_pr_points_macro.svg", "ap_pr_points_macro")
+                if micro_pts:
+                    plt.figure(figsize=(6, 6))
+                    plt.scatter([x for x, _, _ in micro_pts], [y for _, y, _ in micro_pts], c="#F58518")
+                    for x, y, label in micro_pts:
+                        plt.annotate(label, (x, y), textcoords="offset points", xytext=(4, 2), fontsize=8)
+                    plt.xlabel("Recall")
+                    plt.ylabel("Precision")
+                    plt.title("Micro PR best-points per IoU threshold")
+                    plt.xlim(0, 1)
+                    plt.ylim(0, 1)
+                    plt.grid(True, alpha=0.3)
+                    save("ap_pr_points_micro.svg", "ap_pr_points_micro")
 
+            # Generate per-class AP graphs and CSVs
+            per_ap = st.get("per_class_ap_avg") or st.get("per_class_ap") or []
+            cats = st.get("categories") or []
+            if self.include_ap_graphs and cats and per_ap:
+                # Sorted per-class AP
+                pairs = [(cats[i], float(per_ap[i])) for i in range(min(len(cats), len(per_ap)))]
+                pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
+                if pairs_sorted:
+                    names, values = zip(*pairs_sorted)
+                    plt.figure(figsize=(max(8, len(names) * 0.4), 6))
+                    plt.bar(range(len(names)), values, color="#4C78A8")
+                    plt.title("Per-class AP (sorted)")
+                    plt.xlabel("Class")
+                    plt.ylabel("AP")
+                    plt.xticks(range(len(names)), names, rotation=45, ha="right")
+                    plt.grid(True, alpha=0.3)
+                    save("per_class_ap.svg", "per_class_ap")
+                    
+                    # Save CSV
+                    csv_path = report_dir / "per_class_ap.csv"
+                    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(["class", "AP"])
+                        writer.writerows(pairs_sorted)
+                    images["per_class_ap_csv"] = str(csv_path)
+
+                # Lowest k AP classes
                 k = max(1, int(self.top_k_lowest_map or 5))
                 pairs_low = sorted(pairs, key=lambda x: x[1])[:k]
-                names_k = [p[0] for p in pairs_low]
-                vals_k = [p[1] for p in pairs_low]
-                plt.figure(figsize=(max(6, len(names_k) * 0.6), 3))
-                plt.bar(range(len(names_k)), vals_k, color="#E45756")
-                plt.title(f"Lowest {k} AP classes")
-                plt.xticks(range(len(names_k)), names_k, rotation=45, ha="right")
-                save("per_class_ap_lowest.svg", "per_class_ap_lowest")
-                csv_k = report_dir / f"per_class_ap_lowest_{k}.csv"
-                try:
-                    with open(csv_k, "w", newline="", encoding="utf-8") as fcsv:
-                        w = csv.writer(fcsv)
-                        w.writerow(["class", "AP", "support"])
-                        [w.writerow([n, f"{a:.6f}", s]) for n, a, s in pairs_low]
-                    images["per_class_ap_lowest_csv"] = str(csv_k)
-                except Exception:
-                    pass
+                if pairs_low:
+                    names_low, values_low = zip(*pairs_low)
+                    plt.figure(figsize=(max(6, len(names_low) * 0.6), 4))
+                    plt.bar(range(len(names_low)), values_low, color="#E45756")
+                    plt.title(f"Lowest {k} AP classes")
+                    plt.xlabel("Class")
+                    plt.ylabel("AP")
+                    plt.xticks(range(len(names_low)), names_low, rotation=45, ha="right")
+                    plt.grid(True, alpha=0.3)
+                    save("per_class_ap_lowest.svg", "per_class_ap_lowest")
+                    
+                    # Save CSV
+                    csv_path_low = report_dir / "per_class_ap_lowest.csv"
+                    with open(csv_path_low, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(["class", "AP"])
+                        writer.writerows(pairs_low)
+                    images["per_class_ap_lowest_csv"] = str(csv_path_low)
 
         return images
 
-    def _write_markdown(
-        self,
-        report_dir: Path,
-        metrics: List[MetricOutputModel],
-        timing_stats: Dict[str, Any],
-        images: Dict[str, str],
-        contexts: List[Context],
-    ) -> None:
+    def _write_markdown(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any], images: Dict[str, str], contexts: List[Context]) -> None:
         lines: List[str] = []
-        lines.append(f"# Detection Report\n\n")
-        lines.append(f"Generated: {datetime.utcnow().isoformat()} UTC\n")
+        
+        # Header
+        lines.append("# Отчёт по оценке модели\n\n")
+        lines.append(f"Сгенерирован: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        
+        # Model info from context.extra
         if contexts:
-            extra = getattr(contexts[0], "extra", {}) or {}
-            cls_name = extra.get("detector_cls")
-            module = extra.get("detector_module")
-            doc = extra.get("detector_doc")
-            if cls_name or module or doc:
-                lines.append("\n## Model\n")
-                if cls_name or module:
-                    lines.append(f"- Class: {cls_name or '-'}\n")
-                    lines.append(f"- Module: {module or '-'}\n")
-                if doc:
-                    lines.append("\n**Description (from docstring):**\n\n")
-                    lines.append(doc.strip() + "\n")
-        lines.append("\n## Summary\n")
-        lines.append(f"- Runs: {timing_stats.get('total_runs', 0)}\n")
-        lines.append(f"- Success: {timing_stats.get('success', 0)}\n")
-        lines.append(f"- Errors: {timing_stats.get('errors', 0)}\n")
-        if timing_stats.get("durations"):
-            lines.append(
-                f"- Mean/Median/Std: {timing_stats.get('mean', 0.0):.3f} / {timing_stats.get('median', 0.0):.3f} / {timing_stats.get('std', 0.0):.3f} sec\n"
-            )
-        lines.append("\n## Metrics\n")
-        lines.append("| Metric | Score |\n|---|---:|\n")
+            for ctx in contexts:
+                if hasattr(ctx, 'extra') and ctx.extra:
+                    model_class = ctx.extra.get('model_class')
+                    model_module = ctx.extra.get('model_module') 
+                    model_doc = ctx.extra.get('model_doc')
+                    if model_class:
+                        lines.append(f"**Модель:** {model_class}\n")
+                    if model_module:
+                        lines.append(f"**Модуль:** {model_module}\n")
+                    if model_doc:
+                        lines.append(f"**Описание:** {model_doc}\n")
+                    lines.append("\n")
+                    break
+
+        # Timing stats
+        lines.append("## Статистика времени выполнения\n\n")
+        lines.append(f"- Всего запусков: {timing_stats.get('total_runs', 0)}\n")
+        lines.append(f"- Успешных: {timing_stats.get('success', 0)}\n")
+        lines.append(f"- Ошибок: {timing_stats.get('errors', 0)}\n")
+        if timing_stats.get('mean'):
+            lines.append(f"- Среднее время: {timing_stats['mean']:.4f} сек\n")
+        if timing_stats.get('median'):
+            lines.append(f"- Медиана: {timing_stats['median']:.4f} сек\n")
+        lines.append("\n")
+
+        # Metrics summary
+        lines.append("## Метрики\n\n")
         for m in metrics or []:
-            score = f"{m.score:.4f}" if isinstance(m.score, (int, float)) else str(m.score)
-            lines.append(f"| {m.metric_name} | {score} |\n")
-        for m in metrics or []:
-            desc = None
-            if isinstance(m.stats, dict):
-                desc = m.stats.get("description")
-            if not desc:
-                desc = ""
+            # Auto-generate description from metric docstring if available
+            desc = ""
+            if hasattr(m, 'stats') and isinstance(m.stats, dict):
+                desc = m.stats.get('doc', '')
+            
+            lines.append(f"### {m.metric_name}\n")
             if desc:
-                lines.append(f"\n### {m.metric_name}: описание\n\n")
-                lines.append(desc.strip() + "\n")
-        lines.append("\n## Timing\n")
-        if "durations_hist" in images:
-            lines.append(f"![Durations histogram]({images['durations_hist']})\n")
-        if "durations_series" in images:
-            lines.append(f"![Durations series]({images['durations_series']})\n")
-        if "spans_avg" in images:
-            lines.append(f"![Stage avg time]({images['spans_avg']})\n")
-        if self.include_class_distributions:
-            dist_imgs = [("GT class distribution", images.get("gt_class_distribution")), ("Predicted class distribution", images.get("pred_class_distribution"))]
-            dist_imgs = [(title, url) for title, url in dist_imgs if url]
-            if dist_imgs:
-                lines.append("\n## Data distributions\n")
-                for title, url in dist_imgs:
-                    lines.append(f"![{title}]({url})\n")
-        map_metric: Optional[MetricOutputModel] = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
+                lines.append(f"{desc}\n\n")
+            
+            score = f"{m.score:.4f}" if isinstance(m.score, (int, float)) else str(m.score)
+            lines.append(f"**Значение:** {score}\n\n")
+
+        # Graphs section
+        if images:
+            lines.append("## Графики\n\n")
+            
+            # Duration graphs
+            if images.get("durations_hist"):
+                lines.append("Пояснение: Гистограмма времени выполнения одного запуска (секунды). Источник данных: Context.duration для каждого запуска; вычисление: распределение по 20 бинам.\n\n")
+                lines.append(f"![Гистограмма времени выполнения]({images['durations_hist']})\n\n")
+            if images.get("durations_series"):
+                lines.append("Пояснение: Время выполнения по порядку запусков. Источник данных: Context.duration; вычисление: линейный график последовательности длительностей.\n\n")
+                lines.append(f"![Время выполнения по запускам]({images['durations_series']})\n\n")
+            if images.get("spans_avg"):
+                lines.append("Пояснение: Среднее время по этапам (спанам). Источник данных: Context.spans[].duration; вычисление: среднее значение по каждому этапу.\n\n")
+                lines.append(f"![Среднее время по этапам]({images['spans_avg']})\n\n")
+            
+            # Class distributions
+            if images.get("gt_class_distribution"):
+                lines.append("Пояснение: Распределение количества GT-объектов по классам. Источник данных: stats['gt_counts'] и stats['categories']; вычисление: столбчатая диаграмма подсчётов по классам.\n\n")
+                lines.append(f"![Распределение GT классов]({images['gt_class_distribution']})\n\n")
+            if images.get("pred_class_distribution"):
+                lines.append("Пояснение: Распределение количества предсказанных объектов по классам. Источник данных: stats['pred_counts'] и stats['categories']; вычисление: столбчатая диаграмма подсчётов по классам.\n\n")
+                lines.append(f"![Распределение предсказанных классов]({images['pred_class_distribution']})\n\n")
+            
+            if images.get("ap_vs_iou"):
+                lines.append("Пояснение: Зависимость AP от порога IoU (macro/micro). Источник данных: stats['ap_iou_macro'], stats['ap_iou_micro'], пороги из stats['iou_thresholds']; вычисление: линии AP по каждому порогу IoU.\n\n")
+                lines.append(f"![AP vs IoU]({images['ap_vs_iou']})\n\n")
+            
+            # PR curves
+            for tag in ["050", "075"]:
+                if images.get(f"pr_macro_{tag}"):
+                    lines.append(f"Пояснение: PR-кривая (макро) при IoU={tag[0]}.{tag[1:]}. Источник: stats['pr_macro'][\"{tag[0]}.{tag[1:]}\"]; вычисление: график precision от recall по агрегированным макро-предсказаниям; AP — площадь под кривой.\n\n")
+                    lines.append(f"![PR Macro @IoU={tag[0]}.{tag[1:]}]({images[f'pr_macro_{tag}']})\n\n")
+                if images.get(f"pr_micro_{tag}"):
+                    lines.append(f"Пояснение: PR-кривая (микро) при IoU={tag[0]}.{tag[1:]}. Источник: stats['pr_micro'][\"{tag[0]}.{tag[1:]}\"]; вычисление: график precision от recall по агрегированным микро-предсказаниям; AP — площадь под кривой.\n\n")
+                    lines.append(f"![PR Micro @IoU={tag[0]}.{tag[1:]}]({images[f'pr_micro_{tag}']})\n\n")
+            
+            # PR best-points scatter
+            if images.get("ap_pr_points_macro"):
+                lines.append("Пояснение: Лучшие точки PR по IoU (макро). Расчёт: для каждой кривой PR выбирается точка с максимальным F1 = 2·P·R/(P+R); метки показывают соответствующий порог IoU.\n\n")
+                lines.append(f"![Macro PR best-points per IoU]({images['ap_pr_points_macro']})\n\n")
+            if images.get("ap_pr_points_micro"):
+                lines.append("Пояснение: Лучшие точки PR по IoU (микро). Расчёт: для каждой кривой PR выбирается точка с максимальным F1 = 2·P·R/(P+R); метки показывают соответствующий порог IoU.\n\n")
+                lines.append(f"![Micro PR best-points per IoU]({images['ap_pr_points_micro']})\n\n")
+            
+            # Per-class AP images and CSVs
+            if images.get("per_class_ap"):
+                lines.append("Пояснение: AP по классам (средний AP) с сортировкой по убыванию. Источник: stats['per_class_ap_avg'] (или stats['per_class_ap']) вместе с stats['categories']; вычисление: столбцы — значения AP для каждого класса.\n\n")
+                lines.append(f"![Per-class AP]({images['per_class_ap']})\n\n")
+            if images.get("per_class_ap_csv"):
+                lines.append("CSV: список пар (класс, AP) для соответствующего графика per-class AP.\n\n")
+                lines.append(f"[CSV per-class AP]({images['per_class_ap_csv']})\n\n")
+            if images.get("per_class_ap_lowest"):
+                lines.append("Пояснение: Самые низкие по AP классы (нижние k). Источник: те же per-class AP; вычисление: сортировка по возрастанию и выбор нижних k классов.\n\n")
+                lines.append(f"![Lowest AP classes]({images['per_class_ap_lowest']})\n\n")
+            if images.get("per_class_ap_lowest_csv"):
+                lines.append("CSV: список нижних k классов с их AP.\n\n")
+                lines.append(f"[CSV lowest]({images['per_class_ap_lowest_csv']})\n\n")
+
+        # mAP numeric details
+        map_metric = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
         if map_metric and isinstance(map_metric.stats, dict):
             st = map_metric.stats
-            lines.append("\n## mAP details\n")
+            lines.append("## Детали mAP\n\n")
             for key in ["mAP", "mAP@0.5", "mAP@0.75", "mAP_small", "mAP_medium", "mAP_large"]:
                 if key in st:
-                    lines.append(f"- {key}: {float(st[key]):.4f}\n")
-            if "ap_vs_iou" in images:
-                lines.append(f"\n![AP vs IoU]({images['ap_vs_iou']})\n")
-            for tag, title in [("050", "PR curves @IoU=0.50"), ("075", "PR curves @IoU=0.75")]:
-                if not self.include_ap_graphs:
-                    continue
-                prs = [(f"PR macro {tag}", images.get(f"pr_macro_{tag}")), (f"PR micro {tag}", images.get(f"pr_micro_{tag}"))]
-                prs = [(t, url) for t, url in prs if url]
-                if not prs:
-                    continue
-                lines.append(f"\n### {title}\n")
-                for t, url in prs:
-                    lines.append(f"![{t}]({url})\n")
-            if "per_class_ap" in images:
-                lines.append(f"\n![Per-class AP]({images['per_class_ap']})\n")
-                if "per_class_ap_csv" in images:
-                    lines.append(f"[CSV per-class AP]({images['per_class_ap_csv']})\n")
-    
+                    try:
+                        lines.append(f"- {key}: {float(st[key]):.4f}\n")
+                    except Exception:
+                        lines.append(f"- {key}: {st[key]}\n")
+            
+            # Lowest AP classes table
             cats = st.get("categories") or []
-            per_ap = st.get("per_class_ap") or []
+            per_ap = st.get("per_class_ap_avg") or st.get("per_class_ap") or []
             gt_counts = st.get("gt_counts") or []
             if cats and per_ap:
                 k = max(1, int(self.top_k_lowest_map or 5))
                 pairs = [(cats[i], float(per_ap[i]), int(gt_counts[i]) if i < len(gt_counts) else 0) for i in range(min(len(cats), len(per_ap)))]
                 pairs_low = sorted(pairs, key=lambda x: x[1])[:k]
                 if pairs_low:
-                    lines.append("\n### Lowest AP classes\n")
+                    lines.append("\n### Низшие по AP классы\n\n")
                     lines.append("| class | AP | support |\n|---|---:|---:|\n")
                     for name, ap, sup in pairs_low:
                         lines.append(f"| {name} | {ap:.4f} | {sup} |\n")
-                    if "per_class_ap_lowest" in images:
-                        lines.append(f"\n![Lowest AP classes]({images['per_class_ap_lowest']})\n")
-                    if "per_class_ap_lowest_csv" in images:
-                        lines.append(f"[CSV lowest {k}]({images['per_class_ap_lowest_csv']})\n")
+            lines.append("\n")
+
+        # Classification report
         cr = next((m for m in (metrics or []) if m.metric_name == "classification_report" and isinstance(m.stats, dict)), None)
         if cr:
             text = cr.stats.get("text")
             if isinstance(text, str) and text.strip():
-                lines.append("\n## Classification report (sklearn)\n")
+                lines.append("## Classification report (sklearn)\n\n")
                 lines.append("```\n")
                 lines.append(text)
                 if not text.endswith("\n"):
                     lines.append("\n")
                 lines.append("```\n")
 
-        (report_dir / "report.md").write_text("".join(lines), encoding="utf-8")
+        (report_dir / "readme.md").write_text("".join(lines), encoding="utf-8")
 
     def _write_json(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any]) -> None:
         data = {

@@ -221,8 +221,20 @@ class MeanAveragePrecision(Metric):
         map75 = _get_thr_value(0.75)
         per_class_ap_avg = [float(np.mean(ap_per_label_per_thr[lab])) for lab in uniq_labels]
 
+        # Counts per class for distributions
+        gt_counts = [
+            sum(len(lst) for lst in (gt_boxes_by_label_file.get(lab, {}) or {}).values())
+            for lab in uniq_labels
+        ]
+        pred_counts = [
+            len(preds_by_label.get(lab, []) or [])
+            for lab in uniq_labels
+        ]
+
         stats = {
             'categories': categories,
+            'gt_counts': gt_counts,
+            'pred_counts': pred_counts,
             'map_per_class': per_class_ap_avg,
             'per_class_ap': per_class_ap_avg,
             'ap_iou_macro': macro_map_iou,
@@ -236,6 +248,7 @@ class MeanAveragePrecision(Metric):
             'pr_macro': pr_macro,
             'pr_micro': pr_micro,
             'pr_curves_per_threshold': pr_curves_per_thr,
+            'doc': (self.__class__.__doc__ or '').strip(),
         }
 
         return MetricOutputModel(metric_name=self.name, score=overall_map, stats=stats)
@@ -252,7 +265,14 @@ class MeanIntersectionOverUnion(Metric):
         y_true, y_pred = self._prepare_masks(gt, prediction)
         tm = JaccardIndex(task="binary")
         score = float(tm(torch.from_numpy(y_pred).int(), torch.from_numpy(y_true).int()).item())
-        return MetricOutputModel(metric_name=self.name, score=score, stats={})
+        return MetricOutputModel(
+            metric_name=self.name,
+            score=score,
+            stats={
+                'doc': (self.__class__.__doc__ or '').strip(),
+                'formula': 'IoU = area(intersection) / area(union); mIoU = mean IoU over classes'
+            }
+        )
 
     def _prepare_masks(self, gt: DatasetModel, predictions: List[COCOAnnotation]):
         gt_by_file: Dict[str, List[COCOAnnotation]] = {}
@@ -305,7 +325,14 @@ class DiceCoefficient(Metric):
         try:
             gt_binary, pred_binary = self._prepare_binary_data(gt, prediction)
             dice_score = float(self.metric(torch.from_numpy(pred_binary).int(), torch.from_numpy(gt_binary).int()).item())
-            return MetricOutputModel(metric_name=self.name, score=dice_score, stats={})
+            return MetricOutputModel(
+                metric_name=self.name,
+                score=dice_score,
+                stats={
+                    'doc': (self.__class__.__doc__ or '').strip(),
+                    'formula': 'Dice = 2TP / (2TP + FP + FN)'
+                }
+            )
         except Exception as e:
             return MetricOutputModel(metric_name=self.name, score=0.0, stats={'error': str(e), 'fallback': True})
     
@@ -395,6 +422,7 @@ class ClassificationReportMetric(Metric):
                 "dict": rep_dict,
                 "text": rep_text,
                 "labels": sorted(list(set(y_true) | set(y_pred))),
+                'doc': (self.__class__.__doc__ or '').strip(),
             }
             return MetricOutputModel(metric_name=self.name, score=float(acc), stats=stats)
         except Exception as e:

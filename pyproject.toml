@@ -51,8 +51,15 @@ onnxruntime
 onnx
 jupyter
 segment-anything-hq
+torchmetrics = "^1.4.0"
+typer = "^0.12.3"
+rich = "^13.7.1"
 
 [[tool.poetry.source]]
 name = "torch-gpu"
 url = "https://download.pytorch.org/whl/cu118"
 priority = "explicit"
+
+[tool.poetry.scripts]
+searchdet-eval = "searchdet_pipeline.eval_classes.typer_cli:main"
+searchdet-pipeline = "searchdet_pipeline.cli.main:main"

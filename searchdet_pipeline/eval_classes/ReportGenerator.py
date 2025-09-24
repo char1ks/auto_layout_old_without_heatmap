@@ -285,7 +285,7 @@ class ReportGenerator(ReportConfig):
                             recall_data = prm["recall"]
                             precision_data = prm["precision"]
                              
-                             if len(recall_data) > 1 and len(precision_data) > 1:
+                            if len(recall_data) > 1 and len(precision_data) > 1:
                                  plt.figure(figsize=(8, 6))
                                  plt.plot(recall_data, precision_data, color="#F58518", linewidth=2, marker='s', markersize=3, alpha=0.8)
                                  plt.xlabel("Recall", fontsize=12)
@@ -309,7 +309,7 @@ class ReportGenerator(ReportConfig):
                                  plt.savefig(pm, format="svg", facecolor="white", bbox_inches="tight", transparent=False, dpi=150)
                                  plt.close()
                                  images[f"pr_micro_{tag}"] = str(pm)
-                     except Exception as e:
+                    except Exception as e:
                          pass
             per_class_ap = st.get("per_class_ap") or []
             if categories and per_class_ap:

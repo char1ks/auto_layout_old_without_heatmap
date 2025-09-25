@@ -93,15 +93,6 @@ class EvalCLI:
         self.save_predictions: bool = True
         self.save_metrics: bool = True
 
-    def _ensure_results_dir(self) -> Path:
-        base = self.output_dir or (Path.cwd() / "results_cache")
-        base.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        name = self.run_name or f"run_{stamp}"
-        run_dir = base / name
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
-
     def _pretty_print(self, metrics: List[MetricOutputModel], out_dir: Path) -> None:
         console.print(Panel.fit(f"Results saved to: [bold green]{out_dir}[/]", title="Output"))
         by_name: Dict[str, MetricOutputModel] = {m.metric_name: m for m in metrics}
@@ -184,7 +175,8 @@ class EvalCLI:
         return dataset, detector, metrics_list
 
     def run(self) -> int:
-        out_dir = self._ensure_results_dir()
+        out_dir = Path.cwd() / "results_cache"
+        out_dir.mkdir(parents=True, exist_ok=True)
         dataset, detector, metrics_list = self._build_from_config()
         reporter = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
         preds, metrics = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter).run(

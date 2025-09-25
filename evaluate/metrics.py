@@ -35,19 +35,23 @@ class MeanAveragePrecision(Metric):
         self.iou_thresholds = iou_thresholds or np.arange(0.5, 0.95 + 1e-9, 0.05).tolist()
 
     @staticmethod
-    def _calculate_iou(bbox1: List[float], bbox2: List[float]) -> float:
-        b1 = torch.tensor([MeanAveragePrecision._xywh_to_xyxy(bbox1)], dtype=torch.float32)
-        b2 = torch.tensor([MeanAveragePrecision._xywh_to_xyxy(bbox2)], dtype=torch.float32)
-        return float(box_iou(b1, b2)[0, 0].item())
-
-    @staticmethod
     def _xywh_to_xyxy(b: List[float]) -> List[float]:
         x, y, w, h = b
         return [x, y, x + w, y + h]
 
-    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
-        gt_by_file: Dict[str, List[COCOAnnotation]] = {}
-        pr_by_file: Dict[str, List[COCOAnnotation]] = {}
+    @staticmethod
+    def _ap_pr(y_true: List[int], y_scores: List[float]) -> Tuple[float, List[float], List[float]]:
+        if not y_true:
+            return 0.0, [1.0], [0.0]
+        try:
+            ap = float(average_precision_score(y_true, y_scores))
+            p, r, _ = precision_recall_curve(y_true, y_scores)
+            return ap, [float(x) for x in p], [float(x) for x in r]
+        except Exception:
+            return 0.0, [1.0], [0.0]
+
+    def _group_input(self, gt: DatasetModel, prediction: List[COCOAnnotation]):
+        gt_by_file, pr_by_file = {}, {}
         for a in (gt.data_points or []):
             fn = getattr(a, 'file_name', None)
             if fn is not None:
@@ -56,36 +60,32 @@ class MeanAveragePrecision(Metric):
             fn = getattr(a, 'file_name', None)
             if fn is not None:
                 pr_by_file.setdefault(str(fn), []).append(a)
+        files = sorted(set(gt_by_file) | set(pr_by_file))
+        labels = []
+        for arr in (gt.data_points or []):
+            lab = getattr(arr, 'label', None)
+            if lab is not None:
+                labels.append(lab)
+        for arr in (prediction or []):
+            lab = getattr(arr, 'label', None)
+            if lab is not None:
+                labels.append(lab)
+        uniq_labels = sorted({str(l) for l in labels})
+        return gt_by_file, pr_by_file, files, uniq_labels
 
-        files = sorted(set(gt_by_file.keys()) | set(pr_by_file.keys()))
-        if not files:
-            return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": "empty GT or predictions"})
-
-        labels_set: List[Union[str, int]] = []
-        for a in (gt.data_points or []):
-            if getattr(a, 'label', None) is not None:
-                labels_set.append(a.label)
-        for a in (prediction or []):
-            if getattr(a, 'label', None) is not None:
-                labels_set.append(a.label)
-        uniq_labels = sorted({str(l) for l in labels_set})
-        categories = [l for l in uniq_labels]
-
-        gt_boxes_by_label_file: Dict[str, Dict[str, List[List[float]]]] = {lab: {} for lab in uniq_labels}
+    def _prepare_boxes(self, gt_by_file, pr_by_file, files, uniq_labels):
+        gt_boxes_by_label_file = {lab: {} for lab in uniq_labels}
         for fn in files:
             for a in gt_by_file.get(fn, []):
-                lab = str(getattr(a, 'label', ''))
-                bb = getattr(a, 'bbox', None)
+                lab, bb = str(getattr(a, 'label', '')), getattr(a, 'bbox', None)
                 if lab in gt_boxes_by_label_file and isinstance(bb, (list, tuple)) and len(bb) == 4:
                     gt_boxes_by_label_file[lab].setdefault(fn, []).append(
                         self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])])
                     )
-
-        preds_by_label: Dict[str, List[Dict[str, Any]]] = {lab: [] for lab in uniq_labels}
+        preds_by_label = {lab: [] for lab in uniq_labels}
         for fn in files:
             for p in pr_by_file.get(fn, []):
-                lab = str(getattr(p, 'label', ''))
-                bb = getattr(p, 'bbox', None)
+                lab, bb = str(getattr(p, 'label', '')), getattr(p, 'bbox', None)
                 score = float(getattr(p, 'score', getattr(p, 'confidence', 1.0)))
                 if lab in preds_by_label and isinstance(bb, (list, tuple)) and len(bb) == 4:
                     preds_by_label[lab].append({
@@ -93,11 +93,42 @@ class MeanAveragePrecision(Metric):
                         'box': self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]),
                         'score': score,
                     })
-
         for lab in uniq_labels:
             preds_by_label[lab].sort(key=lambda d: d['score'], reverse=True)
+        return gt_boxes_by_label_file, preds_by_label
 
-        ap_per_label_per_thr: Dict[str, List[float]] = {lab: [0.0] * len(self.iou_thresholds) for lab in uniq_labels}
+    def _match_make_targets(self, preds_list, gt_per_file, thr: float) -> Tuple[List[int], List[float]]:
+        matched_by_file = {fn: set() for fn in gt_per_file.keys()}
+        y_true, y_scores = [], []
+        for p in preds_list:
+            fn, box_pred, score = p['file'], p['box'], float(p['score'])
+            gts = gt_per_file.get(fn, [])
+            best_iou, best_idx = 0.0, None
+            if gts:
+                pred_t = torch.tensor([box_pred], dtype=torch.float32)
+                gts_t = torch.tensor(gts, dtype=torch.float32)
+                ious = box_iou(pred_t, gts_t).squeeze(0).tolist()
+                for gi, iou_val in enumerate(ious):
+                    if gi in matched_by_file.get(fn, set()):  # уже сматчен
+                        continue
+                    if iou_val > best_iou:
+                        best_iou, best_idx = iou_val, gi
+            if best_iou >= float(thr) and best_idx is not None:
+                y_true.append(1); y_scores.append(score)
+                matched_by_file.setdefault(fn, set()).add(best_idx)
+            else:
+                y_true.append(0); y_scores.append(score)
+        return y_true, y_scores
+
+    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
+        gt_by_file, pr_by_file, files, uniq_labels = self._group_input(gt, prediction)
+        if not files:
+            return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": "empty GT or predictions"})
+
+        categories = [l for l in uniq_labels]
+        gt_boxes_by_label_file, preds_by_label = self._prepare_boxes(gt_by_file, pr_by_file, files, uniq_labels)
+
+        ap_per_label_per_thr = {lab: [0.0] * len(self.iou_thresholds) for lab in uniq_labels}
         pr_curves_per_thr: Dict[float, Dict[str, Dict[str, List[float]]]] = {}
         y_store: Dict[float, Dict[str, Tuple[List[int], List[float]]]] = {}
 
@@ -105,157 +136,76 @@ class MeanAveragePrecision(Metric):
             pr_curves_per_thr[thr] = {}
             y_store[thr] = {}
             for lab in uniq_labels:
-                gt_per_file = gt_boxes_by_label_file.get(lab, {})
-                n_gt = sum(len(lst) for lst in gt_per_file.values())
                 preds_list = preds_by_label.get(lab, [])
-
-                matched_by_file: Dict[str, set] = {fn: set() for fn in gt_per_file.keys()}
-
-                y_true: List[int] = []
-                y_scores: List[float] = []
-
-                for p in preds_list:
-                    fn = p['file']
-                    box_pred = p['box']
-                    score = float(p['score'])
-                    gts = gt_per_file.get(fn, [])
-
-                    best_iou = 0.0
-                    best_idx = None
-                    if gts:
-                        pred_t = torch.tensor([box_pred], dtype=torch.float32)
-                        gts_t = torch.tensor(gts, dtype=torch.float32)
-                        ious = box_iou(pred_t, gts_t).squeeze(0).tolist()
-                        for gi, iou_val in enumerate(ious):
-                            if gi in matched_by_file.get(fn, set()):
-                                continue
-                            if iou_val > best_iou:
-                                best_iou = iou_val
-                                best_idx = gi
-
-                    if best_iou >= float(thr) and best_idx is not None:
-                        y_true.append(1)
-                        y_scores.append(score)
-                        matched_by_file.setdefault(fn, set()).add(best_idx)
-                    else:
-                        y_true.append(0)
-                        y_scores.append(score)
-
-                ap = 0.0
-                prec_list: List[float] = [1.0]
-                rec_list: List[float] = [0.0]
-                if len(y_true) > 0:
-                    try:
-                        ap = float(average_precision_score(y_true, y_scores))
-                        precision, recall, _ = precision_recall_curve(y_true, y_scores)
-                        prec_list = [float(x) for x in precision]
-                        rec_list = [float(x) for x in recall]
-                    except Exception:
-                        ap = 0.0
-                        prec_list = [1.0]
-                        rec_list = [0.0]
-                if n_gt > 0 and len(y_true) == 0:
-                    ap = 0.0
-
-                ap_per_label_per_thr[lab][t_idx] = max(0.0, min(1.0, ap))
-                pr_curves_per_thr[thr][lab] = {
-                    'precision': prec_list,
-                    'recall': rec_list,
-                }
-                y_store[thr][lab] = (y_true.copy(), y_scores.copy())
-        iou_thresholds_list = [float(t) for t in self.iou_thresholds]
-        ap_iou_micro: List[float] = []
-        pr_macro: Dict[str, Dict[str, List[float]]] = {}
-        pr_micro: Dict[str, Dict[str, List[float]]] = {}
+                gt_per_file = gt_boxes_by_label_file.get(lab, {}) or {}
+                yt, ys = self._match_make_targets(preds_list, gt_per_file, thr)
+                y_store[thr][lab] = (yt, ys)
+                ap, p, r = self._ap_pr(yt, ys)
+                ap_per_label_per_thr[lab][t_idx] = ap
+                pr_curves_per_thr[thr][lab] = {'precision': p, 'recall': r}
         recall_grid = np.linspace(0.0, 1.0, 101)
+        pr_micro, pr_macro = {}, {}
+        ap_iou_micro = []
         for thr in self.iou_thresholds:
             thr_key = f"{float(thr):.2f}"
-            all_y_true: List[int] = []
-            all_y_scores: List[float] = []
-            for lab, pair in (y_store.get(thr, {}) or {}).items():
-                yt, ys = pair
+            all_y_true, all_y_scores = [], []
+            for lab, (yt, ys) in (y_store.get(thr, {}) or {}).items():
                 if yt:
-                    all_y_true.extend(list(yt))
-                    all_y_scores.extend(list(ys))
-            if len(all_y_true) > 0:
-                try:
-                    ap_micro_val = float(average_precision_score(all_y_true, all_y_scores))
-                    p_micro, r_micro, _ = precision_recall_curve(all_y_true, all_y_scores)
-                except Exception:
-                    ap_micro_val = 0.0
-                    p_micro, r_micro = np.array([1.0, 1.0]), np.array([0.0, 1.0])
+                    all_y_true.extend(yt); all_y_scores.extend(ys)
+            if all_y_true:
+                ap_micro_val, p_micro, r_micro = self._ap_pr(all_y_true, all_y_scores)
             else:
-                ap_micro_val = 0.0
-                p_micro, r_micro = np.array([1.0, 1.0]), np.array([0.0, 1.0])
-            ap_iou_micro.append(max(0.0, min(1.0, ap_micro_val)))
-            pr_micro[thr_key] = {
-                'precision': [float(x) for x in p_micro],
-                'recall': [float(x) for x in r_micro],
-            }
-            macro_stack: List[np.ndarray] = []
+                ap_micro_val, p_micro, r_micro = 0.0, [1.0], [0.0]
+            ap_iou_micro.append(float(ap_micro_val))
+            pr_micro[thr_key] = {'precision': [float(x) for x in p_micro], 'recall': [float(x) for x in r_micro]}
+
+            # макро: усредняем precision после интерполяции на общую сетку recall
+            macro_stack = []
             for lab, pr in (pr_curves_per_thr.get(thr, {}) or {}).items():
-                r = np.array(pr.get('recall') or [])
-                p = np.array(pr.get('precision') or [])
+                r = np.asarray(pr.get('recall') or [])
+                p = np.asarray(pr.get('precision') or [])
                 if r.size > 1 and p.size > 1:
                     order = np.argsort(r)
-                    r_sorted = r[order]
-                    p_sorted = p[order]
-                    p_interp = np.interp(recall_grid, r_sorted, p_sorted, left=p_sorted[0], right=p_sorted[-1])
+                    p_interp = np.interp(recall_grid, r[order], p[order],
+                                         left=p[order][0], right=p[order][-1])
                     macro_stack.append(p_interp)
-            if macro_stack:
-                p_macro = np.mean(np.stack(macro_stack, axis=0), axis=0)
-            else:
-                p_macro = np.zeros_like(recall_grid)
-            pr_macro[thr_key] = {
-                'precision': [float(x) for x in p_macro],
-                'recall': [float(x) for x in recall_grid],
-            }
+            p_macro = np.mean(np.stack(macro_stack, axis=0), axis=0) if macro_stack else np.zeros_like(recall_grid)
+            pr_macro[thr_key] = {'precision': [float(x) for x in p_macro],
+                                 'recall': [float(x) for x in recall_grid]}
 
-        macro_map_iou = []
-        for t_idx, thr in enumerate(self.iou_thresholds):
-            vals = [ap_per_label_per_thr[lab][t_idx] for lab in uniq_labels]
-            macro_map_iou.append(float(np.mean(vals)) if len(vals) > 0 else 0.0)
-        overall_map = float(np.mean(macro_map_iou)) if len(macro_map_iou) > 0 else 0.0
-        def _get_thr_value(target: float) -> float:
-            for t_idx, thr in enumerate(self.iou_thresholds):
-                if abs(float(thr) - target) < 1e-6:
-                    return macro_map_iou[t_idx]
-            return 0.0
-        map50 = _get_thr_value(0.5)
-        map75 = _get_thr_value(0.75)
+        # сводные метрики
         per_class_ap_avg = [float(np.mean(ap_per_label_per_thr[lab])) for lab in uniq_labels]
+        macro_map_iou = [float(np.mean([ap_per_label_per_thr[lab][i] for lab in uniq_labels])) if uniq_labels else 0.0
+                         for i in range(len(self.iou_thresholds))]
+        overall_map = float(np.mean(macro_map_iou)) if macro_map_iou else 0.0
+        def _thr_val(target: float) -> float:
+            for i, thr in enumerate(self.iou_thresholds):
+                if abs(float(thr) - target) < 1e-6:
+                    return float(macro_map_iou[i])
+            return 0.0
+        map50, map75 = _thr_val(0.5), _thr_val(0.75)
+        iou_thresholds_list = [float(t) for t in self.iou_thresholds]
 
-        gt_counts = [
-            sum(len(lst) for lst in (gt_boxes_by_label_file.get(lab, {}) or {}).values())
-            for lab in uniq_labels
-        ]
-        pred_counts = [
-            len(preds_by_label.get(lab, []) or [])
-            for lab in uniq_labels
-        ]
-
+        gt_counts = [sum(len(v) for v in (gt_boxes_by_label_file.get(lab, {}) or {}).values()) for lab in uniq_labels]
+        pred_counts = [len(preds_by_label.get(lab, []) or []) for lab in uniq_labels]
         stats = {
             'categories': categories,
             'gt_counts': gt_counts,
             'pred_counts': pred_counts,
             'map_per_class': per_class_ap_avg,
-            'per_class_ap': per_class_ap_avg,
+            'per_class_ap': per_class_ap_avg, 
             'ap_iou_macro': macro_map_iou,
             'ap_iou_micro': ap_iou_micro,
             'iou_thresholds': iou_thresholds_list,
             'map': overall_map,
-            'map_50': map50,
-            'map_75': map75,
-            'mAP@0.5': map50,
-            'mAP@0.75': map75,
+            'map_50': map50, 'map_75': map75,
+            'mAP@0.5': map50, 'mAP@0.75': map75,
             'pr_macro': pr_macro,
             'pr_micro': pr_micro,
             'pr_curves_per_threshold': pr_curves_per_thr,
             'doc': (self.__class__.__doc__ or '').strip(),
         }
-
         return MetricOutputModel(metric_name=self.name, score=overall_map, stats=stats)
-
 
 class MeanIntersectionOverUnion(Metric):
     name = "mIoU"

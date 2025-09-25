@@ -26,26 +26,6 @@ sys.path.insert(0, str(EVAL_CLASSES_PATH))
 from Context import Context
 from metrics import MetricOutputModel
 from ReportConfig import ReportConfig
-from DatasetModel import DatasetModel
-from COCOAnnotations import COCOAnnotation
-
-def finalize_figure_tight(fig=None, ax=None, hide_axes=False):
-    fig = fig or plt.gcf()
-    ax = ax or plt.gca()
-    if hide_axes:
-        ax.set_axis_off()
-    try:
-        fig.tight_layout()
-    except Exception:
-        pass
-    try:
-        fig.align_labels()
-    except Exception:
-        pass
-    return fig, ax
-
-
-
 class ReportGenerator(ReportConfig):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -54,11 +34,7 @@ class ReportGenerator(ReportConfig):
         self.fig_h: float = 3.0
         self.tick_fontsize: int = 8
         self.max_label_len: int = 14
-    def _shorten_label(self, s: Any) -> str:
-        t = str(s)
-        return t if len(t) <= self.max_label_len else (t[: self.max_label_len - 1] + "…")
-    def _shorten_labels(self, labels: List[Any]) -> List[str]:
-        return [self._shorten_label(l) for l in labels]
+
     def generate_report(
         self,
         contexts: List[Context],
@@ -70,7 +46,8 @@ class ReportGenerator(ReportConfig):
         self._generate_terminal_report(metrics, timing_stats, verbose=dump_report)
         if not dump_report:
             return None
-        report_dir = self._prepare_report_dir(output_dir)
+        report_dir = Path(output_dir) if output_dir else Path(os.getcwd()) / "report"
+        report_dir.mkdir(parents=True, exist_ok=True)
         images = self._save_graphs(report_dir, metrics, timing_stats, contexts)
         self._write_markdown(report_dir, metrics, timing_stats, images, contexts)
         self._write_json(report_dir, metrics, timing_stats)
@@ -152,10 +129,7 @@ class ReportGenerator(ReportConfig):
             stats["spans_avg"] = {}
         return stats
 
-    def _prepare_report_dir(self, output_dir: Optional[Union[str, Path]]) -> Path:
-        out = Path(output_dir) if output_dir else Path(os.getcwd()) / "report"
-        out.mkdir(parents=True, exist_ok=True)
-        return out
+
 
     def _save_graphs(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any], contexts: List[Context]) -> Dict[str, str]:
         images: Dict[str, str] = {}
@@ -185,7 +159,7 @@ class ReportGenerator(ReportConfig):
         if spans_avg:
             names = list(spans_avg.keys())
             values = [spans_avg[k] for k in names]
-            short_names = self._shorten_labels(names)
+            short_names = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in names]
             plt.figure(figsize=(self.fig_w, self.fig_h))
             plt.barh(short_names, values, color="#54A24B")
             plt.title("Avg span time (sec)")
@@ -208,7 +182,7 @@ class ReportGenerator(ReportConfig):
                     if counts:
                         x = list(range(len(categories)))
                         labels = [str(c) for c in categories]
-                        labels = self._shorten_labels(labels)
+                        labels = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in labels]
                         plt.figure(figsize=(self.fig_w, self.fig_h))
                         plt.bar(x, counts, color=color)
                         plt.title(title)
@@ -239,28 +213,12 @@ class ReportGenerator(ReportConfig):
                 else:
                     plt.close()
 
-            def get_pr(d: Dict[str, Any], k: str) -> Optional[Dict[str, Any]]:
-                v = d.get(k)
-                if v:
-                    return v
-                try:
-                    kf = float(k)
-                    for mk in list(d.keys()):
-                        try:
-                            if abs(float(mk) - kf) < 1e-6:
-                                return d[mk]
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
-                return None
-
             if self.include_ap_graphs:
                 for key, tag in [("0.50", "050"), ("0.75", "075")]:
                     macro_dict = st.get("pr_macro", {}) or {}
                     micro_dict = st.get("pr_micro", {}) or {}
-                    prM = get_pr(macro_dict, key)
-                    prm = get_pr(micro_dict, key)
+                    prM = macro_dict.get(key) or macro_dict.get(f"{float(key):.2f}")
+                    prm = micro_dict.get(key) or micro_dict.get(f"{float(key):.2f}")
                     for pr, color, label, fname_key, marker in [
                         (prM, "#4C78A8", f"PR Curve (Macro) @IoU={key}", f"pr_macro_{tag}", 'o'),
                         (prm, "#F58518", f"PR Curve (Micro) @IoU={key}", f"pr_micro_{tag}", 's'),
@@ -330,7 +288,7 @@ class ReportGenerator(ReportConfig):
                 pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
                 if pairs_sorted:
                     names, values = zip(*pairs_sorted)
-                    names_short = self._shorten_labels(list(names))
+                    names_short = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in names]
                     plt.figure(figsize=(self.fig_w, self.fig_h))
                     plt.bar(range(len(names_short)), values, color="#4C78A8")
                     plt.title("Per-class AP (sorted)")
@@ -350,7 +308,7 @@ class ReportGenerator(ReportConfig):
                 pairs_low = sorted(pairs, key=lambda x: x[1])[:k]
                 if pairs_low:
                     names_low, values_low = zip(*pairs_low)
-                    names_low_short = self._shorten_labels(list(names_low))
+                    names_low_short = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in names_low]
                     plt.figure(figsize=(self.fig_w, self.fig_h))
                     plt.bar(range(len(names_low_short)), values_low, color="#E45756")
                     plt.title(f"Lowest {k} AP classes")

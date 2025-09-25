@@ -7,7 +7,6 @@ import sys
 import numpy as np
 EVAL_CLASSES_PATH = Path(__file__).parent
 sys.path.insert(0, str(EVAL_CLASSES_PATH))
-
 from DatasetModel import DatasetModel
 from Dataset import Dataset
 from DetectorBase import DetectorBase
@@ -31,16 +30,12 @@ class DatasetPoint:
             raise TypeError("dataset must be Dataset or DatasetModel")
 
         self.detector: DetectorBase = detector
-        self.metrics: List[Metric] = metrics if metrics is not None else [
-            MeanAveragePrecision(),
-            MeanIntersectionOverUnion(),
-            DiceCoefficient()
-        ]
+        self.metrics: List[Metric] = metrics
         self.reporter: Optional[Tracer] = reporter
-
         self._predictions: List[COCOAnnotation] = []
         self._last_metrics: Optional[List[MetricOutputModel]] = None
         self._contexts: List[Context] = []
+        
     def set_references(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,) -> None:
         pos_by_class, neg_imgs = self.detector.read_reference_images(positive_dir, negative_dir)
         self.detector.set_references(pos_by_class, neg_imgs)

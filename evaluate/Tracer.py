@@ -75,46 +75,6 @@ class Tracer:
             with open(self.trace_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
         return payload
-
-    def dump_chrome_trace(self, ctx: Context, path: str) -> str:
-        events: List[Dict[str, Any]] = []
-        base = ctx.started_at
-
-        def to_us(dt: datetime) -> int:
-            return int((dt - base).total_seconds() * 1_000_000)
-
-        events.append({"name": "Context.start", "ph": "B", "ts": 0, "pid": 1, "tid": 1})
-        for s in ctx.spans:
-            st = s.get("started_at")
-            en = s.get("ended_at")
-            if not isinstance(st, datetime) or not isinstance(en, datetime):
-                continue
-            events.append(
-                {
-                    "name": s.get("name", "span"),
-                    "ph": "B",
-                    "ts": to_us(st),
-                    "pid": 1,
-                    "tid": 1,
-                    "args": s.get("attributes", {}),
-                }
-            )
-            events.append(
-                {
-                    "name": s.get("name", "span"),
-                    "ph": "E",
-                    "ts": to_us(en),
-                    "pid": 1,
-                    "tid": 1,
-                }
-            )
-        end_ts = to_us(ctx.ended_at) if isinstance(ctx.ended_at, datetime) else to_us(datetime.utcnow())
-        events.append({"name": "Context.end", "ph": "E", "ts": end_ts, "pid": 1, "tid": 1})
-        trace = {"traceEvents": events}
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(trace, f)
-        return path
-
     def frame_graph(self, prof_path: str, svg_path: str) -> None:
         result = subprocess.run([sys.executable, "-m", "flameprof", prof_path], capture_output=True, text=True)
         if result.returncode == 0 and result.stdout:

@@ -19,14 +19,3 @@ class DatasetModel:
     def __post_init__(self):
         if isinstance(self.meta, dict):
             self.meta = DatasetMeta.from_dict(self.meta)
-    #Сколько аннотаций всего у нас
-    def annotations_len(self) -> int:
-        return len(self.data_points)
-
-    #Какие категории есть в датасете(аннотациях)
-    def get_all_category_names(self) -> List[str]:
-        return {ann.label for ann in self.data_points if isinstance(ann.label, str)}
-
-    #Получаем все аннотации по категории
-    def filter_by_category(self,category_name:str) -> List[COCOAnnotation]:
-        return [ann for ann in self.data_points if ann.label == category_name]

@@ -13,11 +13,6 @@ class Dataset(abc.ABC):
     def __init__(self, dataset: DatasetModel, *args, **kwargs):
         self.name = self.__class__.__name__
         self.data: DatasetModel = dataset
-    
-    def __getattr__(self, name):
-        if hasattr(self.data, name):
-            return getattr(self.data, name)
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
     @abc.abstractmethod
     def from_json(cls, obj: dict[str, Any]) -> "Dataset":
         annotations = cls._build_annotations(obj, base_dir=None)

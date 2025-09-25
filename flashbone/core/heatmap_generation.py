@@ -44,6 +44,7 @@ def adjust_embedding(query_embedding, positive_embeddings, negative_embeddings):
     return combined_adjustment
 
 
+# TODO: (@gas) add multiclass support (now heatmap just uses an average vector for search)
 class HeatmapGenerator:
     def __init__(
         self,

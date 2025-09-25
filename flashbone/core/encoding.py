@@ -56,7 +56,7 @@ MODEL_TO_NUM_LAYERS = {
     MODEL_DINOV3_VIT7B: 40,
 }
 
-# TODO: (@gas) automate
+# TODO: (@gas) automate instead of hardcode
 DINOV3_LOCATION = "/home/synetra/ml_segmentation/vendor/dinov3"
 
 
@@ -105,7 +105,7 @@ class DinoV3EncoderGaz:
         self.patch_quant_filter = torch.nn.Conv2d(1, 1, PATCH_SIZE, stride=PATCH_SIZE, bias=False)
         self.patch_quant_filter.weight.data.fill_(1.0 / (PATCH_SIZE * PATCH_SIZE))
 
-    def resize_transform(self, mask_image: Image.Image,) -> torch.Tensor:
+    def resize_transform(self, mask_image: Image.Image) -> torch.Tensor:
         """
         image resize transform to dimensions divisible by patch size
         """
@@ -120,6 +120,7 @@ class DinoV3EncoderGaz:
         shapes:
             (H, W, CH) --> tuple((B, D, H, W), (B, D)) --> __tuple((D, H, W), (,D))__
         """
+        # TODO: (@gas) now supports only input images of equal size - fix it somehow
         resized = torch.stack([self.resize_transform(img) for img in images])
         resized = TF.normalize(resized, mean=IMAGENET_MEAN, std=IMAGENET_STD)
         resized = resized.cuda()
@@ -132,7 +133,7 @@ class DinoV3EncoderGaz:
                     reshape=True, 
                     norm=True,
                 )[-1] # NOTE: (@gas) get a tuple of (patches, cls)
-        return DinoFeaturesPT(cls=feats[1], patches=feats[0])
+        return DinoFeaturesPT(cls=feats[1].detach(), patches=feats[0].detach())
 
     def encode_mask(
         self, 
@@ -163,6 +164,9 @@ class DinoV3EncoderGaz:
 
 
 if __name__=="__main__":
+    """
+    PYTHONPATH=. python flashbone/core/encoding.py
+    """
     import time 
 
     model = DinoV3EncoderGaz()
@@ -189,6 +193,9 @@ if __name__=="__main__":
     sim1 = torch.cosine_similarity(feats_ex.cls, feats.cls, dim=-1) # should be low
     sim2 = torch.cosine_similarity(feats.cls, mask_features, dim=-1) # should be high
     print("SIM.: ", sim1, sim2)
+
+    # feats = model.encode([img_pil, img_pil_ex])
+    # print("Encode batch out shape: ", feats.cls.shape)
 
 
 # if __name__=="__main__":

@@ -1,19 +1,17 @@
 dataset:
-  cls: mypkg.data.COCODataset
-  root: ./data/coco
-  ann_dir: ./data/coco/annotations
-  img_dir: ./data/coco/images
-  kwargs:
-    year: 2017
-    use_crowd: false
+  cls: searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset.ArchiveVOCDataset
+  root: sheep-detection
+  ann_dir: sheep-detection/annotations
+  img_dir: sheep-detection/images
+  kwargs: {}
 detector:
-  cls: mypkg.detectors.YOLOv8Detector
-  kwargs:
-    weights: yolov8n.pt
-    conf: 0.35
+  cls: searchdet_pipeline.core.detector.SearchDetDetector
+  kwargs: {}
 metrics:
-  - MeanAveragePrecision
-  - MeanIntersectionOverUnion
+  - mAP
+  - mIoU
+  - dice
+  - clf_report
 run:
   positive_dir: examples/positive
   negative_dir: null

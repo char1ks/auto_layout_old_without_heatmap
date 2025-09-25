@@ -27,6 +27,22 @@ from searchdet_pipeline.eval_classes.ReportConfig import ReportConfig
 from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
 from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
 
+def finalize_figure_tight(fig=None, ax=None, hide_axes=False):
+    fig = fig or plt.gcf()
+    ax = ax or plt.gca()
+    if hide_axes:
+        ax.set_axis_off()
+    try:
+        fig.tight_layout()
+    except Exception:
+        pass
+    try:
+        fig.align_labels()
+    except Exception:
+        pass
+    return fig, ax
+
+
 
 class ReportGenerator(ReportConfig):
     def __init__(self, **kwargs: Any) -> None:
@@ -264,10 +280,8 @@ class ReportGenerator(ReportConfig):
                                 plt.text(0.6, 0.2, f'AP@0.75: {ap_score:.3f}', fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
                             plt.tick_params(labelsize=self.tick_fontsize)
                             save(f"{fname_key}.svg", fname_key)
-
-            # Scatter of best PR points per IoU threshold (each point is a thr)
             if self.include_ap_graphs:
-                macro_pts: List[Tuple[float, float, str]] = []  # (recall, precision, label)
+                macro_pts: List[Tuple[float, float, str]] = []  
                 micro_pts: List[Tuple[float, float, str]] = []
                 prM_all = st.get("pr_macro", {}) or {}
                 prm_all = st.get("pr_micro", {}) or {}
@@ -278,7 +292,6 @@ class ReportGenerator(ReportConfig):
                         if pr and pr.get("recall") and pr.get("precision") and len(pr["recall"]) == len(pr["precision"]) and len(pr["recall"]) > 0:
                             r = np.array(pr["recall"], dtype=float)
                             p = np.array(pr["precision"], dtype=float)
-                            # choose point with max F1
                             f1 = (2 * p * r) / (p + r + 1e-12)
                             idx = int(np.nanargmax(f1))
                             store.append((float(r[idx]), float(p[idx]), key))
@@ -308,12 +321,9 @@ class ReportGenerator(ReportConfig):
                     plt.grid(True, alpha=0.3)
                     plt.tick_params(labelsize=self.tick_fontsize)
                     save("ap_pr_points_micro.svg", "ap_pr_points_micro")
-
-            # Generate per-class AP graphs and CSVs
             per_ap = st.get("per_class_ap_avg") or st.get("per_class_ap") or []
             cats = st.get("categories") or []
             if self.include_ap_graphs and cats and per_ap:
-                # Sorted per-class AP
                 pairs = [(cats[i], float(per_ap[i])) for i in range(min(len(cats), len(per_ap)))]
                 pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
                 if pairs_sorted:
@@ -328,16 +338,12 @@ class ReportGenerator(ReportConfig):
                     plt.grid(True, alpha=0.3)
                     plt.tick_params(axis="y", labelsize=self.tick_fontsize)
                     save("per_class_ap.svg", "per_class_ap")
-                    
-                    # Save CSV
                     csv_path = report_dir / "per_class_ap.csv"
                     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
                         writer = csv.writer(f)
                         writer.writerow(["class", "AP"])
                         writer.writerows(pairs_sorted)
                     images["per_class_ap_csv"] = str(csv_path)
-
-                # Lowest k AP classes
                 k = max(1, int(self.top_k_lowest_map or 5))
                 pairs_low = sorted(pairs, key=lambda x: x[1])[:k]
                 if pairs_low:
@@ -352,8 +358,6 @@ class ReportGenerator(ReportConfig):
                     plt.grid(True, alpha=0.3)
                     plt.tick_params(axis="y", labelsize=self.tick_fontsize)
                     save("per_class_ap_lowest.svg", "per_class_ap_lowest")
-                    
-                    # Save CSV
                     csv_path_low = report_dir / "per_class_ap_lowest.csv"
                     with open(csv_path_low, 'w', newline='', encoding='utf-8') as f:
                         writer = csv.writer(f)
@@ -365,12 +369,8 @@ class ReportGenerator(ReportConfig):
 
     def _write_markdown(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any], images: Dict[str, str], contexts: List[Context]) -> None:
         lines: List[str] = []
-        
-        # Header
         lines.append("# Отчёт по оценке модели\n\n")
         lines.append(f"Сгенерирован: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        
-        # Model info from context.extra
         if contexts:
             for ctx in contexts:
                 if hasattr(ctx, 'extra') and ctx.extra:
@@ -385,8 +385,6 @@ class ReportGenerator(ReportConfig):
                         lines.append(f"**Описание:** {model_doc}\n")
                     lines.append("\n")
                     break
-
-        # Timing stats
         lines.append("## Статистика времени выполнения\n\n")
         lines.append(f"- Всего запусков: {timing_stats.get('total_runs', 0)}\n")
         lines.append(f"- Успешных: {timing_stats.get('success', 0)}\n")
@@ -396,11 +394,8 @@ class ReportGenerator(ReportConfig):
         if timing_stats.get('median'):
             lines.append(f"- Медиана: {timing_stats['median']:.4f} сек\n")
         lines.append("\n")
-
-        # Metrics summary
         lines.append("## Метрики\n\n")
         for m in metrics or []:
-            # Auto-generate description from metric docstring if available
             desc = ""
             if hasattr(m, 'stats') and isinstance(m.stats, dict):
                 desc = m.stats.get('doc', '')
@@ -409,14 +404,19 @@ class ReportGenerator(ReportConfig):
             if desc:
                 lines.append(f"{desc}\n\n")
             
-            score = f"{m.score:.4f}" if isinstance(m.score, (int, float)) else str(m.score)
-            lines.append(f"**Значение:** {score}\n\n")
-
-        # Graphs section
+            # For classification_report: place the full sklearn text table here instead of the numeric value line
+            if str(m.metric_name) == "classification_report" and isinstance(m.stats, dict) and m.stats.get("text"):
+                text = m.stats.get("text")
+                lines.append("```\n")
+                lines.append(text if isinstance(text, str) else str(text))
+                if not str(text).endswith("\n"):
+                    lines.append("\n")
+                lines.append("```\n\n")
+            else:
+                score = f"{m.score:.4f}" if isinstance(m.score, (int, float)) else str(m.score)
+                lines.append(f"**Значение:** {score}\n\n")
         if images:
             lines.append("## Графики\n\n")
-            
-            # Duration graphs
             if images.get("durations_hist"):
                 lines.append("Гистограмма времени: показывает распределение длительности запусков 'Histogram(duration_values, bins=20)'\n\n")
                 lines.append(f"![Гистограмма времени]({images['durations_hist']})\n\n")
@@ -426,8 +426,6 @@ class ReportGenerator(ReportConfig):
             if images.get("spans_avg"):
                 lines.append("Среднее время этапов: показывает среднюю длительность каждого этапа 'mean(span_durations)'\n\n")
                 lines.append(f"![Среднее время этапов]({images['spans_avg']})\n\n")
-            
-            # Class distributions
             if images.get("gt_class_distribution"):
                 lines.append("Распределение GT: показывает количество объектов по классам 'bar(classes, gt_counts)'\n\n")
                 lines.append(f"![Распределение GT]({images['gt_class_distribution']})\n\n")
@@ -487,19 +485,7 @@ class ReportGenerator(ReportConfig):
                     for name, ap, sup in pairs_low:
                         lines.append(f"| {name} | {ap:.4f} | {sup} |\n")
             lines.append("\n")
-        cr = next((m for m in (metrics or []) if m.metric_name == "classification_report" and isinstance(m.stats, dict)), None)
-        if cr:
-            text = cr.stats.get("text")
-            if isinstance(text, str) and text.strip():
-                lines.append("## Classification report (sklearn)\n\n")
-                lines.append("```\n")
-                lines.append(text)
-                if not text.endswith("\n"):
-                    lines.append("\n")
-                lines.append("```\n")
-
         (report_dir / "report.md").write_text("".join(lines), encoding="utf-8")
-
     def _write_json(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any]) -> None:
         data = {
             "metrics": [

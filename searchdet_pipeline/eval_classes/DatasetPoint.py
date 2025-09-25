@@ -60,7 +60,7 @@ class DatasetPoint:
                         progress(idx, total, fname)
                     continue
                 img_path = (image_root / fname) if fname is not None else None
-                if img_path is None or not img_path.exists():
+                if img_path is None:
                     if progress:
                         progress(idx, total, fname)
                     continue

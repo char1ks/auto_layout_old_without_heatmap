@@ -1,0 +1,19 @@
+dataset:
+  cls: mypkg.data.COCODataset
+  root: ./data/coco
+  ann_dir: ./data/coco/annotations
+  img_dir: ./data/coco/images
+  kwargs:
+    year: 2017
+    use_crowd: false
+detector:
+  cls: mypkg.detectors.YOLOv8Detector
+  kwargs:
+    weights: yolov8n.pt
+    conf: 0.35
+metrics:
+  - MeanAveragePrecision
+  - MeanIntersectionOverUnion
+run:
+  positive_dir: examples/positive
+  negative_dir: null

@@ -589,6 +589,7 @@ class BinningProcessor :
         plt .xlabel ('Номер бина')
         plt .ylabel ('Средняя евклидова дистанция')
         plt .grid (True ,alpha =0.3 )
+        plt .tight_layout ()
 
         if save_path :
             plt .savefig (save_path ,dpi =150 ,bbox_inches ='tight')
@@ -628,10 +629,10 @@ class BinningProcessor :
         ax .set_title (f'Выбранные маски после binning ({len(selected_indices)} из {len(masks)})')
         ax .axis ('off')
 
+        plt .tight_layout ()
+        
         if save_path :
             plt .savefig (save_path ,dpi =150 ,bbox_inches ='tight')
-
-        plt .tight_layout ()
         plt .show ()
 
         return input_image

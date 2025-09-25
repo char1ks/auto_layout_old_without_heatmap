@@ -33,10 +33,10 @@ class ArchiveVOCDataset(Dataset):
         base_dir = Path(path)
 
         xml_files = []
-        if ann_dir and Path(ann_dir).exists():
+        if ann_dir:
             xml_files = sorted(p for p in Path(ann_dir).rglob("*.xml") if p.is_file())
 
-        chosen_img_dir = Path(img_dir) if img_dir and Path(img_dir).exists() else base_dir
+        chosen_img_dir = Path(img_dir) if img_dir else base_dir
 
         anns, categories = [], []
         for xml_path in xml_files:
@@ -92,11 +92,10 @@ class ArchiveVOCDataset(Dataset):
                 img_arr = np.zeros((height, width, 3), dtype=np.uint8)
                 if base_dir and file_name:
                     img_path = base_dir / file_name
-                    if img_path.exists():
-                        try:
-                            img_arr = np.array(Image.open(img_path).convert("RGB"))
-                        except Exception:
-                            pass
+                    try:
+                        img_arr = np.array(Image.open(img_path).convert("RGB"))
+                    except Exception:
+                        pass
                 anns.append(COCOAnnotation(
                     img=img_arr, mask=mask_np, label=label, image_size=(width, height),
                     width=width, height=height, area=area, file_name=file_name, bbox=bbox
@@ -116,9 +115,9 @@ class ArchiveVOCDataset(Dataset):
         img_path = None
         if file_name:
             p = Path(file_name)
-            img_path = p if p.is_absolute() else (img_dir / file_name if (img_dir / file_name).exists() else img_dir.parent / file_name)
+            img_path = p if p.is_absolute() else img_dir / file_name
 
-        if img_path and img_path.exists():
+        if img_path:
             try:
                 img_arr = np.array(Image.open(img_path).convert("RGB"))
                 H_img, W_img = img_arr.shape[:2]

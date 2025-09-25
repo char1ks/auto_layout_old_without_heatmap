@@ -15,7 +15,7 @@ class ChickenDataset(Dataset):
         annotations = cls._build_annotations(obj, base_dir=None)
         meta = obj.get('meta', {})
         meta.update({
-            'dataset_type': 'chicken_detection',
+            'dataset_type': 'coco_dataset',
             'total_images': len(obj.get('images', [])),
             'total_annotations': len(obj.get('annotations', [])),
             'categories': obj.get('categories', [])
@@ -63,7 +63,6 @@ class ChickenDataset(Dataset):
                 image_info = images_by_id.get(image_id)
                 if not image_info:
                     continue
-
                 file_name: str = image_info.get('file_name', '')
                 width: int = int(image_info.get('width', 0) or 0)
                 height: int = int(image_info.get('height', 0) or 0)
@@ -97,7 +96,6 @@ class ChickenDataset(Dataset):
                     draw = ImageDraw.Draw(pil_mask)
                     draw.polygon(xy, outline=1, fill=1)
                     np.copyto(mask_np, np.array(pil_mask, dtype=np.uint8))
-
                 if isinstance(segm, list) and len(segm) > 0:
                     for poly in segm:
                         if isinstance(poly, list):
@@ -106,7 +104,6 @@ class ChickenDataset(Dataset):
                     rle_h, rle_w = (int(segm['size'][0]), int(segm['size'][1]))
                     if rle_h == height and rle_w == width:
                         pass
-                
                 if mask_np.sum() == 0 and len(bbox) == 4:
                     x0, y0, bw, bh = bbox
                     x1, y1 = int(max(0, np.floor(x0))), int(max(0, np.floor(y0)))
@@ -114,19 +111,14 @@ class ChickenDataset(Dataset):
                     y2 = int(min(height, np.ceil(y0 + bh)))
                     if x2 > x1 and y2 > y1:
                         mask_np[y1:y2, x1:x2] = 1
-
                 if base_dir is not None and file_name:
                     img_path = (base_dir / file_name)
-                    if img_path.exists():
-                        try:
-                            img_arr = np.array(Image.open(img_path).convert('RGB'))
-                        except Exception:
-                            img_arr = np.zeros((height, width, 3), dtype=np.uint8)
-                    else:
+                    try:
+                        img_arr = np.array(Image.open(img_path).convert('RGB'))
+                    except Exception:
                         img_arr = np.zeros((height, width, 3), dtype=np.uint8)
                 else:
                     img_arr = np.zeros((height, width, 3), dtype=np.uint8)
-
                 anns.append(
                     COCOAnnotation(
                         img=img_arr,

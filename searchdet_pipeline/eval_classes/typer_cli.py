@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
@@ -13,7 +14,11 @@ from rich.table import Table
 from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
 from searchdet_pipeline.eval_classes.DatasetPoint import DatasetPoint
 from searchdet_pipeline.eval_classes.metrics import (
-    MetricOutputModel, MeanAveragePrecision, MeanIntersectionOverUnion, DiceCoefficient, ClassificationReportMetric
+    MetricOutputModel,
+    MeanAveragePrecision,
+    MeanIntersectionOverUnion,
+    DiceCoefficient,
+    ClassificationReportMetric,
 )
 from searchdet_pipeline.core.detector import SearchDetDetector
 from searchdet_pipeline.core.config import get_preset_config
@@ -23,36 +28,73 @@ App = typer.Typer()
 console = Console()
 
 
+def _load_obj(dotted: str) -> Any:
+    module_path, _, obj_name = dotted.replace(":", ".").rpartition(".")
+    if not module_path:
+        raise ValueError(f"Bad dotted path: {dotted!r}")
+    mod = importlib.import_module(module_path)
+    return getattr(mod, obj_name)
+
+
+def _read_config_file(path: Path) -> Dict[str, Any]:
+    text = Path(path).read_text(encoding="utf-8")
+    suffix = Path(path).suffix.lower()
+    if suffix in {".yml", ".yaml"}:
+        try:
+            import yaml  # type: ignore
+        except Exception as e:
+            raise RuntimeError("PyYAML is required: pip install pyyaml") from e
+        data = yaml.safe_load(text) or {}
+        if not isinstance(data, dict):
+            raise ValueError("YAML root must be a mapping")
+        return data
+    elif suffix == ".json":
+        data = json.loads(text) or {}
+        if not isinstance(data, dict):
+            raise ValueError("JSON root must be an object")
+        return data
+    else:
+        raise ValueError(f"Unsupported config extension {suffix!r}")
+
+
+def _resolve_metrics(metric_specs: Optional[List[str]]) -> List[Any]:
+    registry = {
+        "mAP": MeanAveragePrecision,
+        "MeanAveragePrecision": MeanAveragePrecision,
+        "mIoU": MeanIntersectionOverUnion,
+        "MeanIntersectionOverUnion": MeanIntersectionOverUnion,
+        "dice": DiceCoefficient,
+        "DiceCoefficient": DiceCoefficient,
+        "clf_report": ClassificationReportMetric,
+        "ClassificationReportMetric": ClassificationReportMetric,
+    }
+    if not metric_specs:
+        return [MeanAveragePrecision(), MeanIntersectionOverUnion(), DiceCoefficient(), ClassificationReportMetric()]
+    out = []
+    for name in metric_specs:
+        if name in registry:
+            out.append(registry[name]())
+        else:
+            cls = _load_obj(name)
+            out.append(cls())
+    return out
+
+
 class EvalCLI:
-    def __init__(
-        self,
-        dataset_dir: Path,
-        ann_dir: Optional[Path] = None,
-        img_dir: Optional[Path] = None,
-        positive_dir: Union[str, Path] = "examples/positive",
-        negative_dir: Optional[Union[str, Path]] = None,
-        average: str = "micro",
-        output_dir: Optional[Path] = None,
-        save_predictions: bool = True,
-        save_metrics: bool = True,
-        run_name: Optional[str] = None,
-    ) -> None:
-        self.dataset_dir = Path(dataset_dir)
-        self.ann_dir = Path(ann_dir) if ann_dir is not None else None
-        self.img_dir = Path(img_dir) if img_dir is not None else None
-        self.positive_dir = str(positive_dir)
-        self.negative_dir = str(negative_dir) if negative_dir is not None else None
-        self.average = average
-        self.output_dir = output_dir
-        self.save_predictions = save_predictions
-        self.save_metrics = save_metrics
-        self.run_name = run_name
+    def __init__(self, config_path: Path) -> None:
+        self.config_path = Path(config_path)
+        self.positive_dir: Union[str, Path] = "examples/positive"
+        self.negative_dir: Optional[Union[str, Path]] = None
+        self.output_dir: Optional[Path] = None
+        self.run_name: Optional[str] = None
+        self.save_predictions: bool = True
+        self.save_metrics: bool = True
 
     def _ensure_results_dir(self) -> Path:
         base = self.output_dir or (Path.cwd() / "results_cache")
         base.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        name = self.run_name or f"{self.dataset_dir.name}_{stamp}"
+        name = self.run_name or f"run_{stamp}"
         run_dir = base / name
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
@@ -109,28 +151,43 @@ class EvalCLI:
         if self.save_metrics:
             metrics_path = out_dir / "metrics.json"
             serializable = [
-                {
-                    "metric_name": m.metric_name,
-                    "score": m.score,
-                    "stats": m.stats,
-                }
+                {"metric_name": m.metric_name, "score": m.score, "stats": m.stats}
                 for m in metrics
             ]
             metrics_path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def _build_from_config(self) -> tuple[Any, Any, List[Any]]:
+        cfg = _read_config_file(self.config_path)
+        ds_spec = (cfg.get("dataset") or {})
+        det_spec = (cfg.get("detector") or {})
+        run_spec = (cfg.get("run") or {})
+        metrics_spec = cfg.get("metrics")
+        self.positive_dir = run_spec.get("positive_dir", self.positive_dir)
+        self.negative_dir = run_spec.get("negative_dir", self.negative_dir)
+        ds_root = ds_spec.get("root") or ds_spec.get("dataset_dir") or ds_spec.get("path")
+        if not ds_root:
+            raise ValueError("dataset.root is required in config")
+        DatasetClass = _load_obj(ds_spec.get("cls")) if ds_spec.get("cls") else ArchiveVOCDataset
+        DetectorClass = _load_obj(det_spec.get("cls")) if det_spec.get("cls") else SearchDetDetector
+        dataset = DatasetClass.from_path(
+            Path(ds_root),
+            ann_dir=Path(ds_spec["ann_dir"]) if ds_spec.get("ann_dir") else None,
+            img_dir=Path(ds_spec["img_dir"]) if ds_spec.get("img_dir") else None,
+            **(ds_spec.get("kwargs") or {}),
+        )
+        config = get_preset_config("balanced")
+        detector = DetectorClass(config=config, **(det_spec.get("kwargs") or {}))
+        metrics_list = _resolve_metrics(metrics_spec)
+        return dataset, detector, metrics_list
+
     def run(self) -> int:
         out_dir = self._ensure_results_dir()
-        config = get_preset_config("balanced")
-        detector = SearchDetDetector(config=config)
+        dataset, detector, metrics_list = self._build_from_config()
         reporter = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
-        dataset = ArchiveVOCDataset.from_path(self.dataset_dir, ann_dir=self.ann_dir, img_dir=self.img_dir)
-        metrics_list = [MeanAveragePrecision(), MeanIntersectionOverUnion(), DiceCoefficient(), ClassificationReportMetric()]
-        dp = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter)
-        image_root = self.img_dir if (self.img_dir is not None and self.img_dir.exists()) else None
-        preds, metrics = dp.run(
+        preds, metrics = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter).run(
             positive_dir=self.positive_dir,
             negative_dir=self.negative_dir,
-            image_root=image_root,
+            image_root=Path(dataset.root) if hasattr(dataset, "root") else None,
             dump_report=True,
             report_output_dir=out_dir,
         )
@@ -140,33 +197,9 @@ class EvalCLI:
         return 0
 
 
-# Use the single App instance defined above
 @App.command("eval")
-def eval_command(
-    dataset_dir: Path = typer.Argument(..., exists=True, readable=True, help="Path to dataset root (VOC-like)"),
-    ann_dir: Optional[Path] = typer.Option(None, help="Path to annotations directory (optional)", exists=False),
-    img_dir: Optional[Path] = typer.Option(None, help="Path to images directory (optional)", exists=False),
-    positive_dir: Optional[Path] = typer.Option("examples/positive", help="Directory with positive reference images"),
-    negative_dir: Optional[Path] = typer.Option(None, help="Directory with negative reference images"),
-    average: str = typer.Option("micro", help="Averaging for evaluation (micro/macro)"),
-    output_dir: Optional[Path] = typer.Option(None, help="Base output dir; a timestamped run subfolder will be created"),
-    run_name: Optional[str] = typer.Option(None, help="Optional custom run subfolder name"),
-    save_predictions: bool = typer.Option(True, help="Save predictions.jsonl"),
-    save_metrics: bool = typer.Option(True, help="Save metrics.json"),
-) -> int:
-    evl = EvalCLI(
-        dataset_dir=dataset_dir,
-        ann_dir=ann_dir,
-        img_dir=img_dir,
-        positive_dir=str(positive_dir) if positive_dir is not None else "examples/positive",
-        negative_dir=str(negative_dir) if negative_dir is not None else None,
-        average=average,
-        output_dir=output_dir,
-        save_predictions=save_predictions,
-        save_metrics=save_metrics,
-        run_name=run_name,
-    )
-    return evl.run()
+def eval_command(config: Path = typer.Argument(..., exists=True, readable=True, help="path_to_yaml_config")) -> int:
+    return EvalCLI(config_path=config).run()
 
 
 def main() -> None:

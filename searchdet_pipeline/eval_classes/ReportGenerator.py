@@ -32,7 +32,15 @@ class ReportGenerator(ReportConfig):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.console = Console()
-
+        self.fig_w: float = 6.0
+        self.fig_h: float = 3.0
+        self.tick_fontsize: int = 8
+        self.max_label_len: int = 14
+    def _shorten_label(self, s: Any) -> str:
+        t = str(s)
+        return t if len(t) <= self.max_label_len else (t[: self.max_label_len - 1] + "…")
+    def _shorten_labels(self, labels: List[Any]) -> List[str]:
+        return [self._shorten_label(l) for l in labels]
     def generate_report(
         self,
         contexts: List[Context],
@@ -143,23 +151,28 @@ class ReportGenerator(ReportConfig):
 
         durations = timing_stats.get("durations", [])
         if durations:
-            plt.figure(figsize=(6, 3))
+            plt.figure(figsize=(self.fig_w, self.fig_h))
             plt.hist(durations, bins=20, color="#4C78A8")
             plt.title("Durations (sec)")
+            plt.tick_params(labelsize=self.tick_fontsize)
             save("durations_hist.svg", "durations_hist")
 
-            plt.figure(figsize=(6, 3))
+            plt.figure(figsize=(self.fig_w, self.fig_h))
             plt.plot(durations, color="#F58518")
             plt.title("Durations by run")
+            plt.tick_params(labelsize=self.tick_fontsize)
             save("durations_series.svg", "durations_series")
 
         spans_avg: Dict[str, float] = timing_stats.get("spans_avg", {})
         if spans_avg:
             names = list(spans_avg.keys())
             values = [spans_avg[k] for k in names]
-            plt.figure(figsize=(6, 3))
-            plt.barh(names, values, color="#54A24B")
+            short_names = self._shorten_labels(names)
+            plt.figure(figsize=(self.fig_w, self.fig_h))
+            plt.barh(short_names, values, color="#54A24B")
             plt.title("Avg span time (sec)")
+            plt.tick_params(axis="y", labelsize=self.tick_fontsize)
+            plt.tick_params(axis="x", labelsize=self.tick_fontsize)
             save("spans_avg.svg", "spans_avg")
 
         map_metric: Optional[MetricOutputModel] = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
@@ -177,30 +190,33 @@ class ReportGenerator(ReportConfig):
                     if counts:
                         x = list(range(len(categories)))
                         labels = [str(c) for c in categories]
-                        plt.figure(figsize=(max(6, len(labels) * 0.5), 3))
+                        labels = self._shorten_labels(labels)
+                        plt.figure(figsize=(self.fig_w, self.fig_h))
                         plt.bar(x, counts, color=color)
                         plt.title(title)
-                        plt.xticks(x, labels, rotation=45, ha="right")
+                        plt.xticks(x, labels, rotation=45, ha="right", fontsize=self.tick_fontsize)
+                        plt.tick_params(axis="y", labelsize=self.tick_fontsize)
                         save(fname, key)
 
             ap_macro = st.get("ap_iou_macro") or []
             ap_micro = st.get("ap_iou_micro") or []
             ious = st.get("iou_thresholds") or []
             if self.include_ap_graphs and ious:
-                plt.figure(figsize=(6, 3))
+                plt.figure(figsize=(self.fig_w, self.fig_h))
                 plotted = False
                 if ap_macro and len(ap_macro) == len(ious):
-                    plt.plot(ious, ap_macro, label="macro", color="#4C78A8", linewidth=2, linestyle='-', marker='o', markersize=4)
+                    plt.plot(ious, ap_macro, label="macro", color="#4C78A8", linewidth=2, linestyle='-', marker='o', markersize=3)
                     plotted = True
                 if ap_micro and len(ap_micro) == len(ious):
-                    plt.plot(ious, ap_micro, label="micro", color="#F58518", linewidth=2, linestyle='--', marker='s', markersize=4)
+                    plt.plot(ious, ap_micro, label="micro", color="#F58518", linewidth=2, linestyle='--', marker='s', markersize=3)
                     plotted = True
                 if plotted:
                     plt.xlabel("IoU threshold")
                     plt.ylabel("AP")
                     plt.title("AP vs IoU")
-                    plt.legend()
+                    plt.legend(fontsize=self.tick_fontsize)
                     plt.grid(True, alpha=0.3)
+                    plt.tick_params(labelsize=self.tick_fontsize)
                     save("ap_vs_iou.svg", "ap_vs_iou")
                 else:
                     plt.close()
@@ -232,7 +248,7 @@ class ReportGenerator(ReportConfig):
                         (prm, "#F58518", f"PR Curve (Micro) @IoU={key}", f"pr_micro_{tag}", 's'),
                     ]:
                         if pr and pr.get("recall") and pr.get("precision") and len(pr["recall"]) > 1 and len(pr["precision"]) > 1:
-                            plt.figure(figsize=(8, 6))
+                            plt.figure(figsize=(self.fig_w, self.fig_h))
                             plt.plot(pr["recall"], pr["precision"], color=color, linewidth=2, marker=marker, markersize=3, alpha=0.8)
                             plt.xlabel("Recall")
                             plt.ylabel("Precision")
@@ -242,10 +258,11 @@ class ReportGenerator(ReportConfig):
                             plt.ylim(0, 1)
                             if key == "0.50" and st.get("mAP@0.5"):
                                 ap_score = st["mAP@0.5"]
-                                plt.text(0.6, 0.2, f'AP@0.5: {ap_score:.3f}', fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+                                plt.text(0.6, 0.2, f'AP@0.5: {ap_score:.3f}', fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
                             if key == "0.75" and st.get("mAP@0.75"):
                                 ap_score = st["mAP@0.75"]
-                                plt.text(0.6, 0.2, f'AP@0.75: {ap_score:.3f}', fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+                                plt.text(0.6, 0.2, f'AP@0.75: {ap_score:.3f}', fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+                            plt.tick_params(labelsize=self.tick_fontsize)
                             save(f"{fname_key}.svg", fname_key)
 
             # Scatter of best PR points per IoU threshold (each point is a thr)
@@ -266,28 +283,30 @@ class ReportGenerator(ReportConfig):
                             idx = int(np.nanargmax(f1))
                             store.append((float(r[idx]), float(p[idx]), key))
                 if macro_pts:
-                    plt.figure(figsize=(6, 6))
+                    plt.figure(figsize=(self.fig_w, self.fig_h))
                     plt.scatter([x for x, _, _ in macro_pts], [y for _, y, _ in macro_pts], c="#4C78A8")
                     for x, y, label in macro_pts:
-                        plt.annotate(label, (x, y), textcoords="offset points", xytext=(4, 2), fontsize=8)
+                        plt.annotate(label, (x, y), textcoords="offset points", xytext=(4, 2), fontsize=7)
                     plt.xlabel("Recall")
                     plt.ylabel("Precision")
                     plt.title("Macro PR best-points per IoU threshold")
                     plt.xlim(0, 1)
                     plt.ylim(0, 1)
                     plt.grid(True, alpha=0.3)
+                    plt.tick_params(labelsize=self.tick_fontsize)
                     save("ap_pr_points_macro.svg", "ap_pr_points_macro")
                 if micro_pts:
-                    plt.figure(figsize=(6, 6))
+                    plt.figure(figsize=(self.fig_w, self.fig_h))
                     plt.scatter([x for x, _, _ in micro_pts], [y for _, y, _ in micro_pts], c="#F58518")
                     for x, y, label in micro_pts:
-                        plt.annotate(label, (x, y), textcoords="offset points", xytext=(4, 2), fontsize=8)
+                        plt.annotate(label, (x, y), textcoords="offset points", xytext=(4, 2), fontsize=7)
                     plt.xlabel("Recall")
                     plt.ylabel("Precision")
                     plt.title("Micro PR best-points per IoU threshold")
                     plt.xlim(0, 1)
                     plt.ylim(0, 1)
                     plt.grid(True, alpha=0.3)
+                    plt.tick_params(labelsize=self.tick_fontsize)
                     save("ap_pr_points_micro.svg", "ap_pr_points_micro")
 
             # Generate per-class AP graphs and CSVs
@@ -299,13 +318,15 @@ class ReportGenerator(ReportConfig):
                 pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
                 if pairs_sorted:
                     names, values = zip(*pairs_sorted)
-                    plt.figure(figsize=(max(8, len(names) * 0.4), 6))
-                    plt.bar(range(len(names)), values, color="#4C78A8")
+                    names_short = self._shorten_labels(list(names))
+                    plt.figure(figsize=(self.fig_w, self.fig_h))
+                    plt.bar(range(len(names_short)), values, color="#4C78A8")
                     plt.title("Per-class AP (sorted)")
                     plt.xlabel("Class")
                     plt.ylabel("AP")
-                    plt.xticks(range(len(names)), names, rotation=45, ha="right")
+                    plt.xticks(range(len(names_short)), names_short, rotation=45, ha="right", fontsize=self.tick_fontsize)
                     plt.grid(True, alpha=0.3)
+                    plt.tick_params(axis="y", labelsize=self.tick_fontsize)
                     save("per_class_ap.svg", "per_class_ap")
                     
                     # Save CSV
@@ -321,13 +342,15 @@ class ReportGenerator(ReportConfig):
                 pairs_low = sorted(pairs, key=lambda x: x[1])[:k]
                 if pairs_low:
                     names_low, values_low = zip(*pairs_low)
-                    plt.figure(figsize=(max(6, len(names_low) * 0.6), 4))
-                    plt.bar(range(len(names_low)), values_low, color="#E45756")
+                    names_low_short = self._shorten_labels(list(names_low))
+                    plt.figure(figsize=(self.fig_w, self.fig_h))
+                    plt.bar(range(len(names_low_short)), values_low, color="#E45756")
                     plt.title(f"Lowest {k} AP classes")
                     plt.xlabel("Class")
                     plt.ylabel("AP")
-                    plt.xticks(range(len(names_low)), names_low, rotation=45, ha="right")
+                    plt.xticks(range(len(names_low_short)), names_low_short, rotation=45, ha="right", fontsize=self.tick_fontsize)
                     plt.grid(True, alpha=0.3)
+                    plt.tick_params(axis="y", labelsize=self.tick_fontsize)
                     save("per_class_ap_lowest.svg", "per_class_ap_lowest")
                     
                     # Save CSV

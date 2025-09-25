@@ -10,8 +10,10 @@ from contextlib import contextmanager
 import subprocess
 import tempfile
 import os
-
-from searchdet_pipeline.eval_classes.Context import Context
+from pathlib import Path
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
+from Context import Context
 
 
 class Tracer:

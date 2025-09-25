@@ -1,14 +1,13 @@
 import abc
 import json
-import os
-import glob
-import xml.etree.ElementTree as ET
 from pathlib import Path
-from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
-from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
-from typing import List, Dict, Any, Optional, Tuple
-from PIL import Image, ImageDraw
-import numpy as np
+import sys
+from typing import  Any
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
+
+from COCOAnnotations import COCOAnnotation
+from DatasetModel import DatasetModel
 
 class Dataset(abc.ABC):
     def __init__(self, dataset: DatasetModel, *args, **kwargs):

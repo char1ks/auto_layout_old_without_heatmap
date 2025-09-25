@@ -5,11 +5,11 @@ from typing import List, Optional, Dict, Any, Union, Tuple
 from pathlib import Path
 from datetime import datetime
 import os
+import sys
 import json
 import csv
 import statistics
 import numpy as np
-
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 mpl.rcParams["svg.fonttype"] = "none"  
@@ -20,12 +20,14 @@ mpl.rcParams["savefig.transparent"] = False
 from rich.console import Console
 from rich.table import Table
 from rich import box
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
-from searchdet_pipeline.eval_classes.Context import Context
-from searchdet_pipeline.eval_classes.metrics import MetricOutputModel
-from searchdet_pipeline.eval_classes.ReportConfig import ReportConfig
-from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
-from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
+from Context import Context
+from metrics import MetricOutputModel
+from ReportConfig import ReportConfig
+from DatasetModel import DatasetModel
+from COCOAnnotations import COCOAnnotation
 
 def finalize_figure_tight(fig=None, ax=None, hide_axes=False):
     fig = fig or plt.gcf()
@@ -404,7 +406,6 @@ class ReportGenerator(ReportConfig):
             if desc:
                 lines.append(f"{desc}\n\n")
             
-            # For classification_report: place the full sklearn text table here instead of the numeric value line
             if str(m.metric_name) == "classification_report" and isinstance(m.stats, dict) and m.stats.get("text"):
                 text = m.stats.get("text")
                 lines.append("```\n")
@@ -437,7 +438,6 @@ class ReportGenerator(ReportConfig):
                 lines.append("AP vs IoU: показывает зависимость точности от порога пересечения 'plot(iou_thresholds, ap_values)'\n\n")
                 lines.append(f"![AP vs IoU]({images['ap_vs_iou']})\n\n")
             
-            # PR curves formulas only
             for tag in ["050", "075"]:
                 if images.get(f"pr_macro_{tag}"):
                     lines.append(f"PR макро @{tag[0]}.{tag[1:]}: показывает точность и полноту 'Precision = TP/(TP+FP), Recall = TP/(TP+FN)'\n\n")
@@ -446,7 +446,6 @@ class ReportGenerator(ReportConfig):
                     lines.append(f"PR микро @{tag[0]}.{tag[1:]}: показывает агрегированную точность 'Precision_micro = Σ(TP_i)/Σ(TP_i+FP_i)'\n\n")
                     lines.append(f"![PR микро @{tag[0]}.{tag[1:]}]({images[f'pr_micro_{tag}']})\n\n")
             
-            # PR best-points formulas only
             if images.get("ap_pr_points_macro"):
                 lines.append("Лучшие точки PR макро: показывает оптимальные точки по F1 'F1 = 2·P·R/(P+R)'\n\n")
                 lines.append(f"![Лучшие точки PR макро]({images['ap_pr_points_macro']})\n\n")
@@ -454,12 +453,10 @@ class ReportGenerator(ReportConfig):
                 lines.append("Лучшие точки PR микро: показывает оптимальные микро точки 'F1_micro = 2·P_micro·R_micro/(P_micro+R_micro)'\n\n")
                 lines.append(f"![Лучшие точки PR микро]({images['ap_pr_points_micro']})\n\n")
             
-            # Per-class AP formula only
             if images.get("per_class_ap"):
                 lines.append("AP по классам: показывает точность для каждого класса 'AP_class = ∫₀¹ P(R) dR'\n\n")
                 lines.append(f"![AP по классам]({images['per_class_ap']})\n\n")
 
-        # mAP numeric details
         map_metric = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
         if map_metric and isinstance(map_metric.stats, dict):
             st = map_metric.stats
@@ -471,7 +468,6 @@ class ReportGenerator(ReportConfig):
                     except Exception:
                         lines.append(f"- {key}: {st[key]}\n")
             
-            # Lowest AP classes table
             cats = st.get("categories") or []
             per_ap = st.get("per_class_ap_avg") or st.get("per_class_ap") or []
             gt_counts = st.get("gt_counts") or []

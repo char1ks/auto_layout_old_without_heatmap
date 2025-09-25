@@ -2,20 +2,23 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple, Dict, Any, Union, Callable
+import sys
 
 import numpy as np
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
-from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
-from searchdet_pipeline.eval_classes.Dataset import Dataset
-from searchdet_pipeline.eval_classes.DetectorBase import DetectorBase
-from searchdet_pipeline.eval_classes.metrics import (
+from DatasetModel import DatasetModel
+from Dataset import Dataset
+from DetectorBase import DetectorBase
+from metrics import (
     Metric, MetricOutputModel, MeanAveragePrecision, 
     MeanIntersectionOverUnion, DiceCoefficient
 )
-from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
-from searchdet_pipeline.eval_classes.Tracer import Tracer
-from searchdet_pipeline.eval_classes.ReportGenerator import ReportGenerator
-from searchdet_pipeline.eval_classes.Context import Context
+from COCOAnnotations import COCOAnnotation
+from Tracer import Tracer
+from ReportGenerator import ReportGenerator
+from Context import Context
 
 
 class DatasetPoint:

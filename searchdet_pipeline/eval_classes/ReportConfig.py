@@ -4,9 +4,10 @@ from datetime import datetime
 from collections import Counter
 import statistics
 import json
-
-from searchdet_pipeline.eval_classes.Context import Context
-from searchdet_pipeline.eval_classes.metrics import MetricOutputModel
+import sys
+from pathlib import Path
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
 @dataclass
 class ReportConfig:

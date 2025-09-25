@@ -3,13 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
+import sys
 
 import numpy as np
 from PIL import Image, ImageDraw
+EVAL_CLASSES_PATH = Path(__file__).parent.parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
-from searchdet_pipeline.eval_classes.Dataset import Dataset
-from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
-from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
+from Dataset import Dataset
+from DatasetModel import DatasetModel
+from COCOAnnotations import COCOAnnotation
 
 
 class ArchiveVOCDataset(Dataset):

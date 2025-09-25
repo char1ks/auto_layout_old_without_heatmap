@@ -5,9 +5,13 @@ from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Union, Tuple
 from sklearn.metrics import classification_report, precision_recall_curve, average_precision_score
 from torchmetrics import JaccardIndex, F1Score
+import sys
+from pathlib import Path
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
-from searchdet_pipeline.eval_classes.DatasetModel import DatasetModel
-from searchdet_pipeline.eval_classes.COCOAnnotations import COCOAnnotation
+from DatasetModel import DatasetModel
+from COCOAnnotations import COCOAnnotation
 
 
 @dataclass
@@ -221,7 +225,6 @@ class MeanAveragePrecision(Metric):
         map75 = _get_thr_value(0.75)
         per_class_ap_avg = [float(np.mean(ap_per_label_per_thr[lab])) for lab in uniq_labels]
 
-        # Counts per class for distributions
         gt_counts = [
             sum(len(lst) for lst in (gt_boxes_by_label_file.get(lab, {}) or {}).values())
             for lab in uniq_labels

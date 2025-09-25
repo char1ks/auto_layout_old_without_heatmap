@@ -5,15 +5,18 @@ import importlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
+import sys
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
-from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
-from searchdet_pipeline.eval_classes.DatasetPoint import DatasetPoint
-from searchdet_pipeline.eval_classes.metrics import (
+from Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
+from DatasetPoint import DatasetPoint
+from metrics import (
     MetricOutputModel,
     MeanAveragePrecision,
     MeanIntersectionOverUnion,
@@ -22,7 +25,7 @@ from searchdet_pipeline.eval_classes.metrics import (
 )
 from searchdet_pipeline.core.detector import SearchDetDetector
 from searchdet_pipeline.core.config import get_preset_config
-from searchdet_pipeline.eval_classes.Tracer import Tracer
+from Tracer import Tracer
 
 App = typer.Typer()
 console = Console()

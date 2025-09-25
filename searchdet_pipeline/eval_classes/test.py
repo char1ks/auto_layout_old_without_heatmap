@@ -4,13 +4,10 @@ from pathlib import Path
 import sys
 from typing import Dict, Any, List, Tuple, Optional
 import xml.etree.ElementTree as ET
-try:
-    from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
-except ModuleNotFoundError:
-    ROOT = Path(__file__).resolve().parents[2]
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    from searchdet_pipeline.eval_classes.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
+
+from Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
 
 
 ImageDir = Optional[Path]

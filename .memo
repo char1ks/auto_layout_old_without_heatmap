@@ -1,0 +1,34 @@
+python -m searchdet_pipeline.cli.main detect .local/examples_new/details/examples/1.jpg \
+    --positive .local/examples_new/details/positive/ \
+    --output output/ \
+    --dinov3-backbone vit7b16 \
+    --vit-pooling cls
+
+
+# test server
+
+# 1) Create a fresh venv (optional, but recommended)
+python3 -m venv venv
+source venv/bin/activate
+
+# 2) Install requirements
+pip install fastapi "uvicorn[standard]" python-multipart requests pillow
+
+# 3) Export auth credentials (must match in test_app.py)
+export APP_USERNAME=admin
+export APP_PASSWORD=secret
+
+# 4) Run the FastAPI app with uvicorn
+PYTHONPATH=. python searchdet_pipeline/app.py
+
+PYTHONPATH=. python searchdet_pipeline/test_app.py
+
+# ----------
+
+PYTHONPATH=. python searchdet_pipeline/test_app.py \
+  --pos-dir ".local/examples_new/details/positive" \
+  --infer ".local/examples_new/details/examples/1.jpg"
+
+
+# port forwarding for testing on a client machine
+ssh -C -L 8000:localhost:8000 synetra@46.146.213.13

@@ -159,6 +159,8 @@ def min_max_scale(array: np.ndarray) -> np.ndarray:
 
 
 if __name__=="__main__":
+    # TODO: (@gas) convert to tests
+
     import time 
     import cv2
 

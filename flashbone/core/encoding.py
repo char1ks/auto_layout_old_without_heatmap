@@ -160,10 +160,12 @@ class DinoV3EncoderGaz:
             patches_selected.append(selected)
             patches_mean.append(mean)
         patches_mean = torch.stack(patches_mean)
-        return patches_mean
+        return patches_mean.detach()
 
 
 if __name__=="__main__":
+    # TODO: (@gas) convert to tests
+
     """
     PYTHONPATH=. python flashbone/core/encoding.py
     """

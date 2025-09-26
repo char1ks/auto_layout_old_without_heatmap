@@ -1,5 +1,5 @@
 from typing import Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PIL import Image
 import numpy as np
@@ -14,6 +14,13 @@ from flashbone.core.encoding import DinoV3EncoderGaz
 class ClassData:
     class_id: int
     images: list[Image.Image]
+    negative_examples: list[Image.Image] = field(default_factory=list)
+
+
+@dataclass
+class ClassifierPrediction:
+    class_id: int
+    score: float
 
 
 class ClassifierKNN:
@@ -42,12 +49,12 @@ class ClassifierKNN:
 
     def _index_single(self, class_id: int, query_imgs: list[Image.Image], negative_imgs: list[Image.Image] = []) -> None:
         positive_embeddings = [self._encoder.encode([img]).cls.cpu().numpy() for img in query_imgs]
-        positive_embeddings = np.array(positive_embeddings, dtype=np.float32)
+        positive_embeddings = np.concatenate(positive_embeddings, axis=0)
     
         negative_embeddings = np.zeros((1, self._d), dtype=np.float32)
         if negative_imgs:
             negative_embeddings = [self._encoder.encode([img]).cls.cpu().numpy() for img in negative_imgs]
-            negative_embeddings = np.array(negative_embeddings, dtype=np.float32)
+            negative_embeddings = np.concatenate(negative_embeddings, axis=0)
     
         # Adjust the query embedding for each query image
         adjusted_query_vectors = np.array([
@@ -66,31 +73,68 @@ class ClassifierKNN:
 
     def index(self, dataset: list[ClassData]) -> None:
         for cls in dataset:
-            self._index(cls.class_id, cls.images)
+            self._index_single(cls.class_id, cls.images)
 
-    def predict(self, images: list[Image.Image], threshold: float = 0.474, mask_threshold: float = 0.5) -> Any:
-        # TODO: (@gas) images could be 4-channel - with masks; get mask vectors; SPLIT
-        masks = ...
-        images_ = ...
+    def predict(self, images: list[Image.Image], masks: list[Image.Image] = [], threshold: float = 0.474, mask_threshold: float = 0.5, topk: int = 1) -> Any:
+        # TODO: (@gas) adopt for batched encoding (`encoder` TODOs must be resolved before that)
         mask_vectors = [
             self._encoder.encode_mask(
-                masks=mask, images=img, mask_threshold=mask_threshold).numpy() 
-            for img, mask in zip(images_, masks)
+                masks=[mask], images=[img], mask_threshold=mask_threshold).cpu().numpy() 
+            for img, mask in zip(images, masks)
         ]
-        mask_vectors = np.array(mask_vectors, dtype=np.float32)
+        mask_vectors = np.concatenate(mask_vectors, axis=0)
         mask_vectors = mask_vectors / np.linalg.norm(mask_vectors, axis=1, keepdims=True)
-        preds: list = []
+        preds: list[ClassifierPrediction] = []
         for class_id, index in self._index.items():
             # Search for matches in the FAISS index
-            similarities, indices = index.search(mask_vectors, 1)
+            similarities, indices = index.search(mask_vectors, topk)
             # Map similarities to [0, 1]
-            normalized_similarities = (similarities + 1) / 2
+            normalized_similarities = np.squeeze((similarities + 1) / 2, 0)
             # Apply a threshold to filter matches
             filtered_indices = np.where(normalized_similarities > threshold)[0]
-            # TODO: (@gas) create class ids and scores per each input; define a separate type for that
-
+            if not len(filtered_indices):
+                pred = ClassifierPrediction(
+                    class_id=-1,
+                    score=0,
+                )
+            else:
+                pred = ClassifierPrediction(
+                    class_id=class_id,
+                    score=normalized_similarities[filtered_indices][0],
+                )
+            preds.append(pred)
         return preds
 
 
 if __name__=="__main__":
-    pass
+    # TODO: (@gas) convert to tests
+
+    img_pil_right = Image.open(".local/image_right.jpg").convert("RGB")
+    # sky crop
+    train_image_neg_1 = img_pil_right.crop((0, 0, 150, 150)) 
+    # grass crop
+    train_image_neg_2 = img_pil_right.crop(
+        (img_pil_right.width-150, img_pil_right.height-150, img_pil_right.width, img_pil_right.height))
+
+    encoder = DinoV3EncoderGaz()
+    classifier = ClassifierKNN(encoder=encoder, d=1024)
+
+    classifier.index([
+        ClassData(
+            class_id=0, 
+            images=[img_pil_right], 
+            negative_examples=[train_image_neg_1, train_image_neg_2],
+        ),
+    ])
+
+    img_pil_left = Image.open(".local/image_left.jpg").convert("RGB")
+    mask_left = Image.open(".local/image_left_fg.png")
+    mask_left = mask_left.split()[-1]
+
+    preds = classifier.predict(
+        images=[img_pil_left],
+        masks=[mask_left],
+        threshold=0.4,
+        mask_threshold=0.5,
+    )
+    print(">>> PREDS: ", preds)

@@ -1,8 +1,8 @@
 dataset:
   cls: Example_datasets.ArchiveVOCDataset.ArchiveVOCDataset
-  root: sheep-detection
-  ann_dir: sheep-detection/annotations
-  img_dir: sheep-detection/images
+  root: fruits
+  ann_dir: ./fruits/annotations
+  img_dir: ./fruits/images
   kwargs: {}
 detector:
   cls: searchdet_pipeline.core.detector.SearchDetDetector

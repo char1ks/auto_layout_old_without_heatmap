@@ -7,7 +7,8 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from typing import Dict, List, Optional, Union, Any, Tuple
-sys.path.append('./searchdet-main')
+SEARCHDET_MAIN_PATH = Path(__file__).parent.parent.parent / "searchdet-main"
+sys.path.append(str(SEARCHDET_MAIN_PATH))
 from mask_withsearch import initialize_sam as init_searchdet
 from .mask_generation import MaskGenerator
 from .filtering import MaskFilter  
@@ -145,7 +146,6 @@ class SearchDetDetector(DetectorBase):
 
         self.class_pos, self.q_neg = None, None
         self.neg_imgs, self.all_positive_images = None, None
-
         # NOTE: (@gas) only for cli usage
         self.result_saver = ResultSaver(self.config.overlay_alpha)
 
@@ -156,7 +156,7 @@ class SearchDetDetector(DetectorBase):
         pos_by_class = self._load_positive_by_class(positive_dir)
         if len(pos_by_class) == 0:
             print("   ❌ Нет положительных примеров — прекращаем.")
-            return {"found_elements": [], "masks": []}
+            return {}, []
         total_pos = sum(len(v) for v in pos_by_class.values())
         neg_imgs = self._load_example_images(negative_dir) if negative_dir else []
         timing_info['examples_loading'] = time.time() - t_examples

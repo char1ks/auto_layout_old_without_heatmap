@@ -13,6 +13,8 @@ from rich.panel import Panel
 from rich.table import Table
 EVAL_CLASSES_PATH = Path(__file__).parent
 sys.path.insert(0, str(EVAL_CLASSES_PATH))
+SEARCHDET_PIPELINE_PATH = Path(__file__).parent.parent / "searchdet_pipeline"
+sys.path.insert(0, str(SEARCHDET_PIPELINE_PATH.parent))
 
 from Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
 from DatasetPoint import DatasetPoint

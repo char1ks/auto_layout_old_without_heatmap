@@ -26,12 +26,15 @@ from ..utils.validation import ImageValidator, DirectoryValidator, ValidationErr
 import torch
 from .models import MaskBackend, BackboneType
 
-from searchdet_pipeline.detector_base import DetectorBase
+from evaluate.DetectorBase import DetectorBase
+from evaluate.Context import Context
+from evaluate.COCOAnnotations import COCOAnnotation
 from searchdet_pipeline.core.binning_processor import bin_filter_heatmap
 
 
 class SearchDetDetector(DetectorBase):
     def __init__(self, config: Optional[DetectorConfig] = None, **kwargs: Any) -> None:
+        super().__init__(name=kwargs.get('name', 'SearchDetDetector'))
         if config is None:
             self.config = DetectorConfig.from_dict(kwargs)
         else:
@@ -175,7 +178,7 @@ class SearchDetDetector(DetectorBase):
         self.class_pos, self.q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs, pos_as_query_masks=False)
         timing_info['embedding_extraction'] = time.time() - t_embeddings 
 
-    def find_present_elements(self, image_np: np.ndarray) -> Dict[str, Any]:
+    def find_present_elements(self, image_np: np.ndarray, context: Context, *args, **kwargs) -> Dict[str, Any]:
         if self.config.use_heatmap_sam_hybrid:
             return self._find_present_elements_with_fastsam_integration(image_np)
         return self._find_present_elements(image_np)
@@ -763,3 +766,30 @@ class SearchDetDetector(DetectorBase):
             print("   • Проверьте размер feature map (SEARCHDET_FEAT_SHORT_SIDE)")
             print("   • Убедитесь что используется быстрый метод извлечения")
         print()
+
+    def _convert_to_annotations(self, results: Dict[str, Any], context: Context) -> List[COCOAnnotation]:
+        annotations = []
+        if 'masks' not in results:
+            return annotations
+        
+        original_image = context.original_image if hasattr(context, 'original_image') else None
+        
+        for mask_data in results['masks']:
+            if isinstance(mask_data, dict):
+                mask = mask_data.get('mask')
+                bbox = mask_data.get('bbox')
+                confidence = mask_data.get('confidence', 1.0)
+                area = mask_data.get('area', 0)
+                class_label = mask_data.get('class', 'unknown')
+                
+                annotation = COCOAnnotation(
+                    mask=mask,
+                    bbox=bbox,
+                    confidence=confidence,
+                    area=area,
+                    class_label=class_label,
+                    original_image=original_image
+                )
+                annotations.append(annotation)
+        
+        return annotations

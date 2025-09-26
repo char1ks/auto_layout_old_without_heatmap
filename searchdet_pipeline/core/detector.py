@@ -772,23 +772,50 @@ class SearchDetDetector(DetectorBase):
         if 'masks' not in results:
             return annotations
         
-        original_image = context.original_image if hasattr(context, 'original_image') else None
+        # Get original image from context.extra (DetectorBase stores it there)
+        original_image = None
+        try:
+            if hasattr(context, 'extra') and isinstance(context.extra, dict):
+                original_image = context.extra.get('original_image')
+        except Exception:
+            original_image = None
         
         for mask_data in results['masks']:
             if isinstance(mask_data, dict):
-                mask = mask_data.get('mask')
-                bbox = mask_data.get('bbox')
+                # Prefer 'segmentation' (how pipeline stores mask); fallback to 'mask'
+                mask = mask_data.get('segmentation', mask_data.get('mask'))
+                bbox = mask_data.get('bbox', [])
                 confidence = mask_data.get('confidence', 1.0)
                 area = mask_data.get('area', 0)
                 class_label = mask_data.get('class', 'unknown')
                 
+                # Get image dimensions
+                if original_image is not None:
+                    if hasattr(original_image, 'shape'):
+                        height, width = original_image.shape[:2]
+                    else:
+                        width, height = original_image.size
+                else:
+                    # Default fallback values
+                    width, height = 640, 480
+                
+                # Read file_name from context.extra (DetectorBase sets it there)
+                if hasattr(context, 'extra') and isinstance(context.extra, dict):
+                    file_name = context.extra.get('file_name', 'unknown.jpg')
+                else:
+                    file_name = 'unknown.jpg'
+                
                 annotation = COCOAnnotation(
-                    mask=mask,
-                    bbox=bbox,
-                    confidence=confidence,
+                    img=original_image if original_image is not None else np.zeros((height, width, 3), dtype=np.uint8),
+                    mask=mask if mask is not None else np.zeros((height, width), dtype=np.uint8),
+                    label=class_label,
+                    image_size=(width, height),
+                    width=width,
+                    height=height,
                     area=area,
-                    class_label=class_label,
-                    original_image=original_image
+                    file_name=file_name,
+                    bbox=bbox,
+                    confidence=confidence
                 )
                 annotations.append(annotation)
         

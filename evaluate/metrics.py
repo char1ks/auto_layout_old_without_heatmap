@@ -13,6 +13,28 @@ sys.path.insert(0, str(EVAL_CLASSES_PATH))
 from DatasetModel import DatasetModel
 from COCOAnnotations import COCOAnnotation
 
+# --- Safe helpers to avoid NoneType -> float() errors ---
+def _safe_float(x: Optional[Union[float, int, str]], default: float = 0.0) -> float:
+    try:
+        if x is None:
+            return default
+        v = float(x)
+        if np.isfinite(v):
+            return v
+        return default
+    except Exception:
+        return default
+
+
+def _safe_box(bb: Optional[Union[List[float], Tuple[float, float, float, float]]]) -> Optional[List[float]]:
+    if not isinstance(bb, (list, tuple)) or len(bb) != 4:
+        return None
+    x = _safe_float(bb[0])
+    y = _safe_float(bb[1])
+    w = _safe_float(bb[2])
+    h = _safe_float(bb[3])
+    return [x, y, w, h]
+
 
 @dataclass
 class MetricOutputModel:
@@ -41,12 +63,24 @@ class MeanAveragePrecision(Metric):
 
     @staticmethod
     def _ap_pr(y_true: List[int], y_scores: List[float]) -> Tuple[float, List[float], List[float]]:
+        # sanitize inputs to avoid None and non-finite values
         if not y_true:
             return 0.0, [1.0], [0.0]
         try:
-            ap = float(average_precision_score(y_true, y_scores))
-            p, r, _ = precision_recall_curve(y_true, y_scores)
-            return ap, [float(x) for x in p], [float(x) for x in r]
+            y_true_san = [1 if int(v) == 1 else 0 for v in y_true]
+            y_scores_san = [_safe_float(v) for v in y_scores]
+            pos = int(np.sum(y_true_san))
+            neg = len(y_true_san) - pos
+            # Handle degenerate cases explicitly to avoid sklearn warnings
+            if pos == 0:
+                return 0.0, [1.0], [0.0]
+            if neg == 0:
+                return 1.0, [1.0], [1.0]
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=UserWarning)
+                ap = _safe_float(average_precision_score(y_true_san, y_scores_san))
+                p, r, _ = precision_recall_curve(y_true_san, y_scores_san)
+            return ap, [_safe_float(x) for x in p], [_safe_float(x) for x in r]
         except Exception:
             return 0.0, [1.0], [0.0]
 
@@ -78,19 +112,21 @@ class MeanAveragePrecision(Metric):
         for fn in files:
             for a in gt_by_file.get(fn, []):
                 lab, bb = str(getattr(a, 'label', '')), getattr(a, 'bbox', None)
-                if lab in gt_boxes_by_label_file and isinstance(bb, (list, tuple)) and len(bb) == 4:
+                safe_bb = _safe_box(bb)
+                if lab in gt_boxes_by_label_file and safe_bb is not None:
                     gt_boxes_by_label_file[lab].setdefault(fn, []).append(
-                        self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])])
+                        self._xywh_to_xyxy([safe_bb[0], safe_bb[1], safe_bb[2], safe_bb[3]])
                     )
         preds_by_label = {lab: [] for lab in uniq_labels}
         for fn in files:
             for p in pr_by_file.get(fn, []):
                 lab, bb = str(getattr(p, 'label', '')), getattr(p, 'bbox', None)
-                score = float(getattr(p, 'score', getattr(p, 'confidence', 1.0)))
-                if lab in preds_by_label and isinstance(bb, (list, tuple)) and len(bb) == 4:
+                score = _safe_float(getattr(p, 'score', getattr(p, 'confidence', 1.0)))
+                safe_bb = _safe_box(bb)
+                if lab in preds_by_label and safe_bb is not None:
                     preds_by_label[lab].append({
                         'file': fn,
-                        'box': self._xywh_to_xyxy([float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])]),
+                        'box': self._xywh_to_xyxy([safe_bb[0], safe_bb[1], safe_bb[2], safe_bb[3]]),
                         'score': score,
                     })
         for lab in uniq_labels:
@@ -101,7 +137,7 @@ class MeanAveragePrecision(Metric):
         matched_by_file = {fn: set() for fn in gt_per_file.keys()}
         y_true, y_scores = [], []
         for p in preds_list:
-            fn, box_pred, score = p['file'], p['box'], float(p['score'])
+            fn, box_pred, score = p['file'], p['box'], _safe_float(p['score'])
             gts = gt_per_file.get(fn, [])
             best_iou, best_idx = 0.0, None
             if gts:
@@ -113,7 +149,7 @@ class MeanAveragePrecision(Metric):
                         continue
                     if iou_val > best_iou:
                         best_iou, best_idx = iou_val, gi
-            if best_iou >= float(thr) and best_idx is not None:
+            if best_iou >= _safe_float(thr) and best_idx is not None:
                 y_true.append(1); y_scores.append(score)
                 matched_by_file.setdefault(fn, set()).add(best_idx)
             else:
@@ -141,13 +177,13 @@ class MeanAveragePrecision(Metric):
                 yt, ys = self._match_make_targets(preds_list, gt_per_file, thr)
                 y_store[thr][lab] = (yt, ys)
                 ap, p, r = self._ap_pr(yt, ys)
-                ap_per_label_per_thr[lab][t_idx] = ap
+                ap_per_label_per_thr[lab][t_idx] = _safe_float(ap)
                 pr_curves_per_thr[thr][lab] = {'precision': p, 'recall': r}
         recall_grid = np.linspace(0.0, 1.0, 101)
         pr_micro, pr_macro = {}, {}
         ap_iou_micro = []
         for thr in self.iou_thresholds:
-            thr_key = f"{float(thr):.2f}"
+            thr_key = f"{_safe_float(thr):.2f}"
             all_y_true, all_y_scores = [], []
             for lab, (yt, ys) in (y_store.get(thr, {}) or {}).items():
                 if yt:
@@ -156,8 +192,8 @@ class MeanAveragePrecision(Metric):
                 ap_micro_val, p_micro, r_micro = self._ap_pr(all_y_true, all_y_scores)
             else:
                 ap_micro_val, p_micro, r_micro = 0.0, [1.0], [0.0]
-            ap_iou_micro.append(float(ap_micro_val))
-            pr_micro[thr_key] = {'precision': [float(x) for x in p_micro], 'recall': [float(x) for x in r_micro]}
+            ap_iou_micro.append(_safe_float(ap_micro_val))
+            pr_micro[thr_key] = {'precision': [_safe_float(x) for x in p_micro], 'recall': [_safe_float(x) for x in r_micro]}
 
             # макро: усредняем precision после интерполяции на общую сетку recall
             macro_stack = []
@@ -170,21 +206,52 @@ class MeanAveragePrecision(Metric):
                                          left=p[order][0], right=p[order][-1])
                     macro_stack.append(p_interp)
             p_macro = np.mean(np.stack(macro_stack, axis=0), axis=0) if macro_stack else np.zeros_like(recall_grid)
-            pr_macro[thr_key] = {'precision': [float(x) for x in p_macro],
-                                 'recall': [float(x) for x in recall_grid]}
+            pr_macro[thr_key] = {'precision': [_safe_float(x) for x in p_macro],
+                                 'recall': [_safe_float(x) for x in recall_grid]}
 
         # сводные метрики
-        per_class_ap_avg = [float(np.mean(ap_per_label_per_thr[lab])) for lab in uniq_labels]
-        macro_map_iou = [float(np.mean([ap_per_label_per_thr[lab][i] for lab in uniq_labels])) if uniq_labels else 0.0
-                         for i in range(len(self.iou_thresholds))]
-        overall_map = float(np.mean(macro_map_iou)) if macro_map_iou else 0.0
+        per_class_ap_avg = []
+        for lab in uniq_labels:
+            ap_values = ap_per_label_per_thr[lab]
+            if ap_values and len(ap_values) > 0:
+                mean_val = np.mean(ap_values)
+                if np.isfinite(mean_val):
+                    per_class_ap_avg.append(_safe_float(mean_val))
+                else:
+                    per_class_ap_avg.append(0.0)
+            else:
+                per_class_ap_avg.append(0.0)
+        
+        macro_map_iou = []
+        for i in range(len(self.iou_thresholds)):
+            if uniq_labels:
+                ap_values = [ap_per_label_per_thr[lab][i] for lab in uniq_labels if i < len(ap_per_label_per_thr[lab])]
+                if ap_values:
+                    mean_val = np.mean(ap_values)
+                    if np.isfinite(mean_val):
+                        macro_map_iou.append(_safe_float(mean_val))
+                    else:
+                        macro_map_iou.append(0.0)
+                else:
+                    macro_map_iou.append(0.0)
+            else:
+                macro_map_iou.append(0.0)
+        
+        if macro_map_iou:
+            overall_mean = np.mean(macro_map_iou)
+            overall_map = _safe_float(overall_mean) if np.isfinite(overall_mean) else 0.0
+        else:
+            overall_map = 0.0
         def _thr_val(target: float) -> float:
             for i, thr in enumerate(self.iou_thresholds):
-                if abs(float(thr) - target) < 1e-6:
-                    return float(macro_map_iou[i])
+                if abs(_safe_float(thr) - _safe_float(target)) < 1e-6:
+                    if i < len(macro_map_iou) and macro_map_iou[i] is not None:
+                        val = macro_map_iou[i]
+                        return _safe_float(val) if np.isfinite(_safe_float(val)) else 0.0
+                    return 0.0
             return 0.0
         map50, map75 = _thr_val(0.5), _thr_val(0.75)
-        iou_thresholds_list = [float(t) for t in self.iou_thresholds]
+        iou_thresholds_list = [_safe_float(t) for t in self.iou_thresholds]
 
         gt_counts = [sum(len(v) for v in (gt_boxes_by_label_file.get(lab, {}) or {}).values()) for lab in uniq_labels]
         pred_counts = [len(preds_by_label.get(lab, []) or []) for lab in uniq_labels]
@@ -378,7 +445,6 @@ class ClassificationReportMetric(Metric):
             rep_text = classification_report(y_true, y_pred, output_dict=False, zero_division=0)
             correct = sum(1 for a, b in zip(y_true, y_pred) if a == b)
             acc = float(correct) / float(len(y_true)) if y_true else 0.0
-
             stats = {
                 "num_files": len(files),
                 "dict": rep_dict,

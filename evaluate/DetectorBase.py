@@ -12,8 +12,6 @@ class DetectorBase(abc.ABC):
         self.detector_name = name or self.__class__.__name__
     @classmethod
     def read_input_img(cls, image_path: str | Path) -> np.ndarray:
-        if cv2 is None:
-            raise RuntimeError("OpenCV (cv2) is required for read_input_img; install opencv-python.")
         img_bgr = cv2.imread(str(image_path))
         image_np = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         return image_np
@@ -55,7 +53,7 @@ class DetectorBase(abc.ABC):
             pass
         try:
             results = self.find_present_elements(image_np, context, *args, **kwargs)
-            annotations = self._convert_to_coco_annotations(results, context)
+            annotations = self._convert_to_annotations(results, context)
             context.finish(success=True)
             context.metrics['num_detections'] = len(annotations)
             return annotations
@@ -67,5 +65,5 @@ class DetectorBase(abc.ABC):
                 callback(context)
     
     @abc.abstractmethod
-    def _convert_to_coco_annotations(self, results: Dict[str, Any], context: Context) -> List[COCOAnnotation]:
+    def _convert_to_annotations(self, results: Dict[str, Any], context: Context) -> List[COCOAnnotation]:
         pass

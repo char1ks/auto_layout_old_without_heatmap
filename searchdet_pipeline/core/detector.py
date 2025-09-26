@@ -610,17 +610,6 @@ class SearchDetDetector(DetectorBase):
         return [x_min, y_min, width, height]
 
     def _load_example_images(self, dir_path: Optional[Union[str, Path]]) -> List[Image.Image]:
-        """Рекурсивно загружает все изображения из директории.
-        
-        Args:
-            dir_path: Путь к директории с изображениями
-            
-        Returns:
-            Список загруженных изображений PIL
-            
-        Raises:
-            ValidationError: При некорректном пути к директории
-        """
         from pathlib import Path
         from PIL import Image
 
@@ -662,14 +651,6 @@ class SearchDetDetector(DetectorBase):
         return images
 
     def _load_positive_by_class(self, dir_path: Optional[Union[str, Path]]) -> Dict[str, List[Image.Image]]:
-        """Загружает позитивные примеры, распределяя их по классам.
-        
-        Args:
-            dir_path: Путь к директории с положительными примерами
-            
-        Returns:
-            Словарь, где ключи - названия классов, значения - списки изображений
-        """
         from pathlib import Path
         result = {}
         if not dir_path:
@@ -707,12 +688,6 @@ class SearchDetDetector(DetectorBase):
         return result
     
     def switch_segmentation_backend(self, backend_type: str, **kwargs) -> None:
-        """Переключает бэкенд сегментации.
-        
-        Args:
-            backend_type: Тип бэкенда ('sam', 'fastsam', 'heatmap')
-            **kwargs: Дополнительные параметры для бэкенда
-        """
         print(f"🔄 Переключение бэкенда сегментации на: {backend_type}")
         
         if backend_type == 'sam':
@@ -737,19 +712,9 @@ class SearchDetDetector(DetectorBase):
         print(f"✅ Бэкенд сегментации переключен на: {backend_type}")
     
     def get_current_segmentation_backend(self) -> str:
-        """Возвращает текущий тип бэкенда сегментации.
-        
-        Returns:
-            Строка с типом текущего бэкенда
-        """
         return self.sam_predictor.get_backend_type()
     
     def set_heatmap_for_segmentation(self, heatmap: np.ndarray) -> None:
-        """Устанавливает heatmap для сегментации (только для heatmap бэкенда).
-        
-        Args:
-            heatmap: Тепловая карта для генерации масок
-        """
         if self.get_current_segmentation_backend() == 'heatmap':
             self.sam_predictor.set_heatmap(heatmap)
         else:
@@ -757,11 +722,6 @@ class SearchDetDetector(DetectorBase):
                   f"Текущий бэкенд: {self.get_current_segmentation_backend()}")
     
     def _print_timing_statistics(self, timing_info: Dict[str, float]) -> None:
-        """Выводит детальную статистику времени выполнения.
-        
-        Args:
-            timing_info: Словарь с временными метриками
-        """
         print("\n" + "="*60)
         print("⏱️ ДЕТАЛЬНАЯ СТАТИСТИКА ВРЕМЕНИ ВЫПОЛНЕНИЯ:")
         print("="*60)

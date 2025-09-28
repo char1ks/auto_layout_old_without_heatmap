@@ -32,6 +32,32 @@ from Tracer import Tracer
 App = typer.Typer()
 console = Console()
 
+from contextlib import contextmanager
+import inspect
+import builtins
+
+@contextmanager
+def suppress_print_from(prefixes: list[str]):
+    orig_print = builtins.print
+    def filtered_print(*args, **kwargs):
+        try:
+            st = inspect.stack()
+            for rec in st[1:]:
+                module = inspect.getmodule(rec[0])
+                name = getattr(module, "__name__", None)
+                if name and any(name.startswith(p) for p in prefixes):
+                    return
+                if name:
+                    break
+        except Exception:
+            pass
+        return orig_print(*args, **kwargs)
+    builtins.print = filtered_print
+    try:
+        yield
+    finally:
+        builtins.print = orig_print
+
 
 def _load_obj(dotted: str) -> Any:
     module_path, _, obj_name = dotted.replace(":", ".").rpartition(".")
@@ -181,13 +207,14 @@ class EvalCLI:
         out_dir.mkdir(parents=True, exist_ok=True)
         dataset, detector, metrics_list = self._build_from_config()
         reporter = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
-        preds, metrics = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter).run(
-            positive_dir=self.positive_dir,
-            negative_dir=self.negative_dir,
-            image_root=Path(dataset.root) if hasattr(dataset, "root") else None,
-            dump_report=True,
-            report_output_dir=out_dir,
-        )
+        with suppress_print_from(["searchdet_pipeline"]):
+            preds, metrics = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter).run(
+                positive_dir=self.positive_dir,
+                negative_dir=self.negative_dir,
+                image_root=Path(dataset.root) if hasattr(dataset, "root") else None,
+                dump_report=True,
+                report_output_dir=out_dir,
+            )
         self._save_artifacts(preds, metrics, out_dir)
         self._pretty_print(metrics, out_dir)
         console.print(Panel.fit("Evaluation completed", style="bold green"))

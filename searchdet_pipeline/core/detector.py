@@ -70,9 +70,9 @@ class SearchDetDetector(DetectorBase):
         print(f"🔧 Выбран SAM энкодер: {self.sam_encoder}")
 
         self.searchdet_resnet, self.searchdet_layer, self.searchdet_transform, self.searchdet_sam = init_searchdet()
-        if not self .backbone .startswith ('dinov2'):
-            import torchvision .transforms as transforms
-            feat_short_side_env =os .getenv ('SEARCHDET_FEAT_SHORT_SIDE','384')
+        if not self.backbone.startswith('dinov2'):
+            import torchvision.transforms as transforms
+            feat_short_side_env =os.getenv('SEARCHDET_FEAT_SHORT_SIDE','384')
             if feat_short_side_env =='None'or feat_short_side_env =='none'or feat_short_side_env is None :
                 feat_short_side =384
             else :

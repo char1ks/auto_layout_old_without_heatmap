@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Union, Tuple
 from pathlib import Path
 from datetime import datetime
@@ -157,11 +156,11 @@ class ReportGenerator(ReportConfig):
 
         spans_avg: Dict[str, float] = timing_stats.get("spans_avg", {})
         if spans_avg:
-            names = list(spans_avg.keys())
-            values = [spans_avg[k] for k in names]
-            short_names = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in names]
+            span_names = list(spans_avg.keys())
+            span_values = [spans_avg[k] for k in span_names]
+            short_names = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in span_names]
             plt.figure(figsize=(self.fig_w, self.fig_h))
-            plt.barh(short_names, values, color="#54A24B")
+            plt.barh(short_names, span_values, color="#54A24B")
             plt.title("Avg span time (sec)")
             plt.tick_params(axis="y", labelsize=self.tick_fontsize)
             plt.tick_params(axis="x", labelsize=self.tick_fontsize)
@@ -180,13 +179,13 @@ class ReportGenerator(ReportConfig):
                     ("Predicted class distribution", pred_counts, "#F58518", "pred_class_distribution", "pred_class_distribution.svg"),
                 ]:
                     if counts:
-                        x = list(range(len(categories)))
+                        x_positions = list(range(len(categories)))
                         labels = [str(c) for c in categories]
                         labels = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in labels]
                         plt.figure(figsize=(self.fig_w, self.fig_h))
-                        plt.bar(x, counts, color=color)
+                        plt.bar(x_positions, counts, color=color)
                         plt.title(title)
-                        plt.xticks(x, labels, rotation=45, ha="right", fontsize=self.tick_fontsize)
+                        plt.xticks(x_positions, labels, rotation=45, ha="right", fontsize=self.tick_fontsize)
                         plt.tick_params(axis="y", labelsize=self.tick_fontsize)
                         save(fname, key)
 
@@ -241,7 +240,7 @@ class ReportGenerator(ReportConfig):
                             plt.tick_params(labelsize=self.tick_fontsize)
                             save(f"{fname_key}.svg", fname_key)
             if self.include_ap_graphs:
-                macro_pts: List[Tuple[float, float, str]] = []  
+                macro_pts: List[Tuple[float, float, str]] = [] 
                 micro_pts: List[Tuple[float, float, str]] = []
                 prM_all = st.get("pr_macro", {}) or {}
                 prm_all = st.get("pr_micro", {}) or {}
@@ -259,7 +258,9 @@ class ReportGenerator(ReportConfig):
                     plt.figure(figsize=(self.fig_w, self.fig_h))
                     plt.scatter([x for x, _, _ in macro_pts], [y for _, y, _ in macro_pts], c="#4C78A8")
                     for x, y, label in macro_pts:
-                        plt.annotate(label, (x, y), textcoords="offset points", xytext=(4, 2), fontsize=7)
+                        x_f = float(x)
+                        y_f = float(y)
+                        plt.annotate(label, (x_f, y_f), textcoords="offset points", xytext=(4, 2), fontsize=7)
                     plt.xlabel("Recall")
                     plt.ylabel("Precision")
                     plt.title("Macro PR best-points per IoU threshold")
@@ -272,7 +273,9 @@ class ReportGenerator(ReportConfig):
                     plt.figure(figsize=(self.fig_w, self.fig_h))
                     plt.scatter([x for x, _, _ in micro_pts], [y for _, y, _ in micro_pts], c="#F58518")
                     for x, y, label in micro_pts:
-                        plt.annotate(label, (x, y), textcoords="offset points", xytext=(4, 2), fontsize=7)
+                        x_f = float(x)
+                        y_f = float(y)
+                        plt.annotate(label, (x_f, y_f), textcoords="offset points", xytext=(4, 2), fontsize=7)
                     plt.xlabel("Recall")
                     plt.ylabel("Precision")
                     plt.title("Micro PR best-points per IoU threshold")
@@ -287,7 +290,9 @@ class ReportGenerator(ReportConfig):
                 pairs = [(cats[i], float(per_ap[i])) for i in range(min(len(cats), len(per_ap)))]
                 pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
                 if pairs_sorted:
-                    names, values = zip(*pairs_sorted)
+                    names_tup, values_tup = zip(*pairs_sorted)
+                    names = list(names_tup)
+                    values = list(values_tup)
                     names_short = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in names]
                     plt.figure(figsize=(self.fig_w, self.fig_h))
                     plt.bar(range(len(names_short)), values, color="#4C78A8")
@@ -307,7 +312,9 @@ class ReportGenerator(ReportConfig):
                 k = max(1, int(self.top_k_lowest_map or 5))
                 pairs_low = sorted(pairs, key=lambda x: x[1])[:k]
                 if pairs_low:
-                    names_low, values_low = zip(*pairs_low)
+                    names_low_tup, values_low_tup = zip(*pairs_low)
+                    names_low = list(names_low_tup)
+                    values_low = list(values_low_tup)
                     names_low_short = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in names_low]
                     plt.figure(figsize=(self.fig_w, self.fig_h))
                     plt.bar(range(len(names_low_short)), values_low, color="#E45756")

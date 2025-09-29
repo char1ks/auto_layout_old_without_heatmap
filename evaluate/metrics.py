@@ -2,29 +2,36 @@ import abc, numpy as np, warnings, tempfile, json, os
 import torch
 from torchvision.ops import box_iou
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional, Union, Tuple
+from typing import Dict, Any, List, Optional, Union, Tuple, Set
+try:
+    from typing import TypedDict
+except ImportError:
+    from typing_extensions import TypedDict
 from sklearn.metrics import classification_report, precision_recall_curve, average_precision_score
 from torchmetrics import JaccardIndex, F1Score
 import sys
 from pathlib import Path
 EVAL_CLASSES_PATH = Path(__file__).parent
 sys.path.insert(0, str(EVAL_CLASSES_PATH))
-
 from DatasetModel import DatasetModel
 from COCOAnnotations import COCOAnnotation
 
-def _safe_float(x: Optional[Union[float, int, str]], default: float = 0.0) -> float:
+
+
+class PredItem(TypedDict):
+    file: str
+    box: List[float]
+    score: float
+def _safe_float(x: Optional[Union[float, int, str, np.floating, np.ndarray]], default: float = 0.0) -> float:
     try:
         if x is None:
             return default
-        v = float(x)
+        v = float(x)  
         if np.isfinite(v):
             return v
         return default
     except Exception:
         return default
-
-
 def _safe_box(bb: Optional[Union[List[float], Tuple[float, float, float, float]]]) -> Optional[List[float]]:
     if not isinstance(bb, (list, tuple)) or len(bb) != 4:
         return None
@@ -33,8 +40,6 @@ def _safe_box(bb: Optional[Union[List[float], Tuple[float, float, float, float]]
     w = _safe_float(bb[2])
     h = _safe_float(bb[3])
     return [x, y, w, h]
-
-
 @dataclass
 class MetricOutputModel:
     metric_name: str
@@ -84,7 +89,8 @@ class MeanAveragePrecision(Metric):
             return 0.0, [1.0], [0.0]
 
     def _group_input(self, gt: DatasetModel, prediction: List[COCOAnnotation]) -> Tuple[Dict[str, List[COCOAnnotation]], Dict[str, List[COCOAnnotation]], List[str], List[str]]:
-        gt_by_file, pr_by_file = {}, {}
+        gt_by_file: Dict[str, List[COCOAnnotation]] = {}
+        pr_by_file: Dict[str, List[COCOAnnotation]] = {}
         for a in (gt.data_points or []):
             fn = getattr(a, 'file_name', None)
             if fn is not None:
@@ -94,20 +100,20 @@ class MeanAveragePrecision(Metric):
             if fn is not None:
                 pr_by_file.setdefault(str(fn), []).append(a)
         files = sorted(set(gt_by_file) | set(pr_by_file))
-        labels = []
+        labels: List[str] = []
         for arr in (gt.data_points or []):
             lab = getattr(arr, 'label', None)
             if lab is not None:
-                labels.append(lab)
+                labels.append(str(lab))
         for arr in (prediction or []):
             lab = getattr(arr, 'label', None)
             if lab is not None:
-                labels.append(lab)
+                labels.append(str(lab))
         uniq_labels = sorted({str(l) for l in labels})
         return gt_by_file, pr_by_file, files, uniq_labels
 
-    def _prepare_boxes(self, gt_by_file: Dict[str, List[COCOAnnotation]], pr_by_file: Dict[str, List[COCOAnnotation]], files: List[str], uniq_labels: List[str]) -> Tuple[Dict[str, Dict[str, List[List[float]]]], Dict[str, List[Dict[str, Union[str, List[float], float]]]]]:
-        gt_boxes_by_label_file = {lab: {} for lab in uniq_labels}
+    def _prepare_boxes(self, gt_by_file: Dict[str, List[COCOAnnotation]], pr_by_file: Dict[str, List[COCOAnnotation]], files: List[str], uniq_labels: List[str]) -> Tuple[Dict[str, Dict[str, List[List[float]]]], Dict[str, List[PredItem]]]:
+        gt_boxes_by_label_file: Dict[str, Dict[str, List[List[float]]]] = {lab: {} for lab in uniq_labels}
         for fn in files:
             for a in gt_by_file.get(fn, []):
                 lab, bb = str(getattr(a, 'label', '')), getattr(a, 'bbox', None)
@@ -116,7 +122,7 @@ class MeanAveragePrecision(Metric):
                     gt_boxes_by_label_file[lab].setdefault(fn, []).append(
                         self._xywh_to_xyxy([safe_bb[0], safe_bb[1], safe_bb[2], safe_bb[3]])
                     )
-        preds_by_label = {lab: [] for lab in uniq_labels}
+        preds_by_label: Dict[str, List[PredItem]] = {lab: [] for lab in uniq_labels}
         for fn in files:
             for p in pr_by_file.get(fn, []):
                 lab, bb = str(getattr(p, 'label', '')), getattr(p, 'bbox', None)
@@ -132,9 +138,10 @@ class MeanAveragePrecision(Metric):
             preds_by_label[lab].sort(key=lambda d: d['score'], reverse=True)
         return gt_boxes_by_label_file, preds_by_label
 
-    def _match_make_targets(self, preds_list: List[Dict[str, Union[str, List[float], float]]], gt_per_file: Dict[str, List[List[float]]], thr: float) -> Tuple[List[int], List[float]]:
-        matched_by_file = {fn: set() for fn in gt_per_file.keys()}
-        y_true, y_scores = [], []
+    def _match_make_targets(self, preds_list: List[PredItem], gt_per_file: Dict[str, List[List[float]]], thr: float) -> Tuple[List[int], List[float]]:
+        matched_by_file: Dict[str, Set[int]] = {fn: set() for fn in gt_per_file.keys()}
+        y_true: List[int] = []
+        y_scores: List[float] = []
         for p in preds_list:
             fn, box_pred, score = p['file'], p['box'], _safe_float(p['score'])
             gts = gt_per_file.get(fn, [])
@@ -180,10 +187,11 @@ class MeanAveragePrecision(Metric):
                 pr_curves_per_thr[thr][lab] = {'precision': p, 'recall': r}
         recall_grid = np.linspace(0.0, 1.0, 101)
         pr_micro, pr_macro = {}, {}
-        ap_iou_micro = []
+        ap_iou_micro: List[float] = []
         for thr in self.iou_thresholds:
             thr_key = f"{_safe_float(thr):.2f}"
-            all_y_true, all_y_scores = [], []
+            all_y_true: List[int] = []
+            all_y_scores: List[float] = []
             for lab, (yt, ys) in (y_store.get(thr, {}) or {}).items():
                 if yt:
                     all_y_true.extend(yt); all_y_scores.extend(ys)
@@ -195,19 +203,19 @@ class MeanAveragePrecision(Metric):
             pr_micro[thr_key] = {'precision': [_safe_float(x) for x in p_micro], 'recall': [_safe_float(x) for x in r_micro]}
 
             # макро: усредняем precision после интерполяции на общую сетку recall
-            macro_stack = []
+            macro_stack: List[np.ndarray] = []
             for lab, pr in (pr_curves_per_thr.get(thr, {}) or {}).items():
-                r = np.asarray(pr.get('recall') or [])
-                p = np.asarray(pr.get('precision') or [])
-                if r.size > 1 and p.size > 1:
-                    order = np.argsort(r)
-                    p_interp = np.interp(recall_grid, r[order], p[order],
-                                         left=p[order][0], right=p[order][-1])
+                r_arr = np.asarray(pr.get('recall') or [])
+                p_arr = np.asarray(pr.get('precision') or [])
+                if r_arr.size > 1 and p_arr.size > 1:
+                    order = np.argsort(r_arr)
+                    p_interp = np.interp(recall_grid, r_arr[order], p_arr[order],
+                                         left=p_arr[order][0], right=p_arr[order][-1])
                     macro_stack.append(p_interp)
             p_macro = np.mean(np.stack(macro_stack, axis=0), axis=0) if macro_stack else np.zeros_like(recall_grid)
             pr_macro[thr_key] = {'precision': [_safe_float(x) for x in p_macro],
                                  'recall': [_safe_float(x) for x in recall_grid]}
-        per_class_ap_avg = []
+        per_class_ap_avg: List[float] = []
         for lab in uniq_labels:
             ap_values = ap_per_label_per_thr[lab]
             if ap_values and len(ap_values) > 0:
@@ -219,7 +227,7 @@ class MeanAveragePrecision(Metric):
             else:
                 per_class_ap_avg.append(0.0)
         
-        macro_map_iou = []
+        macro_map_iou: List[float] = []
         for i in range(len(self.iou_thresholds)):
             if uniq_labels:
                 ap_values = [ap_per_label_per_thr[lab][i] for lab in uniq_labels if i < len(ap_per_label_per_thr[lab])]
@@ -452,3 +460,11 @@ class ClassificationReportMetric(Metric):
             return MetricOutputModel(metric_name=self.name, score=float(acc), stats=stats)
         except Exception as e:
             return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": str(e), "fallback": True})
+
+
+
+
+
+
+
+            

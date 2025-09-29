@@ -30,7 +30,7 @@ class DatasetPoint:
             raise TypeError("dataset must be Dataset or DatasetModel")
 
         self.detector: DetectorBase = detector
-        self.metrics: List[Metric] = metrics
+        self.metrics: List[Metric] = metrics or []
         self.reporter: Optional[Tracer] = reporter
         self._predictions: List[COCOAnnotation] = []
         self._last_metrics: Optional[List[MetricOutputModel]] = None
@@ -42,7 +42,7 @@ class DatasetPoint:
 
     def detect_all(self,image_root: Optional[Union[str, Path]] = None,progress: Optional[Callable[[int, int, str | None], None]] = None,*args,**kwargs,) -> List[COCOAnnotation]:
         image_root = Path(image_root) if image_root is not None else None
-        file_names: List[str] = sorted({getattr(ann, "file_name", None) for ann in self.dataset_model.data_points if getattr(ann, "file_name", None)})
+        file_names: List[str] = sorted({str(getattr(ann, "file_name")) for ann in self.dataset_model.data_points if getattr(ann, "file_name", None) is not None})
         self._contexts = []
         predictions: List[COCOAnnotation] = []
         total = len(file_names)
@@ -83,7 +83,7 @@ class DatasetPoint:
     def evaluate(self,predictions: Optional[List[COCOAnnotation]] = None,average: str = "micro",) -> List[MetricOutputModel]:
         preds = predictions if predictions is not None else self._predictions
         results = []
-        for metric in self.metrics:
+        for metric in (self.metrics or []):
             try:
                 result = metric.compute(self.dataset_model, preds, average=average)
                 results.append(result)
@@ -94,8 +94,7 @@ class DatasetPoint:
 
     def run(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,image_root: Optional[Union[str, Path]] = None,average: str = "micro",progress: Optional[Callable[[int, int, str | None], None]] = None,*args, dump_report: bool = False, report_output_dir: Optional[Union[str, Path]] = None, **kwargs,) -> Tuple[List[COCOAnnotation], List[MetricOutputModel]]:
         self.set_references(positive_dir, negative_dir)
-        
-        preds = self.detect_all(image_root=image_root, progress=progress, *args, **kwargs)
+        preds = self.detect_all(image_root=image_root, progress=progress, **kwargs)
         metrics = self.evaluate(preds, average=average)
         try:
             reporter = ReportGenerator()

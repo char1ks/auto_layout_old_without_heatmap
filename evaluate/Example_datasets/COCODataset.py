@@ -8,6 +8,7 @@ sys.path.insert(0, str(EVAL_CLASSES_PATH))
 from Dataset import Dataset
 from DatasetModel import DatasetModel
 from COCOAnnotations import COCOAnnotation
+
 class ChickenDataset(Dataset):
     @classmethod
     def from_json(cls, obj: dict[str, Any]) -> "ChickenDataset":
@@ -67,7 +68,16 @@ class ChickenDataset(Dataset):
                 height: int = int(image_info.get('height', 0) or 0)
                 cat_id = ann.get('category_id')
                 cat = categories_by_id.get(int(cat_id)) if cat_id is not None else None
-                label: int | str = (cat.get('name') if isinstance(cat, dict) and 'name' in cat else (int(cat_id) if cat_id is not None else -1))
+                # Ensure label is strictly int | str (no None)
+                label: int | str
+                if isinstance(cat, dict):
+                    name_val = cat.get('name')
+                    if isinstance(name_val, str):
+                        label = name_val
+                    else:
+                        label = int(cat_id) if cat_id is not None else -1
+                else:
+                    label = int(cat_id) if cat_id is not None else -1
                 bbox_list = ann.get('bbox') or []
                 bbox: List[float] = [float(v) for v in bbox_list] if isinstance(bbox_list, (list, tuple)) else []
                 if len(bbox) == 4:

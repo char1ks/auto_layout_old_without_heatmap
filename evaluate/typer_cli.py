@@ -189,8 +189,8 @@ class EvalCLI:
         ds_root = ds_spec.get("root") or ds_spec.get("dataset_dir") or ds_spec.get("path")
         if not ds_root:
             raise ValueError("dataset.root is required in config")
-        DatasetClass = _load_obj(ds_spec.get("cls")) if ds_spec.get("cls") else ArchiveVOCDataset
-        DetectorClass = _load_obj(det_spec.get("cls")) if det_spec.get("cls") else SearchDetDetector
+        DatasetClass = _load_obj(ds_spec["cls"]) if ds_spec.get("cls") and isinstance(ds_spec["cls"], str) else ArchiveVOCDataset
+        DetectorClass = _load_obj(det_spec["cls"]) if det_spec.get("cls") and isinstance(det_spec["cls"], str) else SearchDetDetector
         dataset = DatasetClass.from_path(
             Path(ds_root),
             ann_dir=Path(ds_spec["ann_dir"]) if ds_spec.get("ann_dir") else None,

@@ -63,4 +63,8 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 show_error_codes = true
 pretty = true
-exclude = "vendor/|gradio_client/"
+exclude = "vendor/|gradio_client/|searchdet_pipeline/"
+[[tool.mypy.overrides]]
+module = ["searchdet_pipeline.*"]
+follow_imports = "skip"
+ignore_errors = true

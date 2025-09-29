@@ -8,7 +8,7 @@ from Context import Context
 from COCOAnnotations import COCOAnnotation
 
 class DetectorBase(abc.ABC):
-    def __init__(self, name: str = None):
+    def __init__(self, name: Optional[str] = None):
         self.detector_name = name or self.__class__.__name__
     @classmethod
     def read_input_img(cls, image_path: str | Path) -> np.ndarray:

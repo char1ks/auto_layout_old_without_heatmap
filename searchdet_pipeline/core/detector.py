@@ -178,10 +178,14 @@ class SearchDetDetector(DetectorBase):
         self.class_pos, self.q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs, pos_as_query_masks=False)
         timing_info['embedding_extraction'] = time.time() - t_embeddings 
 
-    def find_present_elements(self, image_np: np.ndarray, context: Context, *args, **kwargs) -> Dict[str, Any]:
+    def find_present_elements(self, image_np: np.ndarray, context: Optional[Context] = None, *args, **kwargs) -> Dict[str, Any]:
         if self.config.use_heatmap_sam_hybrid:
-            return self._find_present_elements_with_fastsam_integration(image_np)
-        return self._find_present_elements(image_np)
+            results = self._find_present_elements_with_fastsam_integration(image_np)
+        else:
+            results = self._find_present_elements(image_np)
+        if context is not None:
+            return results
+        return results
          
     def _find_present_elements(self, image_np: np.ndarray) -> Dict[str, Any]:
         print("🔄 ДЕТАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ МОДУЛЬНОГО PIPELINE:")

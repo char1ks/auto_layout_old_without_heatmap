@@ -292,7 +292,7 @@ def execute_detect(args) -> int:
         if 'success' in result:
             return 0 if result['success'] else 1
         else:
-            return 0 if 'found_elements' in result else 1
+            return 0 if ('found_elements' in result or 'masks' in result) else 1
         
     except ImportError as e:
         print(f"❌ Ошибка импорта модульного пайплайна: {e}")
@@ -328,7 +328,7 @@ def _print_result(result: dict, args):
         else:
             print(f"\n❌ Ошибка детекции: {result.get('error', 'Неизвестная ошибка')}")
     else:
-        # Старый формат (из detector.py)
+        # Старый формат (из detector.py) или автономный формат с 'masks'
         if 'found_elements' in result:
             found_elements = result['found_elements']
             print(f"\n✅ Детекция завершена успешно!")
@@ -364,6 +364,46 @@ def _print_result(result: dict, args):
                     print(f"   📊 Скоринг: {timing_info['scoring_and_decisions']:.3f}с")
                 if 'result_saving' in timing_info:
                     print(f"   💾 Сохранение: {timing_info['result_saving']:.3f}с")
+        elif 'masks' in result:
+            masks = result['masks']
+            print(f"\n✅ Детекция завершена успешно!")
+            print(f"🔍 Найдено объектов: {len(masks)}")
+
+            if masks:
+                confidences = [m.get('confidence', 0.0) for m in masks]
+                if any(c > 0 for c in confidences):
+                    print(f"📊 Средняя уверенность: {sum(confidences)/len(confidences):.3f}")
+
+            # Папка сохранения, если известна
+            output_dir = result.get('output_directory')
+            if output_dir:
+                print(f"💾 Результаты сохранены в: {output_dir}")
+
+            # Список сохранённых файлов, если присутствует
+            if result.get('saved_files'):
+                saved_files = result['saved_files']
+                print(f"📁 Сохранено файлов: {len(saved_files)}")
+                if hasattr(args, 'verbose') and args.verbose:
+                    print("   📋 Список файлов:")
+                    for file_type, file_path in saved_files.items():
+                        print(f"     • {file_type}: {Path(file_path).name}")
+
+            # Вывод краткой статистики времени для автономного формата
+            if 'timing_info' in result and (hasattr(args, 'verbose') and args.verbose):
+                timing_info = result['timing_info']
+                print(f"\n⏱️ КРАТКАЯ СТАТИСТИКА ВРЕМЕНИ:")
+                if 'image_loading' in timing_info:
+                    print(f"   🖼️ Загрузка изображения: {timing_info['image_loading']:.3f}с")
+                if 'mask_generation' in timing_info:
+                    print(f"   🎯 Генерация масок: {timing_info['mask_generation']:.3f}с")
+                if 'mask_filtering' in timing_info:
+                    print(f"   🚧 Фильтрация масок: {timing_info['mask_filtering']:.3f}с")
+                if 'scoring_and_decisions' in timing_info:
+                    print(f"   📊 Скоринг и решения: {timing_info['scoring_and_decisions']:.3f}с")
+                if 'result_formatting' in timing_info:
+                    print(f"   🧩 Форматирование результата: {timing_info['result_formatting']:.3f}с")
+                if 'total_time' in timing_info:
+                    print(f"   ⏲️ Общее время: {timing_info['total_time']:.3f}с")
         else:
             print(f"\n❌ Неожиданный формат результата: {result}")
 

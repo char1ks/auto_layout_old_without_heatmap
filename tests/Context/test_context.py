@@ -23,7 +23,6 @@ def test_duration_calculation(context_with_past_start):
     c: Context = context_with_past_start
     c.finish()
     assert c.duration is not None
-    # Длительность должна быть примерно 1.2 секунды (может быть чуть больше из-за времени выполнения теста)
     assert c.duration >= 1.0
 
 

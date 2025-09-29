@@ -3,9 +3,14 @@ import numpy as np
 from typing import List
 from pathlib import Path
 from PIL import Image
-from evaluate.COCOAnnotations import COCOAnnotation
-from evaluate.DatasetModel import DatasetModel
-from evaluate.DatasetMeta import DatasetMeta
+import sys
+EVAL_CLASSES_PATH = Path(__file__).parent.parent.parent / "evaluate"
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
+
+from COCOAnnotations import COCOAnnotation
+from DatasetModel import DatasetModel
+from DatasetMeta import DatasetMeta
+
 @pytest.fixture
 def coco_annotations_list() -> List[COCOAnnotation]:
     static_dir = Path(__file__).parent.parent / "static"

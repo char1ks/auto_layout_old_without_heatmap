@@ -5,19 +5,23 @@ import numpy as np
 import xml.etree.ElementTree as ET
 import sys
 from pathlib import Path as _P
+import pytest
 EVAL_CLASSES_PATH = _P(__file__).resolve().parents[2] / "evaluate"
 sys.path.insert(0, str(EVAL_CLASSES_PATH))
 from COCOAnnotations import COCOAnnotation
-from DatasetModel import DatasetModel
+from DatasetMeta import DatasetMeta
+from evaluate.DatasetModel import DatasetModel
 from Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 RESULTS_DIR = STATIC_DIR / "results_fruit1"
 FRUIT_XML = STATIC_DIR / "fruit1.xml"
 ANN_JSON = RESULTS_DIR / "annotations.json"
 
+
 def _voc_gt_dataset() -> DatasetModel:
     anns, _ = ArchiveVOCDataset._parse_single_voc_xml(FRUIT_XML, STATIC_DIR)
     return DatasetModel(data_points=anns, meta={"name": "fruit1_gt"})
+
 
 def _preds_from_annotations() -> List[COCOAnnotation]:
     with ANN_JSON.open("r", encoding="utf-8") as f:
@@ -57,12 +61,19 @@ def _preds_from_annotations() -> List[COCOAnnotation]:
             score=conf,
         ))
     return preds
+
+
+@pytest.fixture
 def build_gt_dataset() -> DatasetModel:
     return _voc_gt_dataset()
 
+
+@pytest.fixture
 def build_predictions() -> List[COCOAnnotation]:
     return _preds_from_annotations()
 
+
+@pytest.fixture
 def build_perfect_predictions_from_gt() -> List[COCOAnnotation]:
     gt = _voc_gt_dataset()
     preds: List[COCOAnnotation] = []
@@ -84,9 +95,11 @@ def build_perfect_predictions_from_gt() -> List[COCOAnnotation]:
     return preds
 
 
+@pytest.fixture
 def build_empty_predictions() -> List[COCOAnnotation]:
     return []
 
 
+@pytest.fixture
 def build_empty_gt() -> DatasetModel:
     return DatasetModel(data_points=[], meta={"name": "empty_gt"})

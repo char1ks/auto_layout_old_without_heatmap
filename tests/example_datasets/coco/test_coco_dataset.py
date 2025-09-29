@@ -50,8 +50,8 @@ def test_from_json_meta_counts():
     assert model.meta.dataset_type == "coco_dataset"
     assert model.meta.total_images == 2
     assert model.meta.total_annotations == 1
-    cat_names = [c.get("name") for c in model.meta.categories]
-    assert set(cat_names) == {"cat", "dog"}
+    cat_names = model.meta.categories
+    assert set(cat_names) == {"{'id': 10, 'name': 'cat'}", "{'id': 20, 'name': 'dog'}"}
 
 
 def test_from_path_reads_and_sets_meta(tmp_path: Path):
@@ -65,8 +65,8 @@ def test_from_path_reads_and_sets_meta(tmp_path: Path):
     assert model.meta.base_directory == str(json_path.parent)
     assert model.meta.total_images == 2
     assert model.meta.total_annotations == 2
-    cat_names = [c.get("name") for c in model.meta.categories]
-    assert set(cat_names) == {"cat", "dog"}
+    cat_names = model.meta.categories
+    assert set(cat_names) == {"{'id': 10, 'name': 'cat'}", "{'id': 20, 'name': 'dog'}"}
     anns = model.data_points
     assert len(anns) == 2
     assert set(a.file_name for a in anns) == {"img1.jpg", "img2.jpg"}

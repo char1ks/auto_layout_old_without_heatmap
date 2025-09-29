@@ -6,7 +6,7 @@ import torch
 from flashbone.core.segmentation import SamSegmenter
 from flashbone.core.classifier import ClassifierKNN, ClassData
 from flashbone.core.heatmap_generation import HeatmapGenerator
-from flashbone.detector_base import DetectorBase, DetectionResult
+from flashbone.core.detector_base import DetectorBase, DetectionResult
 
 
 class SearchDetDetector(DetectorBase):

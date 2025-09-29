@@ -18,7 +18,7 @@ import numpy as np
 import cv2
 
 from flashbone.core.detector import SearchDetDetector
-from flashbone.detector_base import DetectorBase, MockDetector
+from flashbone.core.detector_base import DetectorBase
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -82,10 +82,6 @@ class LatencyLoggingMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-
-def init_detector_mock() -> DetectorBase:
-    mask_size = int(os.getenv("DETECTOR_MASK_SIZE", "32"))
-    return MockDetector(mask_size=mask_size)
 
 def init_detector_v2() -> DetectorBase:
     detector_params = {
@@ -246,7 +242,7 @@ app = FastAPI(
 app.add_middleware(LatencyLoggingMiddleware)
 app.add_middleware(AuthMiddleware)
 
-def get_detector(request: Request) -> MockDetector:
+def get_detector(request: Request) -> DetectorBase:
     return request.app.state.detector
 
 @app.get("/health")

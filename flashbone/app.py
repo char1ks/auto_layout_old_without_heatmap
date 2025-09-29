@@ -16,7 +16,12 @@ from starlette.datastructures import UploadFile as StarletteUploadFile, FormData
 from PIL import Image
 import numpy as np
 import cv2
+from ultralytics import FastSAM
 
+from flashbone.core.encoding import DinoV3EncoderGaz
+from flashbone.core.segmentation import SegmenterConfig, SamSegmenter
+from flashbone.core.heatmap_generation import HeatmapGenerator
+from flashbone.core.classifier import ClassifierKNN
 from flashbone.core.detector import SearchDetDetector
 from flashbone.core.detector_base import DetectorBase
 
@@ -43,6 +48,7 @@ logger.propagate = False
 APP_USERNAME = os.getenv("APP_USERNAME", "admin")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "secret")
 
+
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Only protect API routes, allow docs/health
@@ -59,6 +65,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if not (username == APP_USERNAME and password == APP_PASSWORD):
                 return Response(status_code=HTTP_401_UNAUTHORIZED, headers={"WWW-Authenticate": "Basic"})
         return await call_next(request)
+
 
 class LatencyLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -83,48 +90,23 @@ class LatencyLoggingMiddleware(BaseHTTPMiddleware):
             )
 
 
-def init_detector_v2() -> DetectorBase:
-    detector_params = {
-        'mask_backend': 'fastsam',
-        "positive_aggregation": "max",
-        'dinov3_backbone': "vit7b16",
-        "layer": "layer3",
-        'pos_as_query_masks': True,
-        'vit_pooling': 'cls',
-        "loader": "timm",
-        "repo_dir": None,
-        "max_embedding_size": 1024,
-        'device': "cuda",
-        'encoder_device': "cuda",
-        "use-heatmap-masks": False,
-        'half': True,
-        'dinov3_ckpt': None,
-        'dino_half_precision': False,
-        'backbone': "dinov3_vitb16",
-        'min_mask_area': 100,
-        'smart_rectangle_filter': True,
-        'rectangle_bbox_iou_threshold': 0.95,
-        'rectangle_straight_line_ratio': 0.8,
-        'rectangle_area_ratio_threshold': 0.95,
-        'rectangle_angle_tolerance': 10.0,
-        'rectangle_side_ratio_threshold': 0.9,
-        'perfect_rectangle_iou_threshold': 0.99,
-        'rectangle_similarity_iou_threshold': 0.94,
-        'square_similarity_iou_threshold': 0.94,
-        'rectangle_use_silhouette': True,
-        'hole_area_ratio_threshold': 0.03,
-        'min_positive_score': 0.4,
-        'decision_threshold': 0.65,
-        'enable_image_downscaling': True,
-        'max_image_size': 512,
-        'downscale_quality': 'bilinear',
-        'use_fastsam_with_heatmap': True,
-        'use_heatmap_sam_hybrid': True,
-        'heatmap_sam_threshold': 0.7,
-        'sam_refinement_enabled': True,
-        'max_hotspots_for_sam': 10,
-    }
-    return SearchDetDetector(**detector_params)
+def init_detector() -> DetectorBase:
+    sam_model = FastSAM('FastSAM-x.pt')
+    encoder = DinoV3EncoderGaz()
+    heatmap_generator = HeatmapGenerator(dino_fe=encoder, use_cosine_similarity_for_heatmap=False)
+    sam = SamSegmenter(
+        sam_model=sam_model,
+        config=SegmenterConfig(
+            min_mask_area=200,
+            confidence_threshold=0.5,
+            iou_threshold=0.8,
+            mask_threshold=0.5,
+        )
+    )
+    classifier = ClassifierKNN(encoder=encoder, d=1024)
+    detector = SearchDetDetector(segmenter=sam, classifier=classifier, heatmap_generator=heatmap_generator)
+    return detector
+
 
 async def parse_pos_neg_from_form(request: Request) -> Tuple[Dict[str, List[Image.Image]], List[Image.Image]]:
     """
@@ -178,8 +160,10 @@ async def parse_pos_neg_from_form(request: Request) -> Tuple[Dict[str, List[Imag
 
     return pos_by_class, neg_imgs
 
+
 def pil_to_np_rgb(img: Image.Image) -> np.ndarray:
     return np.array(img, dtype=np.uint8)
+
 
 def mask_to_polygons(mask_2d, min_area: int = 3):
     """
@@ -217,6 +201,7 @@ def mask_to_polygons(mask_2d, min_area: int = 3):
             polys.append(pts)
     return polys
 
+
 def to_python(obj):
     if isinstance(obj, dict):
         return {to_python(k): to_python(v) for k, v in obj.items()}
@@ -228,11 +213,13 @@ def to_python(obj):
         return obj.tolist()
     return obj
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.detector = init_detector_v2()
+    app.state.detector = init_detector()
     logger.info("Detector initialized")
     yield
+
 
 app = FastAPI(
     title="Mock Detection Service", 
@@ -242,12 +229,15 @@ app = FastAPI(
 app.add_middleware(LatencyLoggingMiddleware)
 app.add_middleware(AuthMiddleware)
 
+
 def get_detector(request: Request) -> DetectorBase:
     return request.app.state.detector
+
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
 
 @app.post("/api/v1/set", status_code=204)
 async def set_examples(
@@ -300,9 +290,11 @@ async def infer(
 
     return JSONResponse(content=jsonable_encoder(batch_results))
 
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
 
 if __name__ == "__main__":
     import os

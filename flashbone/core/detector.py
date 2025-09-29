@@ -109,9 +109,9 @@ if __name__=="__main__":
         )
     )
     classifier = ClassifierKNN(encoder=encoder, d=1024)
+    detector = SearchDetDetector(segmenter=sam, classifier=classifier, heatmap_generator=heatmap_generator)
     # ---
 
-    detector = SearchDetDetector(segmenter=sam, classifier=classifier, heatmap_generator=heatmap_generator)
     detector.set_references(
         pos_by_class={0: [train_image_pos]}, neg_imgs=[train_image_neg_1, train_image_neg_2])
 

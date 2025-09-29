@@ -44,7 +44,7 @@ def adjust_embedding(query_embedding, positive_embeddings, negative_embeddings):
     return combined_adjustment
 
 
-# TODO: (@gas) add multiclass support (now heatmap just uses an average vector for search)
+# TODO: (@gas) add multiclass support (now heatmap just uses a "global" average vector for search)
 class HeatmapGenerator:
     def __init__(
         self,
@@ -56,6 +56,41 @@ class HeatmapGenerator:
         self.attention_pool_examples = attention_pool_examples
         self.use_cosine_similarity_for_heatmap = use_cosine_similarity_for_heatmap
         self.pooled_patch_features_pos, self.pooled_patch_features_neg = None, None
+
+    def _get_pooled_embed(self, query_feats: torch.Tensor, pooled_patch_features: torch.Tensor):
+        if self.attention_pool_examples:
+            _logger.debug('Attention pooling example embeddings')
+            return self._attention_pool_keys(query_feats, pooled_patch_features) # (d,)
+
+        else: # Average pooling
+            _logger.debug('Average pooling example embeddings')
+            return reduce(pooled_patch_features, 'n d -> d', 'mean')
+
+    def _generate_pooled_patch_features(self, images: list[Image.Image]):
+        '''
+            images: list[PIL.Image.Image] of length n of images to extract features from.
+
+            Returns: (n, d) torch.Tensor of pooled patch features.
+        '''
+        feats = self.dino_fe.encode(images) # list[(b, d, h, w)]
+        patch_feats_l = feats.patches
+        patch_feats_l = [reduce(patch_feats, 'd h w -> d', 'mean') for patch_feats in patch_feats_l] # list[d]
+        patch_feats = torch.stack(patch_feats_l) # (n, d)
+
+        return patch_feats
+
+    def _attention_pool_keys(self, query: torch.Tensor, keys: torch.Tensor):
+        '''
+            query: (d,)
+            keys: (n, d)
+
+            Returns: (d,) torch.Tensor of pooled keys based on attention weights between query and keys.
+        '''
+        weights = (keys @ query).softmax(dim=0) # (n,)
+        weighted_keys = keys * weights.unsqueeze(1)
+        pooled_keys = reduce(weighted_keys, 'n d -> d', 'sum')
+
+        return pooled_keys
 
     @torch.no_grad()
     def init_pooled_features_train(self, positive_images: list[Image.Image], negative_images: list[Image.Image] = []) -> None:
@@ -99,40 +134,13 @@ class HeatmapGenerator:
 
         return heatmap, heatmap_resized
 
-    def _get_pooled_embed(self, query_feats: torch.Tensor, pooled_patch_features: torch.Tensor):
-        if self.attention_pool_examples:
-            _logger.debug('Attention pooling example embeddings')
-            return self._attention_pool_keys(query_feats, pooled_patch_features) # (d,)
-
-        else: # Average pooling
-            _logger.debug('Average pooling example embeddings')
-            return reduce(pooled_patch_features, 'n d -> d', 'mean')
-
-    def _generate_pooled_patch_features(self, images: list[Image.Image]):
-        '''
-            images: list[PIL.Image.Image] of length n of images to extract features from.
-
-            Returns: (n, d) torch.Tensor of pooled patch features.
-        '''
-        feats = self.dino_fe.encode(images) # list[(b, d, h, w)]
-        patch_feats_l = feats.patches
-        patch_feats_l = [reduce(patch_feats, 'd h w -> d', 'mean') for patch_feats in patch_feats_l] # list[d]
-        patch_feats = torch.stack(patch_feats_l) # (n, d)
-
-        return patch_feats
-
-    def _attention_pool_keys(self, query: torch.Tensor, keys: torch.Tensor):
-        '''
-            query: (d,)
-            keys: (n, d)
-
-            Returns: (d,) torch.Tensor of pooled keys based on attention weights between query and keys.
-        '''
-        weights = (keys @ query).softmax(dim=0) # (n,)
-        weighted_keys = keys * weights.unsqueeze(1)
-        pooled_keys = reduce(weighted_keys, 'n d -> d', 'sum')
-
-        return pooled_keys
+    def apply_threshold(self, hm_arr: torch.Tensor, threshold_cosine: float = 0.5, threshold_dotp: float = 5) -> torch.Tensor:
+        if self.use_cosine_similarity_for_heatmap:
+            hm_arr[hm_arr < threshold_cosine] = 0
+        else:
+            hm_arr[hm_arr < threshold_dotp] = 0 # some initial thresholding
+            hm_arr /= np.abs(hm_arr).max()
+        return hm_arr
 
 
 def crop_by_mask(image: Image.Image, mask: Image.Image):
@@ -159,6 +167,9 @@ def min_max_scale(array: np.ndarray) -> np.ndarray:
 
 
 if __name__=="__main__":
+    """
+    PYTHONPATH=. python flashbone/core/heatmap_generation.py
+    """
     # TODO: (@gas) convert to tests
 
     import time 
@@ -191,14 +202,8 @@ if __name__=="__main__":
     print(heatmap_resized.shape, heatmap_resized.min(), heatmap_resized.max())
     print(f"{int((end-start)*1000)} ms.") 
 
-    heatmap_np = heatmap_resized.numpy()
-
-    # NOTE: (@gas) only for dot-product
-    heatmap_np[heatmap_np < 5] = 0 # some initial thresholding
-    heatmap_np /= np.abs(heatmap_np).max()
-
-    # thresholding 
-    heatmap_np[heatmap_np < 0.5] = 0
+    heatmap_resized = heatmap_generator.apply_threshold(heatmap_resized, threshold_dotp=5)
+    heatmap_np = heatmap_resized.cpu().numpy()
 
     cv2.imwrite(".local/crop_debug_gaz.png", cv2.cvtColor(np.asarray(train_image_pos), cv2.COLOR_RGB2BGR))
     cv2.imwrite(".local/heatmap_debug_gaz.png", (heatmap_np*255).astype(np.uint8))

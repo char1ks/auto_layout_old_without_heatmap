@@ -30,6 +30,7 @@ from flashbone.core.binning_processor import bin_filter_heatmap
 
 
 # TODO: 
+# TODO: (@gas) output satruct should look like: `md = {'segmentation': seg, 'bbox': bbox, 'area': int(seg.sum()), 'confidence': 0.9, 'class': class_name}`  
 
 
 class SearchDetDetector(DetectorBase):

@@ -1,36 +1,13 @@
-import os
-from typing import List ,Tuple ,Optional ,Union ,Dict ,Any
+from dataclasses import dataclass
 
 import cv2
 import torch
 import numpy as np
 from PIL import Image
-from ultralytics import FastSAM, SAM
-from ultralytics.models.sam.predict import SAM2Predictor
-from ultralytics.engine.results import Masks
+from ultralytics import FastSAM
+# from ultralytics.models.sam.predict import SAM2Predictor
+# from ultralytics.engine.results import Masks
 from ultralytics.engine.model import Model
-
-
-# TODO: (@gas) move model instantiation to detector
-def load_fastsam_model():
-    # model = FastSAM('FastSAM-s.pt')
-    model = FastSAM('FastSAM-x.pt')
-    print ("✅ FastSAM модель загружена и закэширована")
-    return model
-
-
-def load_sam_model():
-    model = SAM("sam2.1_t.pt")
-    print ("✅ SAMv2 модель загружена и закэширована")
-    return model
-
-
-def load_sam_predictor():
-    model = SAM2Predictor(overrides={"model": "sam2.1_t.pt", "imgsz": 1024})
-    # model.setup_model() 
-    # model = SAM2Predictor(overrides={"model": "sam2.1_s.pt"})
-    print ("✅ SAMv2 модель загружена и закэширована")
-    return model
 
 
 def sample_points_with_value(
@@ -38,12 +15,12 @@ def sample_points_with_value(
     value: float,
     n: int,
     *,
-    atol: Optional[float] = None,
-    rtol: Optional[float] = None,
+    atol: float | None = None,
+    rtol: float | None = None,
     match_nan: bool = False,
     replace: bool = False,
-    seed: Optional[int] = None,
-) -> List[Tuple[int, int]]:
+    seed: int | None = None,
+) -> list[tuple[int, int]]:
     """
     Return N random (x, y) image coordinates from a 2D array where arr[y, x] == value.
 
@@ -79,44 +56,27 @@ def sample_points_with_value(
     return [(int(x), int(y)) for y, x in zip(rows, cols)]
 
 
-def merge_masks_with_heatmap_np(
-    fastsam_masks: List[np.ndarray],
-    heatmap: np.ndarray,
-    min_overlap_ratio: float = 0.5,
-)->List[np.ndarray]:
-    filtered_masks = []
-    for i, mask in enumerate(fastsam_masks):
-        binary_full = mask > 0.5
-        binary_hot = heatmap > 0.5 # TODO: (@gas) since it should be -1,1; if not - change.
-        merged_mask = binary_full * binary_hot
-
-        mask_area = np.sum(binary_full)
-        overlap_area = np.sum(merged_mask)
-
-        if mask_area > 0:
-            overlap_ratio = overlap_area / mask_area
-            if overlap_ratio >= min_overlap_ratio:
-                filtered_masks.append(binary_full)
-    return filtered_masks
+@dataclass
+class SegmenterConfig:
+    min_mask_area: int = 200
+    confidence_threshold: float = 0.5
+    iou_threshold: float = 0.8
+    mask_threshold: float = 0.5
 
 
 class SamSegmenter:
-    def __init__(self, sam_model: Model):
+    def __init__(self, sam_model: Model, config: SegmenterConfig = SegmenterConfig()) -> None:
         self._sam_model = sam_model
-        # TODO: (@gas) move to config or args
-        self._min_mask_area = 200
-        self._confidence_threshold = 0.5
-        self._iou_threshold = 0.8
-        self._mask_threshold = 0.5
+        self._config = config
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    def _generate_sam_masks_np(self, img: Image.Image, query_points: Optional[List[Tuple[int, int]]] = None, query_labels: List[int] = None) -> List[np.ndarray]:
+    def _generate_sam_masks_np(self, img: Image.Image, query_points: list[tuple[int, int]] | None = None, query_labels: list[int] = None) -> list[np.ndarray]:
         """
         Args:
             cropped_image (PIL.Image): Image crop to segment.
     
         Returns:
-            List[np.ndarray]: List of binary masks (H x W, dtype=uint8) with values {0,1}.
+            list[np.ndarray]: List of binary masks (H x W, dtype=uint8) with values {0,1}.
         """
         image_np = np.array(img)
             
@@ -132,8 +92,8 @@ class SamSegmenter:
                 device=self._device,
                 retina_masks=True,
                 imgsz=1024,
-                conf=self._confidence_threshold,
-                iou=self._iou_threshold,
+                conf=self._config.confidence_threshold,
+                iou=self._config.iou_threshold,
                 verbose=False,
             )
         else: 
@@ -142,8 +102,8 @@ class SamSegmenter:
                 device=self._device,
                 retina_masks=True,
                 imgsz=1024,
-                conf=self._confidence_threshold,
-                iou=self._iou_threshold,
+                conf=self._config.confidence_threshold,
+                iou=self._config.iou_threshold,
                 verbose=False,
             )
     
@@ -155,32 +115,105 @@ class SamSegmenter:
             return []
     
         mask_data = results[0].masks.data  # torch.Tensor [N, H, W]
-        result_masks: List[np.ndarray] = []
+        result_masks: list[np.ndarray] = []
     
         num_masks = len(mask_data)
         for i in range(num_masks):
             mask = mask_data[i].detach().cpu().numpy()
-            mask_bin = (mask > self._mask_threshold).astype(np.uint8)
-            if mask_bin.sum() >= self._min_mask_area:
+            mask_bin = (mask > self._config.mask_threshold).astype(np.uint8)
+            if mask_bin.sum() >= self._config.min_mask_area:
                 result_masks.append(mask_bin)
         return result_masks
+
+    def _merge_masks_with_heatmap_np(
+        self,
+        fastsam_masks: list[np.ndarray],
+        heatmap: np.ndarray,
+        min_overlap_ratio: float = 0.5,
+    ) -> list[np.ndarray]:
+        filtered_masks = []
+        for i, mask in enumerate(fastsam_masks):
+            binary_full = mask > 0
+            binary_hot = heatmap > 0
+            merged_mask = binary_full * binary_hot
+    
+            mask_area = np.sum(binary_full)
+            overlap_area = np.sum(merged_mask)
+    
+            if mask_area > 0:
+                overlap_ratio = overlap_area / mask_area
+                if overlap_ratio >= min_overlap_ratio:
+                    filtered_masks.append(binary_full)
+        return filtered_masks
 
     def segment(
         self,
         image: Image.Image,
-        heatmap: Optional[torch.Tensor] = None,
-        min_overlap_ratio: float = 0.8,
-    ):
-        if heatmap is None :
-            heatmap = torch.rand(image.size[1]//8, image.size[0]//8)
-        thrsh = 0.5
-        heatmap_mask = heatmap > thrsh
-        heatmap = np.where(heatmap_mask, heatmap, 0)
-        points = sample_points_with_value(heatmap, value=0.0, n=5, seed=42)
-        # NOTE: (@gas) pass background points as 0's
-        sam_masks = self._generate_sam_masks_np(image, points, [0]*len(points))
-        merged_masks = merge_masks_with_heatmap_np(
-            sam_masks, heatmap, min_overlap_ratio=min_overlap_ratio,
-        )
-        # TODO: (@gas) output satruct should look like: `md = {'segmentation': seg, 'bbox': bbox, 'area': int(seg.sum()), 'confidence': 0.9, 'class': class_name}`  
-        return merged_masks
+        heatmap: np.ndarray | None = None,
+        min_overlap_ratio: float = 0.6,
+    ) -> list[np.ndarray]:
+        if heatmap is not None:
+            points = sample_points_with_value(heatmap, value=0.0, n=5, seed=42)
+            # NOTE: (@gas) pass background points as 0's
+            masks = self._generate_sam_masks_np(image, points, [0]*len(points))
+            masks = self._merge_masks_with_heatmap_np(
+                masks, heatmap, min_overlap_ratio=min_overlap_ratio,
+            ) 
+        else:
+            masks = self._generate_sam_masks_np(image)
+        return masks
+
+
+if __name__=="__main__":
+    import time 
+    import cv2
+
+    from flashbone.core.encoding import DinoV3EncoderGaz
+    from flashbone.core.heatmap_generation import HeatmapGenerator, crop_by_mask
+
+    img_pil_ex = Image.open(".local/example.jpg").convert("RGB")
+
+    img_pil_left = Image.open(".local/image_left.jpg").convert("RGB")
+    mask_left = Image.open(".local/image_left_fg.png")
+    mask_left = mask_left.split()[-1]
+    img_pil_right = Image.open(".local/image_right.jpg").convert("RGB")
+
+    train_image_pos = crop_by_mask(img_pil_left, mask_left)
+    # sky crop
+    train_image_neg_1 = img_pil_left.crop((0, 0, 150, 150)) 
+    # grass crop
+    train_image_neg_2 = img_pil_left.crop((img_pil_left.width-150, img_pil_left.height-150, img_pil_left.width, img_pil_left.height))
+
+    # ---
+    sam_model = FastSAM('FastSAM-x.pt')
+
+    model = DinoV3EncoderGaz()
+    # warmup
+    _ = model.encode([img_pil_ex])
+
+    heatmap_generator = HeatmapGenerator(dino_fe=model, use_cosine_similarity_for_heatmap=False)
+    heatmap_generator.init_pooled_features_train(
+        positive_images=[train_image_pos], negative_images=[train_image_neg_1, train_image_neg_2])
+
+    sam = SamSegmenter(sam_model=sam_model)
+    # warmup
+    _ = sam.segment(img_pil_ex)
+    # ---
+
+    heatmap, heatmap_resized = heatmap_generator.generate_heatmap(img_pil_right)
+    heatmap_resized = heatmap_generator.apply_threshold(heatmap_resized, threshold_dotp=10)
+    heatmap_np = heatmap_resized.cpu().numpy()
+
+    start = time.perf_counter()
+    masks = sam.segment(img_pil_right, heatmap=heatmap_np)
+    end = time.perf_counter()
+    print(f"{int((end-start)*1000)} ms.") 
+    print("Masks no.:", len(masks))
+
+    w, h = img_pil_right.size
+    mask_ = np.zeros((h, w))
+    for m in masks:
+        mask_ += m
+    mask_ = np.clip(mask_, 0, 1)
+
+    cv2.imwrite(".local/masks_merged_debug_gaz.png", (mask_*255).astype(np.uint8))

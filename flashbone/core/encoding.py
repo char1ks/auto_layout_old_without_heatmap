@@ -1,16 +1,7 @@
 # NOTE: (@gas) reference is Meta example notebook: https://github.com/facebookresearch/dinov3/blob/main/notebooks/dinotxt_inference.ipynb
 from dataclasses import dataclass
-import sys
-from pathlib import Path
 import torch
-import torchvision.transforms as T
-import torch.nn.functional as F
 from PIL import Image
-import numpy as np
-from typing import Any ,Dict ,Optional
-import re
-import math
-from enum import Enum
 
 try :
     torch.backends.cuda.matmul.allow_tf32 = True

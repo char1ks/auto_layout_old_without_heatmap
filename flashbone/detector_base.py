@@ -1,10 +1,20 @@
 import abc
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import cv2
 from PIL import Image
+
+
+@dataclass
+class DetectionResult:
+    mask: np.ndarray
+    bbox: list[int]
+    area: float
+    score: float 
+    class_id: int
 
 
 class DetectorBase(abc.ABC):

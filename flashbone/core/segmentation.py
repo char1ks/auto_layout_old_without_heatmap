@@ -125,6 +125,7 @@ class SamSegmenter:
                 result_masks.append(mask_bin)
         return result_masks
 
+    # TODO: (@gas) add auto-merging of overlapped masks
     def _merge_masks_with_heatmap_np(
         self,
         fastsam_masks: list[np.ndarray],

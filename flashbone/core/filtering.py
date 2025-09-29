@@ -2,7 +2,7 @@
 import numpy as np
 from typing import List ,Dict ,Any ,Tuple
 
-# TODO: review
+# TODO: (@gas) review and test
 
 class MaskFilter :
     def __init__ (self ,params :Dict [str ,Any ]=None )->None :

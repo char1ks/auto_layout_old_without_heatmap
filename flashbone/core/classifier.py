@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from PIL import Image
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-import torch
 import faiss
 
 from flashbone.core.encoding import DinoV3EncoderGaz
@@ -75,19 +74,32 @@ class ClassifierKNN:
         for cls in dataset:
             self._index_single(cls.class_id, cls.images)
 
-    def predict(self, images: list[Image.Image], masks: list[Image.Image] = [], threshold: float = 0.474, mask_threshold: float = 0.5, topk: int = 1) -> Any:
+    def predict(
+        self, 
+        images: list[Image.Image], 
+        masks: list[Image.Image] = [], 
+        threshold: float = 0.474, 
+        mask_threshold: float = 0.5, 
+        topk: int = 1,
+    ) -> list[ClassifierPrediction]:
         # TODO: (@gas) adopt for batched encoding (`encoder` TODOs must be resolved before that)
-        mask_vectors = [
-            self._encoder.encode_mask(
-                masks=[mask], images=[img], mask_threshold=mask_threshold).cpu().numpy() 
-            for img, mask in zip(images, masks)
-        ]
-        mask_vectors = np.concatenate(mask_vectors, axis=0)
-        mask_vectors = mask_vectors / np.linalg.norm(mask_vectors, axis=1, keepdims=True)
+        if len(masks):
+            vecs = [
+                self._encoder.encode_mask(
+                    masks=[mask], images=[img], mask_threshold=mask_threshold).cpu().numpy() 
+                for img, mask in zip(images, masks)
+            ]
+        else:
+            vecs = [
+                self._encoder.encode(images=[img]).cls.cpu().numpy()
+                for img in images
+            ]
+        vecs = np.concatenate(vecs, axis=0)
+        vecs = vecs / np.linalg.norm(vecs, axis=1, keepdims=True)
         preds: list[ClassifierPrediction] = []
         for class_id, index in self._index.items():
             # Search for matches in the FAISS index
-            similarities, indices = index.search(mask_vectors, topk)
+            similarities, indices = index.search(vecs, topk)
             # Map similarities to [0, 1]
             normalized_similarities = np.squeeze((similarities + 1) / 2, 0)
             # Apply a threshold to filter matches

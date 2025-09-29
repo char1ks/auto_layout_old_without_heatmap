@@ -27,15 +27,6 @@ class DetectorBase(abc.ABC):
         return image_np
 
     @abc.abstractmethod
-    def read_reference_images(
-        self,
-        positive_dir: Union[str, Path],
-        negative_dir: Optional[Union[str, Path]] = None,
-    ) -> Tuple[Dict[str, List[Image.Image]], List[Image.Image]]:
-        """Reads reference images from directories: returns (pos_by_class, neg_imgs)."""
-        pass
-
-    @abc.abstractmethod
     def set_references(
         self,
         pos_by_class: Dict[str, List[Image.Image]],

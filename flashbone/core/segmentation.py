@@ -125,15 +125,14 @@ class SamSegmenter:
                 result_masks.append(mask_bin)
         return result_masks
 
-    # TODO: (@gas) add auto-merging of overlapped masks
     def _merge_masks_with_heatmap_np(
         self,
-        fastsam_masks: list[np.ndarray],
+        masks: list[np.ndarray],
         heatmap: np.ndarray,
         min_overlap_ratio: float = 0.5,
     ) -> list[np.ndarray]:
         filtered_masks = []
-        for i, mask in enumerate(fastsam_masks):
+        for i, mask in enumerate(masks):
             binary_full = mask > 0
             binary_hot = heatmap > 0
             merged_mask = binary_full * binary_hot
@@ -146,6 +145,54 @@ class SamSegmenter:
                 if overlap_ratio >= min_overlap_ratio:
                     filtered_masks.append(binary_full)
         return filtered_masks
+
+    def _merge_masks(self, masks: list[np.ndarray], min_overlap_ratio: float = 0.5) -> list[np.ndarray]:
+        bm = []
+        areas = []
+        for m in masks:
+            b = (m > 0)
+            a = int(b.sum())
+            if a == 0:
+                continue
+            bm.append(b)
+            areas.append(a)
+        n = len(bm)
+        if n == 0:
+            return []
+    
+        parent = list(range(n))
+    
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+    
+        def union(x, y):
+            rx, ry = find(x), find(y)
+            if rx != ry:
+                parent[ry] = rx
+    
+        for i in range(n):
+            for j in range(i + 1, n):
+                inter = np.sum(bm[i] & bm[j])
+                if inter == 0:
+                    continue
+                if inter / areas[i] >= min_overlap_ratio or inter / areas[j] >= min_overlap_ratio:
+                    union(i, j)
+    
+        groups = {}
+        for i in range(n):
+            r = find(i)
+            groups.setdefault(r, []).append(i)
+    
+        out = []
+        for idxs in groups.values():
+            acc = np.zeros_like(bm[0], dtype=bool)
+            for k in idxs:
+                acc |= bm[k]
+            out.append(acc)
+        return out
 
     def segment(
         self,
@@ -162,6 +209,7 @@ class SamSegmenter:
             ) 
         else:
             masks = self._generate_sam_masks_np(image)
+        masks = self._merge_masks(masks, min_overlap_ratio=min_overlap_ratio)
         return masks
 
 

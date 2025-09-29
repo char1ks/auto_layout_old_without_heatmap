@@ -460,11 +460,3 @@ class ClassificationReportMetric(Metric):
             return MetricOutputModel(metric_name=self.name, score=float(acc), stats=stats)
         except Exception as e:
             return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": str(e), "fallback": True})
-
-
-
-
-
-
-
-            

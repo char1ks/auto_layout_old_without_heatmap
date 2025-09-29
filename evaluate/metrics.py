@@ -13,7 +13,6 @@ sys.path.insert(0, str(EVAL_CLASSES_PATH))
 from DatasetModel import DatasetModel
 from COCOAnnotations import COCOAnnotation
 
-# --- Safe helpers to avoid NoneType -> float() errors ---
 def _safe_float(x: Optional[Union[float, int, str]], default: float = 0.0) -> float:
     try:
         if x is None:
@@ -53,7 +52,7 @@ class Metric(abc.ABC):
 class MeanAveragePrecision(Metric):
     name = "mAP"
 
-    def __init__(self, iou_thresholds: Optional[List[float]] = None):
+    def __init__(self, iou_thresholds: Optional[List[float]] = None) -> None:
         self.iou_thresholds = iou_thresholds or np.arange(0.5, 0.95 + 1e-9, 0.05).tolist()
 
     @staticmethod
@@ -84,7 +83,7 @@ class MeanAveragePrecision(Metric):
         except Exception:
             return 0.0, [1.0], [0.0]
 
-    def _group_input(self, gt: DatasetModel, prediction: List[COCOAnnotation]):
+    def _group_input(self, gt: DatasetModel, prediction: List[COCOAnnotation]) -> Tuple[Dict[str, List[COCOAnnotation]], Dict[str, List[COCOAnnotation]], List[str], List[str]]:
         gt_by_file, pr_by_file = {}, {}
         for a in (gt.data_points or []):
             fn = getattr(a, 'file_name', None)
@@ -107,7 +106,7 @@ class MeanAveragePrecision(Metric):
         uniq_labels = sorted({str(l) for l in labels})
         return gt_by_file, pr_by_file, files, uniq_labels
 
-    def _prepare_boxes(self, gt_by_file, pr_by_file, files, uniq_labels):
+    def _prepare_boxes(self, gt_by_file: Dict[str, List[COCOAnnotation]], pr_by_file: Dict[str, List[COCOAnnotation]], files: List[str], uniq_labels: List[str]) -> Tuple[Dict[str, Dict[str, List[List[float]]]], Dict[str, List[Dict[str, Union[str, List[float], float]]]]]:
         gt_boxes_by_label_file = {lab: {} for lab in uniq_labels}
         for fn in files:
             for a in gt_by_file.get(fn, []):
@@ -133,7 +132,7 @@ class MeanAveragePrecision(Metric):
             preds_by_label[lab].sort(key=lambda d: d['score'], reverse=True)
         return gt_boxes_by_label_file, preds_by_label
 
-    def _match_make_targets(self, preds_list, gt_per_file, thr: float) -> Tuple[List[int], List[float]]:
+    def _match_make_targets(self, preds_list: List[Dict[str, Union[str, List[float], float]]], gt_per_file: Dict[str, List[List[float]]], thr: float) -> Tuple[List[int], List[float]]:
         matched_by_file = {fn: set() for fn in gt_per_file.keys()}
         y_true, y_scores = [], []
         for p in preds_list:
@@ -208,8 +207,6 @@ class MeanAveragePrecision(Metric):
             p_macro = np.mean(np.stack(macro_stack, axis=0), axis=0) if macro_stack else np.zeros_like(recall_grid)
             pr_macro[thr_key] = {'precision': [_safe_float(x) for x in p_macro],
                                  'recall': [_safe_float(x) for x in recall_grid]}
-
-        # сводные метрики
         per_class_ap_avg = []
         for lab in uniq_labels:
             ap_values = ap_per_label_per_thr[lab]
@@ -236,7 +233,6 @@ class MeanAveragePrecision(Metric):
                     macro_map_iou.append(0.0)
             else:
                 macro_map_iou.append(0.0)
-        
         if macro_map_iou:
             overall_mean = np.mean(macro_map_iou)
             overall_map = _safe_float(overall_mean) if np.isfinite(overall_mean) else 0.0
@@ -294,7 +290,7 @@ class MeanIntersectionOverUnion(Metric):
             }
         )
 
-    def _prepare_masks(self, gt: DatasetModel, predictions: List[COCOAnnotation]):
+    def _prepare_masks(self, gt: DatasetModel, predictions: List[COCOAnnotation]) -> Tuple[np.ndarray, np.ndarray]:
         gt_by_file: Dict[str, List[COCOAnnotation]] = {}
         pr_by_file: Dict[str, List[COCOAnnotation]] = {}
         for ann in (gt.data_points or []):
@@ -356,7 +352,7 @@ class DiceCoefficient(Metric):
         except Exception as e:
             return MetricOutputModel(metric_name=self.name, score=0.0, stats={'error': str(e), 'fallback': True})
     
-    def _prepare_binary_data(self, gt: DatasetModel, predictions: List[COCOAnnotation]):
+    def _prepare_binary_data(self, gt: DatasetModel, predictions: List[COCOAnnotation]) -> Tuple[np.ndarray, np.ndarray]:
         gt_by_file: Dict[str, List[COCOAnnotation]] = {}
         pr_by_file: Dict[str, List[COCOAnnotation]] = {}
         for ann in (gt.data_points or []):
@@ -388,6 +384,7 @@ class DiceCoefficient(Metric):
                     pr_mask |= (m > 0).astype(np.uint8)
             gt_all.append(gt_mask)
             pr_all.append(pr_mask)
+
         if not gt_all:
             return np.zeros((1,), dtype=np.uint8), np.zeros((1,), dtype=np.uint8)
         gt_stack = np.concatenate([m.ravel() for m in gt_all], axis=0)

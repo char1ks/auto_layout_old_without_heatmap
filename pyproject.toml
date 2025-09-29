@@ -56,3 +56,11 @@ filterwarnings = [
     "ignore::UserWarning:segment_anything_hq.*",
     "ignore::pytest.PytestReturnNotNoneWarning"
 ]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+show_error_codes = true
+pretty = true
+exclude = "vendor/|gradio_client/"

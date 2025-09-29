@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Any
+from typing import List
 import uuid
 import sys
 from pathlib import Path
@@ -16,6 +16,6 @@ class DatasetModel:
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
     meta: DatasetMeta = field(default_factory=DatasetMeta) 
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.meta, dict):
             self.meta = DatasetMeta.from_dict(self.meta)

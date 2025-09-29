@@ -16,8 +16,7 @@ class DatasetMeta:
     base_directory: Optional[str] = None
     dataset_type: Optional[str] = None
     extra: Dict[str, Any] = field(default_factory=dict)
-
-    #используется в DatasetModel.post_init()
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'DatasetMeta':
         if not data:
@@ -27,18 +26,18 @@ class DatasetMeta:
             'uid', 'name', 'categories', 'total_images', 'total_annotations',
             'url', 'color_channels', 'source_path', 'base_directory', 'dataset_type'
         }
-        known = {k: data.pop(k) for k in list(data.keys()) if k in known_keys}
+        known: Dict[str, Any] = {k: data.pop(k) for k in list(data.keys()) if k in known_keys}
         if 'categories' in known and known['categories']:
             known['categories'] = [str(x) for x in known['categories']]
         
         if 'color_channels' in known and known['color_channels']:
             known['color_channels'] = [str(x) for x in known['color_channels']]
-        for field in ['total_images', 'total_annotations']:
-            if field in known and known[field] is not None:
+        for field_name in ['total_images', 'total_annotations']:
+            if field_name in known and known[field_name] is not None:
                 try:
-                    known[field] = int(known[field])
+                    known[field_name] = int(known[field_name])
                 except (ValueError, TypeError):
-                    known[field] = None
+                    known[field_name] = None
         if 'uid' in known and known['uid'] is not None:
             known['uid'] = str(known['uid'])
         

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional, Tuple, Union
 import numpy as np
 import uuid
 
@@ -7,10 +7,10 @@ import uuid
 @dataclass
 class COCOAnnotation:
     #Супер базовые поля,которые должны быть
-    img:np.ndarray
-    mask:np.ndarray # Выполняет роль segmentation в COCO standara format
-    label: int | str
-    image_size: tuple[int, int]  # width, height (aod) change name
+    img: np.ndarray
+    mask: np.ndarray  # Выполняет роль segmentation в COCO standara format
+    label: Union[int, str]
+    image_size: Tuple[int, int]  # width, height (aod) change name
     
     width: int
     height: int
@@ -18,8 +18,8 @@ class COCOAnnotation:
     area: float
     file_name: str
     bbox: List[float] = field(default_factory=list)
-    score: float | None = None
-    confidence: float | None = None
+    score: Optional[float] = None
+    confidence: Optional[float] = None
     
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
     #Необходимость этих полей спорна,хотя в COCO Format они есть,куча этих полей вроде как можно откинуть :

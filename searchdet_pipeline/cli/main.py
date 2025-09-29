@@ -40,7 +40,6 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 def main():
-    """Основная функция CLI."""
     print("🚀 ЗАПУСК МОДУЛЬНОГО SEARCHDET ПАЙПЛАЙНА")
     print("=" * 60)
     print("📁 Точка входа: searchdet_pipeline/cli/main.py → main()")

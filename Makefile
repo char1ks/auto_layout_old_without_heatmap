@@ -6,57 +6,57 @@ SHELL := /bin/bash
 DEFAULT_GOAL := help
 
 .PHONY: help
-help: ## Show available make targets
+help: 
 	awk 'BEGIN {FS = ":.*?## "} /^[%a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: install
-install: ## Create poetry env and install all dependencies
+install:
 	poetry config virtualenvs.in-project true --local
 	poetry env use 3.11
 	poetry install
 	poetry run pre-commit install
 
 .PHONY: install-all
-install-all: ## Create poetry env and install all dependencies (including extras)
+install-all:
 	poetry config virtualenvs.in-project true --local
 	poetry env use 3.11
 	poetry install --all-extras
 	poetry run pre-commit install
 
 .PHONY: lock
-lock: ## Update poetry lock file
+lock: 
 	poetry lock
 
 .PHONY: checks
-checks: style-check static-check ## Run all checks
+checks: style-check static-check
 
 .PHONY: style-check
-style-check: ## Run style checks (ruff)
+style-check: 
 	printf "Style Checking with Ruff\n"
 	poetry run ruff check
 
 .PHONY: static-check
-static-check: ## Run strict typing checks (mypy)
+static-check: 
 	printf "Static Checking with Mypy\n"
 	poetry run mypy .
 
 .PHONY: restyle
-restyle: ## Reformat code with ruff
+restyle: 
 	poetry run ruff format .
 	poetry run ruff check --fix .
 
 .PHONY: requirements
-requirements: ## Generate requirements.txt from poetry (excluding dev & test groups)
+requirements: 
 	poetry export -f requirements.txt --output requirements.txt --without-hashes --without dev,test
 
 .PHONY: tests
-tests: ## Run tests
+tests: 
 	PYTHONPATH=. poetry run pytest -s
 
 .PHONY: run
-run: ## Run evaluation CLI (dev)
+run: 
 	PYTHONPATH=. poetry run python -m evaluate.typer_cli
 
 .PHONY: build
-build: ## Build the project wheel
+build: 
 	poetry build --format wheel --clean --output dist

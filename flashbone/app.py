@@ -39,7 +39,7 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 logger = logging.getLogger("app")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.INFO or os.environ.get("LOG_LEVEL"))
 _handler = logging.StreamHandler()
 _handler.setFormatter(JsonFormatter())
 logger.handlers = [_handler]
@@ -90,10 +90,15 @@ class LatencyLoggingMiddleware(BaseHTTPMiddleware):
             )
 
 
+# TODO: (@gas) instead of instantiate with some predefined parameters - pass them from the infer request
 def init_detector() -> DetectorBase:
     sam_model = FastSAM('FastSAM-x.pt')
     encoder = DinoV3EncoderGaz()
-    heatmap_generator = HeatmapGenerator(dino_fe=encoder, use_cosine_similarity_for_heatmap=False)
+    heatmap_generator = HeatmapGenerator(
+        dino_fe=encoder, 
+        use_cosine_similarity_for_heatmap=False,
+        threshold_dotp=5,
+    )
     sam = SamSegmenter(
         sam_model=sam_model,
         config=SegmenterConfig(
@@ -214,11 +219,18 @@ async def infer(
         except Exception:
             pil_imgs.append(Image.new("RGB", (256, 256)))
 
+    mean_latency_ms: float = 0.0
     batch_results: List[Dict[str, Any]] = []
     for im in pil_imgs:
+        start = time.perf_counter()
         res = detector.find_present_elements(im)
-        res_dict = asdict(res)
+        res_dict = [asdict(r) for r in res]
+        end = time.perf_counter()
+        dt = (end - start) * 1000
+        mean_latency_ms += dt / len(pil_imgs)
         batch_results.append(res_dict)
+
+    logger.info(f"mean inference time ms.: {mean_latency_ms}")
 
     return JSONResponse(content=jsonable_encoder(batch_results))
 

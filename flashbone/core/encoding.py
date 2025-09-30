@@ -111,7 +111,8 @@ class DinoV3EncoderGaz:
         shapes:
             (H, W, CH) --> tuple((B, D, H, W), (B, D)) --> __tuple((D, H, W), (,D))__
         """
-        # TODO: (@gas) now supports only input images of equal size - fix it somehow
+        # TODO: (@gas) now supports only input images of equal size - fix it somehow | URGENT
+        # RuntimeError: stack expects each tensor to be equal size, but got [3, 768, 960] at entry 0 and [3, 768, 768] at entry 1
         resized = torch.stack([self.resize_transform(img) for img in images])
         resized = TF.normalize(resized, mean=IMAGENET_MEAN, std=IMAGENET_STD)
         resized = resized.cuda()

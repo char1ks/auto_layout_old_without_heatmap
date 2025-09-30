@@ -312,38 +312,43 @@ def perform_inference(image):
         if not results:
             return "No results returned from server", pil_image
 
-        # TODO: (@gas) allign with server output datastruct
-        
         # Process first result (since we sent one image)
         result = results[0]
-        masks = result.get("masks", [])
         
-        if not masks:
+        # The server now returns DetectionResult objects as dicts
+        # Each result is a single DetectionResult with: polygons, bbox, area, score, class_id
+        if not result:
             return "No detections found", pil_image
         
-        # Extract polygons, bounding boxes, and class IDs
+        # Handle the new DetectionResult format
+        # Result can be either a single DetectionResult or list of DetectionResults
+        if isinstance(result, list):
+            detections = result
+        else:
+            detections = [result]
+        
+        if not detections:
+            return "No detections found", pil_image
+        
+        # Extract polygons, bounding boxes, and class IDs from DetectionResult format
         all_polygons = []
         all_bboxes = []
         all_class_ids = []
         
-        for mask in masks:
-            if "polygons" in mask:
-                all_polygons.append(mask["polygons"])
-            else:
-                all_polygons.append([])
+        for detection in detections:
+            # Get polygons (list of list of list of int)
+            polygons = detection.get("polygons", [])
+            all_polygons.append(polygons)
             
-            if "bbox" in mask:
-                bbox = mask["bbox"]
-                if len(bbox) == 4:
-                    # bbox is in xywh format
-                    all_bboxes.append(tuple(map(int, bbox)))
-                else:
-                    all_bboxes.append((0, 0, 10, 10))
+            # Get bbox (list of 4 ints: [x, y, w, h])
+            bbox = detection.get("bbox", [0, 0, 10, 10])
+            if len(bbox) == 4:
+                all_bboxes.append(tuple(map(int, bbox)))
             else:
                 all_bboxes.append((0, 0, 10, 10))
             
-            # Extract class from different possible field names
-            class_id = mask.get("class", mask.get("class_id", mask.get("category_id", "unknown")))
+            # Get class_id
+            class_id = detection.get("class_id", "unknown")
             all_class_ids.append(str(class_id))
         
         # Draw results on image (bboxes are in xywh format)
@@ -352,17 +357,18 @@ def perform_inference(image):
         )
         
         # Create result summary
-        summary = f"Found {len(masks)} detection(s):\n"
-        for i, mask in enumerate(masks):
-            # Extract class from different possible field names
-            class_id = mask.get("class", mask.get("class_id", mask.get("category_id", "unknown")))
-            score = mask.get("score", mask.get("confidence", "N/A"))
-            bbox = mask.get("bbox", [])
+        summary = f"Found {len(detections)} detection(s):\n"
+        for i, detection in enumerate(detections):
+            class_id = detection.get("class_id", "unknown")
+            score = detection.get("score", "N/A")
+            bbox = detection.get("bbox", [])
+            area = detection.get("area", "N/A")
             bbox_str = f"[{','.join(map(str, bbox))}]" if bbox else "N/A"
             
             summary += f"- Detection {i+1}:\n"
             summary += f"  Class: {class_id}\n"
             summary += f"  Score: {score}\n"
+            summary += f"  Area: {area}\n"
             summary += f"  Bbox (xywh): {bbox_str}\n"
         
         return summary, result_image

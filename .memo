@@ -32,3 +32,6 @@ PYTHONPATH=. python searchdet_pipeline/test_app.py \
 
 # port forwarding for testing on a client machine
 ssh -C -L 8000:localhost:8000 synetra@46.146.213.13
+
+
+HOST=46.146.213.13 python run.py

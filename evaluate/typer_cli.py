@@ -1,36 +1,36 @@
 from __future__ import annotations
 
+import os
 import json
 import importlib
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
-import sys
 
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
-from DatasetPoint import DatasetPoint
-from metrics import (
+import sys as _sys
+from pathlib import Path as _Path
+from evaluate.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
+from evaluate.DatasetPoint import DatasetPoint
+from evaluate.metrics import (
     MetricOutputModel,
     MeanAveragePrecision,
     MeanIntersectionOverUnion,
     DiceCoefficient,
     ClassificationReportMetric,
 )
+from evaluate.Tracer import Tracer
 from searchdet_pipeline.core.detector import SearchDetDetector
 from searchdet_pipeline.core.config import get_preset_config
-from Tracer import Tracer
 from contextlib import contextmanager
 import inspect
 import builtins
 
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
-SEARCHDET_PIPELINE_PATH = Path(__file__).parent.parent / "searchdet_pipeline"
-sys.path.insert(0, str(SEARCHDET_PIPELINE_PATH.parent))
-
+os.environ["MPLBACKEND"] = "Agg"
+_pkg_root = _Path(__file__).parent
+_sys.path.insert(0, str(_pkg_root.parent))
 App = typer.Typer()
 console = Console()
 

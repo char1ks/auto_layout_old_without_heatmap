@@ -70,7 +70,11 @@ class DatasetPoint:
                             self.reporter.emit(ctx)
                         except Exception:
                             pass
-            det_anns = self.detector.detect(image_np, callback=_cb, file_name=fname, *args, **kwargs)
+            # Передаем callback только через kwargs, чтобы mypy не считал дублирование
+            _kwargs = dict(kwargs)
+            _kwargs.pop("callback", None)
+            _kwargs["callback"] = _cb
+            det_anns = self.detector.detect(image_np, file_name=fname, *args, **_kwargs)
             predictions.extend(det_anns)
             if progress:
                 progress(idx, total, fname)

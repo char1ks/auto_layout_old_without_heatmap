@@ -1,4 +1,6 @@
-import abc, numpy as np, warnings, tempfile, json, os
+import abc
+import warnings
+import numpy as np
 import torch
 from torchvision.ops import box_iou
 from dataclasses import dataclass
@@ -11,10 +13,10 @@ from sklearn.metrics import classification_report, precision_recall_curve, avera
 from torchmetrics import JaccardIndex, F1Score
 import sys
 from pathlib import Path
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
 from DatasetModel import DatasetModel
 from COCOAnnotations import COCOAnnotation
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
 
 
@@ -109,7 +111,7 @@ class MeanAveragePrecision(Metric):
             lab = getattr(arr, 'label', None)
             if lab is not None:
                 labels.append(str(lab))
-        uniq_labels = sorted({str(l) for l in labels})
+        uniq_labels = sorted({str(label) for label in labels})
         return gt_by_file, pr_by_file, files, uniq_labels
 
     def _prepare_boxes(self, gt_by_file: Dict[str, List[COCOAnnotation]], pr_by_file: Dict[str, List[COCOAnnotation]], files: List[str], uniq_labels: List[str]) -> Tuple[Dict[str, Dict[str, List[List[float]]]], Dict[str, List[PredItem]]]:
@@ -156,10 +158,12 @@ class MeanAveragePrecision(Metric):
                     if iou_val > best_iou:
                         best_iou, best_idx = iou_val, gi
             if best_iou >= _safe_float(thr) and best_idx is not None:
-                y_true.append(1); y_scores.append(score)
+                y_true.append(1)
+                y_scores.append(score)
                 matched_by_file.setdefault(fn, set()).add(best_idx)
             else:
-                y_true.append(0); y_scores.append(score)
+                y_true.append(0)
+                y_scores.append(score)
         return y_true, y_scores
 
     def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
@@ -167,7 +171,7 @@ class MeanAveragePrecision(Metric):
         if not files:
             return MetricOutputModel(metric_name=self.name, score=0.0, stats={"error": "empty GT or predictions"})
 
-        categories = [l for l in uniq_labels]
+        categories = [label for label in uniq_labels]
         gt_boxes_by_label_file, preds_by_label = self._prepare_boxes(gt_by_file, pr_by_file, files, uniq_labels)
 
         ap_per_label_per_thr = {lab: [0.0] * len(self.iou_thresholds) for lab in uniq_labels}
@@ -194,7 +198,8 @@ class MeanAveragePrecision(Metric):
             all_y_scores: List[float] = []
             for lab, (yt, ys) in (y_store.get(thr, {}) or {}).items():
                 if yt:
-                    all_y_true.extend(yt); all_y_scores.extend(ys)
+                    all_y_true.extend(yt)
+                    all_y_scores.extend(ys)
             if all_y_true:
                 ap_micro_val, p_micro, r_micro = self._ap_pr(all_y_true, all_y_scores)
             else:
@@ -424,8 +429,8 @@ class ClassificationReportMetric(Metric):
                 if not labels:
                     return "none"
                 counts: Dict[str, int] = {}
-                for l in labels:
-                    s = str(l)
+                for label in labels:
+                    s = str(label)
                     counts[s] = counts.get(s, 0) + 1
                 return max(counts.items(), key=lambda x: x[1])[0]
 

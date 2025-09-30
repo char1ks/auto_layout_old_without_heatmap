@@ -11,20 +11,21 @@ import statistics
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+from rich.console import Console
+from rich.table import Table
+from rich import box
+from Context import Context
+from metrics import MetricOutputModel
+from ReportConfig import ReportConfig
+
 mpl.rcParams["svg.fonttype"] = "none"  
 mpl.rcParams["savefig.facecolor"] = "white"
 mpl.rcParams["figure.facecolor"] = "white"
 mpl.rcParams["axes.facecolor"] = "white"
 mpl.rcParams["savefig.transparent"] = False
-from rich.console import Console
-from rich.table import Table
-from rich import box
 EVAL_CLASSES_PATH = Path(__file__).parent
 sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
-from Context import Context
-from metrics import MetricOutputModel
-from ReportConfig import ReportConfig
 class ReportGenerator(ReportConfig):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

@@ -1,24 +1,22 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple, Dict, Any, Union, Callable
+from typing import  List, Optional, Tuple,Union, Callable
 import sys
-
-import numpy as np
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
 from DatasetModel import DatasetModel
 from Dataset import Dataset
 from DetectorBase import DetectorBase
 from metrics import (
-    Metric, MetricOutputModel, MeanAveragePrecision, 
-    MeanIntersectionOverUnion, DiceCoefficient
+    Metric, MetricOutputModel
 )
 from COCOAnnotations import COCOAnnotation
 from Tracer import Tracer
 from ReportGenerator import ReportGenerator
 from Context import Context
 
+import numpy as np
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
 class DatasetPoint:
     def __init__(self,dataset: Union[Dataset, DatasetModel],detector: DetectorBase,metrics: Optional[List[Metric]] = None, reporter: Optional[Tracer] = None,) -> None:

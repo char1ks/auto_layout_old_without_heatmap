@@ -1,10 +1,6 @@
 import numpy as np
 import pytest
-from pathlib import Path
-
 from evaluate.COCOAnnotations import COCOAnnotation
-
-
 @pytest.fixture
 def sample_image() -> np.ndarray:
     return (np.random.rand(50, 30, 3) * 255).astype(np.uint8)

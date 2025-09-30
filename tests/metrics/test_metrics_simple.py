@@ -1,14 +1,8 @@
-import pytest
-import numpy as np
-from typing import List
 from pathlib import Path
 import sys
+from evaluate.metrics import MeanIntersectionOverUnion, DiceCoefficient, ClassificationReportMetric, MeanAveragePrecision
 EVAL_CLASSES_PATH = Path(__file__).parent.parent.parent / "evaluate"
 sys.path.insert(0, str(EVAL_CLASSES_PATH))
-from evaluate.DatasetModel import DatasetModel
-from evaluate.metrics import MeanIntersectionOverUnion, DiceCoefficient, ClassificationReportMetric, MeanAveragePrecision
-
-
 def test_map_perfect_predictions(build_gt_dataset, build_perfect_predictions_from_gt):
     gt = build_gt_dataset
     preds = build_perfect_predictions_from_gt

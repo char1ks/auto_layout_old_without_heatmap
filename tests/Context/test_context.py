@@ -1,5 +1,4 @@
-import pytest
-from datetime import datetime, timedelta
+from datetime import datetime
 from evaluate.Context import Context
 
 

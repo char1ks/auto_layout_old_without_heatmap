@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import importlib
-from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
 import sys
@@ -11,11 +10,6 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
-SEARCHDET_PIPELINE_PATH = Path(__file__).parent.parent / "searchdet_pipeline"
-sys.path.insert(0, str(SEARCHDET_PIPELINE_PATH.parent))
-
 from Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
 from DatasetPoint import DatasetPoint
 from metrics import (
@@ -28,13 +22,17 @@ from metrics import (
 from searchdet_pipeline.core.detector import SearchDetDetector
 from searchdet_pipeline.core.config import get_preset_config
 from Tracer import Tracer
-
-App = typer.Typer()
-console = Console()
-
 from contextlib import contextmanager
 import inspect
 import builtins
+
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
+SEARCHDET_PIPELINE_PATH = Path(__file__).parent.parent / "searchdet_pipeline"
+sys.path.insert(0, str(SEARCHDET_PIPELINE_PATH.parent))
+
+App = typer.Typer()
+console = Console()
 
 @contextmanager
 def suppress_print_from(prefixes: list[str]):

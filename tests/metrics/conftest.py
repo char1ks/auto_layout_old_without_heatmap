@@ -2,16 +2,14 @@ import json
 from pathlib import Path
 from typing import List
 import numpy as np
-import xml.etree.ElementTree as ET
 import sys
 from pathlib import Path as _P
 import pytest
-EVAL_CLASSES_PATH = _P(__file__).resolve().parents[2] / "evaluate"
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
 from COCOAnnotations import COCOAnnotation
-from DatasetMeta import DatasetMeta
 from evaluate.DatasetModel import DatasetModel
 from Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
+EVAL_CLASSES_PATH = _P(__file__).resolve().parents[2] / "evaluate"
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 RESULTS_DIR = STATIC_DIR / "results_fruit1"
 FRUIT_XML = STATIC_DIR / "fruit1.xml"

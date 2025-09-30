@@ -3,11 +3,10 @@ from typing import List
 import uuid
 import sys
 from pathlib import Path
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
-
 from COCOAnnotations import COCOAnnotation
 from DatasetMeta import DatasetMeta
+EVAL_CLASSES_PATH = Path(__file__).parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
 #Грубо говоря это модель датасета, которая содержит в себе аннотации к изображениям и простое описание датасета:Имя, дата, источник датасета, ссылки, и тд
 @dataclass

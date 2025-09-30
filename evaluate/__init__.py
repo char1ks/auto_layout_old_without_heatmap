@@ -1,1 +1,1 @@
-from .DatasetPoint import DatasetPoint
+from .DatasetPoint import DatasetPoint as DatasetPoint

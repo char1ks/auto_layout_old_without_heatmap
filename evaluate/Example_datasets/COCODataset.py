@@ -1,13 +1,13 @@
 from pathlib import Path
-from typing import Any, List, Dict, Optional, Tuple
+from typing import Any, List, Dict
 import sys
 import numpy as np
 from PIL import Image, ImageDraw
-EVAL_CLASSES_PATH = Path(__file__).parent.parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
 from Dataset import Dataset
 from DatasetModel import DatasetModel
 from COCOAnnotations import COCOAnnotation
+EVAL_CLASSES_PATH = Path(__file__).parent.parent
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
 class ChickenDataset(Dataset):
     @classmethod

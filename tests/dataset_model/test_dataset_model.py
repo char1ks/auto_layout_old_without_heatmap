@@ -1,13 +1,12 @@
-import pytest
 from typing import List, Dict
 import sys
 from pathlib import Path
-EVAL_CLASSES_PATH = Path(__file__).parent.parent.parent / "evaluate"
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
-
 from DatasetModel import DatasetModel
 from DatasetMeta import DatasetMeta
 from COCOAnnotations import COCOAnnotation
+EVAL_CLASSES_PATH = Path(__file__).parent.parent.parent / "evaluate"
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
+
 
 def test_post_init_converts_meta_dict_to_object(dataset_model_from_meta_dict):
     dm: DatasetModel = dataset_model_from_meta_dict

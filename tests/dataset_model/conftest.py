@@ -4,12 +4,11 @@ from typing import List
 from pathlib import Path
 from PIL import Image
 import sys
-EVAL_CLASSES_PATH = Path(__file__).parent.parent.parent / "evaluate"
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
-
 from COCOAnnotations import COCOAnnotation
 from DatasetModel import DatasetModel
 from DatasetMeta import DatasetMeta
+EVAL_CLASSES_PATH = Path(__file__).parent.parent.parent / "evaluate"
+sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
 @pytest.fixture
 def coco_annotations_list() -> List[COCOAnnotation]:

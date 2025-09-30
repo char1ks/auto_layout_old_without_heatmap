@@ -6,6 +6,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Tuple
+from dataclasses import asdict
 
 from fastapi import FastAPI, File, UploadFile, Request, Response, HTTPException, Depends
 from fastapi.encoders import jsonable_encoder
@@ -15,7 +16,6 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.datastructures import UploadFile as StarletteUploadFile, FormData
 from PIL import Image
 import numpy as np
-import cv2
 from ultralytics import FastSAM
 
 from flashbone.core.encoding import DinoV3EncoderGaz
@@ -161,59 +161,6 @@ async def parse_pos_neg_from_form(request: Request) -> Tuple[Dict[str, List[Imag
     return pos_by_class, neg_imgs
 
 
-def pil_to_np_rgb(img: Image.Image) -> np.ndarray:
-    return np.array(img, dtype=np.uint8)
-
-
-def mask_to_polygons(mask_2d, min_area: int = 3):
-    """
-    Convert a 2D binary mask (list-of-lists or ndarray) to polygons using cv2.findContours.
-    Returns: List[List[[x, y], ...]] (one polygon = list of [x, y] points).
-    Coordinates are in the mask grid space (0..W-1, 0..H-1).
-
-    min_area filters tiny specks; tune as needed.
-    """
-    if cv2 is None:
-        # Fallback: single bounding-rectangle polygon from the mask
-        m = np.asarray(mask_2d, dtype=np.uint8)
-        ys, xs = np.where(m > 0)
-        if len(xs) == 0:
-            return []
-        x1, y1, x2, y2 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
-        return [[[x1, y1], [x2, y1], [x2, y2], [x1, y2]]]
-
-    m = np.asarray(mask_2d, dtype=np.uint8)
-    # OpenCV expects 0/255 for binary; ensure it:
-    m = (m > 0).astype(np.uint8) * 255
-
-    # Find external contours; you can switch to RETR_TREE if you want holes/hierarchies
-    contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    polys = []
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < float(min_area):
-            continue
-        # Optional simplification (tune epsilon):
-        peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.001 * peri, True)
-        pts = [[int(p[0][0]), int(p[0][1])] for p in approx]
-        if pts:
-            polys.append(pts)
-    return polys
-
-
-def to_python(obj):
-    if isinstance(obj, dict):
-        return {to_python(k): to_python(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple, set)):
-        return [to_python(x) for x in obj]
-    if isinstance(obj, np.generic):
-        return obj.item()
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    return obj
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.detector = init_detector()
@@ -269,24 +216,9 @@ async def infer(
 
     batch_results: List[Dict[str, Any]] = []
     for im in pil_imgs:
-        image_np = np.array(im, dtype=np.uint8)
-        res = detector.find_present_elements(image_np)
-
-        for det in res.get("masks", []):
-            seg = None
-            if "segmentation" in det:
-                seg = det.pop("segmentation")
-            elif "mask" in det and isinstance(det["mask"], dict) and "segmentation" in det["mask"]:
-                seg = det["mask"].pop("segmentation")
-
-            if seg is not None:
-                det["polygons"] = mask_to_polygons(seg)
-
-        if "timing_info" in res:
-            del res["timing_info"]
-        if "heatmap" in res:
-            del res["heatmap"]
-        batch_results.append(res)
+        res = detector.find_present_elements(im)
+        res_dict = asdict(res)
+        batch_results.append(res_dict)
 
     return JSONResponse(content=jsonable_encoder(batch_results))
 

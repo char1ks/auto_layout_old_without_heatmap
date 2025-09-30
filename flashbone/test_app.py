@@ -12,6 +12,8 @@ try:
 except Exception:
     Image = None
 
+# TODO: (@gas) convert to tests
+
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))
 BASE = f"http://{HOST}:{PORT}"

@@ -210,6 +210,7 @@ class SamSegmenter:
         else:
             masks = self._generate_sam_masks_np(image)
         masks = self._merge_masks(masks, min_overlap_ratio=min_overlap_ratio)
+        masks = [mask.astype(int) for mask in masks]
         return masks
 
 

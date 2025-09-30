@@ -311,6 +311,8 @@ def perform_inference(image):
         
         if not results:
             return "No results returned from server", pil_image
+
+        # TODO: (@gas) allign with server output datastruct
         
         # Process first result (since we sent one image)
         result = results[0]

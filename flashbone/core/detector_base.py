@@ -10,7 +10,7 @@ from PIL import Image
 
 @dataclass
 class DetectionResult:
-    mask: np.ndarray
+    polygons: list[list[list[int]]]
     bbox: list[int]
     area: float
     score: float 

@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image
-import torch
+import cv2
 
 # from flashbone.core.filtering import MaskFilter  
 from flashbone.core.segmentation import SamSegmenter
@@ -26,6 +26,32 @@ class SearchDetDetector(DetectorBase):
         else :
             bbox = [0, 0, 0, 0]
         return bbox
+
+    def _mask_to_polygons(self, mask: np.ndarray, min_area: int = 5) -> list[list[list[int]]]:
+        """
+        Convert a 2D binary mask (list-of-lists or ndarray) to polygons using cv2.findContours.
+        Returns: List[List[[x, y], ...]] (one polygon = list of [x, y] points).
+        Coordinates are in the mask grid space (0..W-1, 0..H-1).
+    
+        min_area filters tiny specks; tune as needed.
+        """
+        # OpenCV expects 0/255 for binary; ensure it:
+        m = (mask > 0).astype(np.uint8) * 255
+    
+        # Find external contours; you can switch to RETR_TREE if you want holes/hierarchies
+        contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        polys = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < float(min_area):
+                continue
+            # Optional simplification (tune epsilon):
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.001 * peri, True)
+            pts = [[int(p[0][0]), int(p[0][1])] for p in approx]
+            if pts:
+                polys.append(pts)
+        return polys
 
     def set_references(self, pos_by_class: dict[str, list[Image.Image]], neg_imgs: list[Image.Image]) -> None:
         positives = []
@@ -57,9 +83,9 @@ class SearchDetDetector(DetectorBase):
                 mask_threshold=0.5,
             )
             md = DetectionResult(
-                mask=mask,
                 bbox=bbox,
                 area=mask.sum(),
+                polygons=self._mask_to_polygons(mask),
                 # NOTE: (@gas) [0] bc a batch of 1 used to process a single input image
                 score=cls_preds[0].score, 
                 class_id=cls_preds[0].class_id,

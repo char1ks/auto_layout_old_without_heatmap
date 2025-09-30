@@ -57,7 +57,7 @@ PyYAML = "^6.0"
  dinov3 = { path = "vendor/dinov3", develop = false }
 
 # Доп. зависимости из корневого requirements.txt
-faiss-cpu = { version = "1.12.0", python = ">=3.13,<3.15" }
+faiss-cpu = "*"
 segment-anything-hq = "0.3"
 selenium = "4.35.0"
 langchain = "0.3.27"
@@ -79,7 +79,6 @@ pycocotools = "*"
 mypy = "^1.10.0"
 ruff = "^0.5.0"
 pre-commit = "^3.5.0"
-jupyter = "*"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.4.0"

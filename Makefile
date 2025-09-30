@@ -12,14 +12,14 @@ help:
 .PHONY: install
 install:
 	poetry config virtualenvs.in-project true --local
-	poetry env use 3.11
+	poetry env use 3.12
 	poetry install --with dev,test
 	poetry run pre-commit install
 
 .PHONY: install-all
 install-all:
 	poetry config virtualenvs.in-project true --local
-	poetry env use 3.11
+	poetry env use 3.12
 	poetry install --with dev,test
 	poetry run pre-commit install
 
@@ -33,17 +33,20 @@ checks: style-check static-check
 .PHONY: style-check
 style-check: 
 	printf "Style Checking with Ruff\n"
-	poetry run ruff check
+	poetry run ruff check --exclude vendor,gradio_client,searchdet-main,searchdet_pipeline,.venv,dist,__pycache__
 
 .PHONY: static-check
 static-check: 
 	printf "Static Checking with Mypy\n"
-	poetry run mypy .
+	poetry run mypy . --exclude vendor --exclude gradio_client --exclude searchdet-main --exclude searchdet_pipeline --exclude .venv --exclude dist --exclude __pycache__
 
 .PHONY: restyle
 restyle: 
 	poetry run ruff format .
 	poetry run ruff check --fix .
+
+fix-style:
+	poetry run ruff check --fix
 
 .PHONY: requirements
 requirements: 

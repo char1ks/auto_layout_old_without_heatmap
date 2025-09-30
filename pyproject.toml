@@ -1,18 +1,22 @@
 [tool.poetry]
-name = "ml-segmentation"
+name = "auto_layout_old_without_heatmap"
 version = "0.1.0"
 description = ""
 authors = ["aodnoral@synetra"]
 readme = "README.md"
+packages = [
+    { include = "evaluate" },
+    { include = "searchdet_pipeline" }
+]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.dependencies]
-python = "^3.11"
-torch = { version = "^2.4.0", source = "torch-gpu" }
-torchvision = "^0.15.0"
+python = "^3.12"
+torch = { version = "2.3.1", source = "torch-gpu" }
+torchvision = "0.18.1"
 transformers = "^4.34.0"
 accelerate = "^0.21.0"
 opencv-python = "^4.8.0"
@@ -32,10 +36,8 @@ einops = "^0.6.1"
 gradio = "^3.35.0"
 gradio_client = "^0.2.9"
 markdown2 = { version = "^2.4.10", extras = ["all"] }
-safetensors = "^0.3.1"
-tokenizers = "^0.13.3"
 huggingface-hub = "^0.16.4"
-av = "^10.0.0"
+
 gdown = "^4.7.1"
 kagglehub = "^0.2.0"
 seaborn = "^0.12.0"
@@ -77,3 +79,20 @@ exclude = "vendor/|gradio_client/|searchdet_pipeline/"
 module = ["searchdet_pipeline.*"]
 follow_imports = "skip"
 ignore_errors = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = [
+    "vendor",
+    "gradio_client",
+    "searchdet-main",
+    "searchdet_pipeline",
+    ".venv",
+    "dist",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E402"]

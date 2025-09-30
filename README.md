@@ -1,3 +1,7 @@
+!pip install poetry
+
+
+
 make install
 make checks
 make tests

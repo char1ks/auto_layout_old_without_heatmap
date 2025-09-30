@@ -13,14 +13,14 @@ help:
 install:
 	poetry config virtualenvs.in-project true --local
 	poetry env use 3.11
-	poetry install
+	poetry install --with dev,test
 	poetry run pre-commit install
 
 .PHONY: install-all
 install-all:
 	poetry config virtualenvs.in-project true --local
 	poetry env use 3.11
-	poetry install --all-extras
+	poetry install --with dev,test
 	poetry run pre-commit install
 
 .PHONY: lock

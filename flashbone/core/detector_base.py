@@ -18,14 +18,6 @@ class DetectionResult:
 
 
 class DetectorBase(abc.ABC):
-    @classmethod
-    def read_input_img(cls, image_path: str | Path) -> np.ndarray:
-        if cv2 is None:
-            raise RuntimeError("OpenCV (cv2) is required for read_input_img; install opencv-python.")
-        img_bgr = cv2.imread(str(image_path))
-        image_np = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        return image_np
-
     @abc.abstractmethod
     def set_references(
         self,
@@ -36,7 +28,7 @@ class DetectorBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def find_present_elements(self, image_np: np.ndarray, *args, **kwargs) -> Dict[str, Any]:
+    def find_present_elements(self, image_np: np.ndarray, *args, **kwargs) -> list[DetectionResult]:
         """Runs detection on a single image (RGB ndarray)."""
         pass
 

@@ -19,11 +19,11 @@ class SearchDetDetector(DetectorBase):
     def _bbox_from_mask(self, mask: np.ndarray) -> list[int]:
         seg = (mask > 0).astype(bool)
         ys, xs = np.where(seg)
-        if xs.size and ys.size :
-            x_min , x_max = int(xs.min()), int(xs.max())
-            y_min , y_max = int(ys.min()), int(ys.max())
+        if xs.size and ys.size:
+            x_min, x_max = int(xs.min()), int(xs.max())
+            y_min, y_max = int(ys.min()), int(ys.max())
             bbox = [x_min, y_min, x_max - x_min + 1, y_max - y_min + 1]
-        else :
+        else:
             bbox = [0, 0, 0, 0]
         return bbox
 
@@ -69,7 +69,7 @@ class SearchDetDetector(DetectorBase):
 
     def find_present_elements(self, image: Image.Image) -> list[DetectionResult]:
         _, heatmap_resized = self._heatmap_generator.generate_heatmap(image)
-        heatmap_resized = self._heatmap_generator.apply_threshold(heatmap_resized, threshold_dotp=10) # TODO: (@gas) parametrize thresholds
+        heatmap_resized = self._heatmap_generator.apply_threshold(heatmap_resized)
         heatmap_np = heatmap_resized.cpu().numpy()
         masks = self._segmenter.segment(image, heatmap=heatmap_np)
 
@@ -82,15 +82,19 @@ class SearchDetDetector(DetectorBase):
                 threshold=0.4,
                 mask_threshold=0.5,
             )
-            md = DetectionResult(
-                bbox=bbox,
-                area=mask.sum(),
-                polygons=self._mask_to_polygons(mask),
+            if len(cls_preds):
                 # NOTE: (@gas) [0] bc a batch of 1 used to process a single input image
-                score=cls_preds[0].score, 
-                class_id=cls_preds[0].class_id,
-            )
-            result.append(md)
+                cls_pred = cls_preds[0]
+                if cls_pred.class_id < 0: # NOTE: (@gas) skip no class results
+                    continue
+                md = DetectionResult(
+                    bbox=bbox,
+                    area=int(mask.sum()),
+                    polygons=self._mask_to_polygons(mask),
+                    score=float(cls_pred.score), 
+                    class_id=int(cls_pred.class_id),
+                )
+                result.append(md)
 
         return result
 
@@ -120,11 +124,19 @@ if __name__=="__main__":
     train_image_neg_2 = img_pil_left.crop((img_pil_left.width-150, img_pil_left.height-150, img_pil_left.width, img_pil_left.height))
 
     # ---
+    # NOTE: (@gas) models instantiation - they're just shared across other classes
     sam_model = FastSAM('FastSAM-x.pt')
     encoder = DinoV3EncoderGaz()
     # warmup
     _ = encoder.encode([img_pil_ex])
-    heatmap_generator = HeatmapGenerator(dino_fe=encoder, use_cosine_similarity_for_heatmap=False)
+    # ---
+
+    # ---
+    heatmap_generator = HeatmapGenerator(
+        dino_fe=encoder, 
+        use_cosine_similarity_for_heatmap=False,
+        threshold_dotp=10, 
+    )
     sam = SamSegmenter(
         sam_model=sam_model,
         config=SegmenterConfig(

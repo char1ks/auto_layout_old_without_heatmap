@@ -50,12 +50,16 @@ class HeatmapGenerator:
         self,
         dino_fe: DinoV3EncoderGaz,
         attention_pool_examples: bool = False,
-        use_cosine_similarity_for_heatmap: bool = True
+        use_cosine_similarity_for_heatmap: bool = True,
+        threshold_dotp: float = 10, 
+        threshold_cosine: float = 0.5,
     ):
         self.dino_fe = dino_fe
         self.attention_pool_examples = attention_pool_examples
         self.use_cosine_similarity_for_heatmap = use_cosine_similarity_for_heatmap
         self.pooled_patch_features_pos, self.pooled_patch_features_neg = None, None
+        self.threshold_dotp = threshold_dotp
+        self.threshold_cosine = threshold_cosine
 
     def _get_pooled_embed(self, query_feats: torch.Tensor, pooled_patch_features: torch.Tensor):
         if self.attention_pool_examples:
@@ -134,11 +138,11 @@ class HeatmapGenerator:
 
         return heatmap, heatmap_resized
 
-    def apply_threshold(self, hm_arr: torch.Tensor, threshold_cosine: float = 0.5, threshold_dotp: float = 5) -> torch.Tensor:
+    def apply_threshold(self, hm_arr: torch.Tensor) -> torch.Tensor:
         if self.use_cosine_similarity_for_heatmap:
-            hm_arr[hm_arr < threshold_cosine] = 0
+            hm_arr[hm_arr < self.threshold_cosine] = 0
         else:
-            hm_arr[hm_arr < threshold_dotp] = 0 # some initial thresholding
+            hm_arr[hm_arr < self.threshold_dotp] = 0 # some initial thresholding
             hm_arr /= np.abs(hm_arr).max()
         return hm_arr
 

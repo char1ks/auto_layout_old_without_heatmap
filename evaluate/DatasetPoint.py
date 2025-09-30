@@ -3,16 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import  List, Optional, Tuple,Union, Callable
 import sys
-from .DatasetModel import DatasetModel
-from .Dataset import Dataset
-from .DetectorBase import DetectorBase
-from .metrics import (
+from DatasetModel import DatasetModel
+from Dataset import Dataset
+from DetectorBase import DetectorBase
+from metrics import (
     Metric, MetricOutputModel
 )
-from .COCOAnnotations import COCOAnnotation
-from .Tracer import Tracer
-from .ReportGenerator import ReportGenerator
-from .Context import Context
+from COCOAnnotations import COCOAnnotation
+from Tracer import Tracer
+from ReportGenerator import ReportGenerator
+from Context import Context
 
 import numpy as np
 EVAL_CLASSES_PATH = Path(__file__).parent

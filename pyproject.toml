@@ -16,7 +16,8 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.dependencies]
 python = "^3.12"
 torch = { version = "2.3.1", source = "torch-gpu" }
-torchvision = "0.18.1"
+torchvision = { version = "0.18.1", source = "torch-gpu" }
+torchmetrics = "^1.0.0"
 transformers = "^4.34.0"
 accelerate = "^0.21.0"
 opencv-python = "^4.8.0"
@@ -118,7 +119,7 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 fixable = ["ALL"]
-ignore = ["E402"]
+ignore = ["E402", "E501", "I001"]
 
 [tool.ruff.format]
 quote-style = "double"

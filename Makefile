@@ -54,7 +54,7 @@ requirements:
 
 .PHONY: tests
 tests: 
-	PYTHONPATH=. poetry run pytest -s
+	PYTHONPATH=. poetry run pytest -s tests
 
 .PHONY: run
 run: 

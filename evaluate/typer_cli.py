@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import os
 import json
 import importlib
 from pathlib import Path

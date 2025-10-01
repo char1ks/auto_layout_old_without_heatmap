@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Tuple
 import xml.etree.ElementTree as ET
 import sys
-_project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(_project_root))
 import numpy as np
 from PIL import Image
 from evaluate.Dataset import Dataset
 from evaluate.DatasetModel import DatasetModel
+from evaluate.DatasetMeta import DatasetMeta
 from evaluate.COCOAnnotations import COCOAnnotation
-
+_project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_project_root))
 
 class ArchiveVOCDataset(Dataset):
     @classmethod
@@ -30,7 +30,9 @@ class ArchiveVOCDataset(Dataset):
         return cls(dataset=data)
 
     @classmethod
-    def from_path(cls, path: Path, ann_dir: Optional[Path] = None, img_dir: Optional[Path] = None) -> "ArchiveVOCDataset":
+    def from_path(cls, path: Path, **kwargs: Any) -> "ArchiveVOCDataset":
+        ann_dir = kwargs.get('ann_dir')
+        img_dir = kwargs.get('img_dir')
         base_dir = Path(path)
 
         xml_files = []
@@ -48,15 +50,15 @@ class ArchiveVOCDataset(Dataset):
             except Exception:
                 continue
 
-        meta = {
-            "dataset_type": "voc_detection",
-            "source_path": str(base_dir),
-            "base_directory": str(base_dir),
-            "total_images": len({a.file_name for a in anns}),
-            "total_annotations": len(anns),
-            "categories": sorted(set(categories)),
-            "name": "archive_voc",
-        }
+        meta = DatasetMeta(
+            dataset_type="voc_detection",
+            source_path=str(base_dir),
+            base_directory=str(base_dir),
+            total_images=len({a.file_name for a in anns}),
+            total_annotations=len(anns),
+            categories=sorted(set(categories)),
+            name="archive_voc",
+        )
         return cls(dataset=DatasetModel(data_points=anns, meta=meta))
 
     @classmethod
@@ -90,11 +92,11 @@ class ArchiveVOCDataset(Dataset):
                     x2, y2 = int(min(width, np.ceil(x + w))), int(min(height, np.ceil(y + h)))
                     if x2 > x1 and y2 > y1:
                         mask_np[y1:y2, x1:x2] = 1
-                img_arr = np.zeros((height, width, 3), dtype=np.uint8)
+                img_arr: np.ndarray = np.zeros((height, width, 3), dtype=np.uint8)
                 if base_dir and file_name:
                     img_path = base_dir / file_name
                     try:
-                        img_arr = np.array(Image.open(img_path).convert("RGB"))
+                        img_arr = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
                     except Exception:
                         pass
                 anns.append(COCOAnnotation(

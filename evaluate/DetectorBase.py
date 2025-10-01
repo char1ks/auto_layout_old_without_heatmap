@@ -13,6 +13,8 @@ class DetectorBase(abc.ABC):
     @classmethod
     def read_input_img(cls, image_path: str | Path) -> np.ndarray:
         img_bgr = cv2.imread(str(image_path))
+        if img_bgr is None:
+            raise ValueError(f"Could not read image from {image_path}")
         image_np = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         return image_np
 

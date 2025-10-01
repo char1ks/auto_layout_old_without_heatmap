@@ -2,14 +2,12 @@ import json
 from pathlib import Path
 from typing import List
 import numpy as np
-import sys
-from pathlib import Path as _P
 import pytest
-from COCOAnnotations import COCOAnnotation
+from evaluate.COCOAnnotations import COCOAnnotation
 from evaluate.DatasetModel import DatasetModel
-from Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
-EVAL_CLASSES_PATH = _P(__file__).resolve().parents[2] / "evaluate"
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
+from evaluate.DatasetMeta import DatasetMeta
+from evaluate.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
+
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 RESULTS_DIR = STATIC_DIR / "results_fruit1"
 FRUIT_XML = STATIC_DIR / "fruit1.xml"
@@ -18,7 +16,7 @@ ANN_JSON = RESULTS_DIR / "annotations.json"
 
 def _voc_gt_dataset() -> DatasetModel:
     anns, _ = ArchiveVOCDataset._parse_single_voc_xml(FRUIT_XML, STATIC_DIR)
-    return DatasetModel(data_points=anns, meta={"name": "fruit1_gt"})
+    return DatasetModel(data_points=anns, meta=DatasetMeta(name="fruit1_gt"))
 
 
 def _preds_from_annotations() -> List[COCOAnnotation]:
@@ -100,4 +98,4 @@ def build_empty_predictions() -> List[COCOAnnotation]:
 
 @pytest.fixture
 def build_empty_gt() -> DatasetModel:
-    return DatasetModel(data_points=[], meta={"name": "empty_gt"})
+    return DatasetModel(data_points=[], meta=DatasetMeta(name="empty_gt"))

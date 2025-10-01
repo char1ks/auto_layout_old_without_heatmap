@@ -32,13 +32,11 @@ checks: style-check static-check
 
 .PHONY: style-check
 style-check: 
-	printf "Style Checking with Ruff\n"
-	poetry run ruff check --exclude vendor,gradio_client,searchdet-main,searchdet_pipeline,.venv,dist,__pycache__
+	poetry run ruff check evaluate tests
 
 .PHONY: static-check
 static-check: 
-	printf "Static Checking with Mypy\n"
-	poetry run mypy . --exclude vendor --exclude gradio_client --exclude searchdet-main --exclude searchdet_pipeline --exclude .venv --exclude dist --exclude __pycache__
+	poetry run mypy evaluate tests
 
 .PHONY: restyle
 restyle: 

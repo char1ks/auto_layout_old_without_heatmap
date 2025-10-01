@@ -1,4 +1,4 @@
 import os
-os.environ.setdefault('MPLBACKEND', 'Agg')
+os.environ['MPLBACKEND'] = 'Agg'
 
 from evaluate.DatasetPoint import DatasetPoint as DatasetPoint

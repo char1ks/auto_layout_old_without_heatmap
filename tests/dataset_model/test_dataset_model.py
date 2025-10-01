@@ -1,11 +1,8 @@
 from typing import List, Dict
-import sys
-from pathlib import Path
-from DatasetModel import DatasetModel
-from DatasetMeta import DatasetMeta
-from COCOAnnotations import COCOAnnotation
-EVAL_CLASSES_PATH = Path(__file__).parent.parent.parent / "evaluate"
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
+
+from evaluate.DatasetModel import DatasetModel
+from evaluate.DatasetMeta import DatasetMeta
+from evaluate.COCOAnnotations import COCOAnnotation
 
 
 def test_post_init_converts_meta_dict_to_object(dataset_model_from_meta_dict):

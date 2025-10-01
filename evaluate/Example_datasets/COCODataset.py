@@ -25,7 +25,7 @@ class ChickenDataset(Dataset):
         return cls(dataset=data)
     
     @classmethod
-    def from_path(cls, path: Path) -> "ChickenDataset":
+    def from_path(cls, path: Path, **kwargs: Any) -> "ChickenDataset":
         import json
         
         with open(path, 'r', encoding='utf-8') as f:

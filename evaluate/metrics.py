@@ -14,8 +14,6 @@ from torchmetrics import JaccardIndex, F1Score
 from evaluate.DatasetModel import DatasetModel
 from evaluate.COCOAnnotations import COCOAnnotation
 
-
-
 class PredItem(TypedDict):
     file: str
     box: List[float]

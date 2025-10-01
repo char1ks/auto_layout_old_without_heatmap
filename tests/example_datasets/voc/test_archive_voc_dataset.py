@@ -9,8 +9,8 @@ def test_from_path_meta_and_annotations(tmp_path: Path):
     ds = ArchiveVOCDataset.from_path(path=STATIC_DIR, ann_dir=STATIC_DIR, img_dir=STATIC_DIR)
     model = ds.data
     assert model.meta.dataset_type == "voc_detection"
-    assert model.meta.total_images >= 1
-    assert model.meta.total_annotations >= 3
+    assert model.meta.total_images is not None and model.meta.total_images >= 1
+    assert model.meta.total_annotations is not None and model.meta.total_annotations >= 3
     cats = set(model.meta.categories)
     assert {"pineapple", "snake fruit", "dragon fruit"}.issubset(cats)
     anns = [a for a in model.data_points if a.file_name == "fruit1.png"]

@@ -5,8 +5,6 @@ import torch
 import numpy as np
 from PIL import Image
 from ultralytics import FastSAM
-# from ultralytics.models.sam.predict import SAM2Predictor
-# from ultralytics.engine.results import Masks
 from ultralytics.engine.model import Model
 
 
@@ -204,9 +202,14 @@ class SamSegmenter:
             points = sample_points_with_value(heatmap, value=0.0, n=5, seed=42)
             # NOTE: (@gas) pass background points as 0's
             masks = self._generate_sam_masks_np(image, points, [0]*len(points))
+
+            # # DEBUG
+            # for i, m in enumerate(masks):
+            #     cv2.imwrite(f".local/detector_debug_sam_{i}.png", (m*255).astype(np.uint8))
+
             masks = self._merge_masks_with_heatmap_np(
                 masks, heatmap, min_overlap_ratio=min_overlap_ratio,
-            ) 
+            )
         else:
             masks = self._generate_sam_masks_np(image)
         masks = self._merge_masks(masks, min_overlap_ratio=min_overlap_ratio)
@@ -240,7 +243,11 @@ if __name__=="__main__":
     # warmup
     _ = model.encode([img_pil_ex])
 
-    heatmap_generator = HeatmapGenerator(dino_fe=model, use_cosine_similarity_for_heatmap=False)
+    heatmap_generator = HeatmapGenerator(
+        dino_fe=model, 
+        use_cosine_similarity_for_heatmap=False,
+        threshold_dotp=10,
+    )
     heatmap_generator.init_pooled_features_train(
         positive_images=[train_image_pos], negative_images=[train_image_neg_1, train_image_neg_2])
 
@@ -250,7 +257,7 @@ if __name__=="__main__":
     # ---
 
     heatmap, heatmap_resized = heatmap_generator.generate_heatmap(img_pil_right)
-    heatmap_resized = heatmap_generator.apply_threshold(heatmap_resized, threshold_dotp=10)
+    heatmap_resized = heatmap_generator.apply_threshold(heatmap_resized)
     heatmap_np = heatmap_resized.cpu().numpy()
 
     start = time.perf_counter()

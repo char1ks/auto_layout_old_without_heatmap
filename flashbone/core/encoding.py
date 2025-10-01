@@ -1,5 +1,7 @@
 # NOTE: (@gas) reference is Meta example notebook: https://github.com/facebookresearch/dinov3/blob/main/notebooks/dinotxt_inference.ipynb
+import math
 from dataclasses import dataclass
+
 import torch
 from PIL import Image
 
@@ -47,7 +49,7 @@ MODEL_TO_NUM_LAYERS = {
     MODEL_DINOV3_VIT7B: 40,
 }
 
-# TODO: (@gas) automate instead of hardcode
+# TODO: (@gas) make configurable instead of hardcode
 DINOV3_LOCATION = "/home/synetra/ml_segmentation/vendor/dinov3"
 
 
@@ -96,14 +98,28 @@ class DinoV3EncoderGaz:
         self.patch_quant_filter = torch.nn.Conv2d(1, 1, PATCH_SIZE, stride=PATCH_SIZE, bias=False)
         self.patch_quant_filter.weight.data.fill_(1.0 / (PATCH_SIZE * PATCH_SIZE))
 
-    def resize_transform(self, mask_image: Image.Image) -> torch.Tensor:
+    def _compute_target_size(self, images: list[Image.Image]) -> tuple[int, int]:
+        h_target = math.ceil(self.image_size / self.patch_size) * self.patch_size
+        widths = []
+        for img in images:
+            w, h = img.size
+            new_w = int(round(w * (h_target / h)))
+            widths.append(new_w)
+        w_target = math.ceil(max(widths) / self.patch_size) * self.patch_size
+        return h_target, w_target
+
+    def resize_transform(self, img: Image.Image, target_size: tuple[int, int]) -> torch.Tensor:
         """
         image resize transform to dimensions divisible by patch size
         """
-        w, h = mask_image.size
-        h_patches = int(self.image_size / self.patch_size)
-        w_patches = int((w * self.image_size) / (h * self.patch_size))
-        return TF.to_tensor(TF.resize(mask_image, (h_patches * self.patch_size, w_patches * self.patch_size)))
+        h_target, w_target = target_size
+        w, h = img.size
+        new_w = int(round(w * (h_target / h)))
+        resized = TF.resize(img, (h_target, new_w))
+        pad_w = w_target - new_w
+        if pad_w > 0:
+            resized = TF.pad(resized, [0, 0, pad_w, 0], fill=0)
+        return TF.to_tensor(resized)
 
     def encode(self, images: list[Image.Image]) -> DinoFeaturesPT:
         """
@@ -111,9 +127,8 @@ class DinoV3EncoderGaz:
         shapes:
             (H, W, CH) --> tuple((B, D, H, W), (B, D)) --> __tuple((D, H, W), (,D))__
         """
-        # TODO: (@gas) now supports only input images of equal size - fix it somehow | URGENT
-        # RuntimeError: stack expects each tensor to be equal size, but got [3, 768, 960] at entry 0 and [3, 768, 768] at entry 1
-        resized = torch.stack([self.resize_transform(img) for img in images])
+        target_size = self._compute_target_size(images)
+        resized = torch.stack([self.resize_transform(img, target_size) for img in images])
         resized = TF.normalize(resized, mean=IMAGENET_MEAN, std=IMAGENET_STD)
         resized = resized.cuda()
         with torch.inference_mode():
@@ -136,7 +151,8 @@ class DinoV3EncoderGaz:
     ) -> torch.Tensor:
         if features is None and not images:
             raise ValueError("either of features or img_pil should be passed, got none of them")
-        resized = torch.stack([self.resize_transform(mask) for mask in masks])
+        target_size = self._compute_target_size(masks)
+        resized = torch.stack([self.resize_transform(mask, target_size) for mask in masks])
         mask_quantized = self.patch_quant_filter(resized).detach().cpu()
         if features is None and images:
             features = self.encode(images)
@@ -188,8 +204,8 @@ if __name__=="__main__":
     sim2 = torch.cosine_similarity(feats.cls, mask_features, dim=-1) # should be high
     print("SIM.: ", sim1, sim2)
 
-    # feats = model.encode([img_pil, img_pil_ex])
-    # print("Encode batch out shape: ", feats.cls.shape)
+    feats = model.encode([img_pil, img_pil_ex])
+    print("Encode batch out shape: ", feats.cls.shape)
 
 
 # if __name__=="__main__":

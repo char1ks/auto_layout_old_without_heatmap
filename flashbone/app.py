@@ -97,7 +97,7 @@ def init_detector() -> DetectorBase:
     heatmap_generator = HeatmapGenerator(
         dino_fe=encoder, 
         use_cosine_similarity_for_heatmap=False,
-        threshold_dotp=5,
+        threshold_dotp=15,
     )
     sam = SamSegmenter(
         sam_model=sam_model,

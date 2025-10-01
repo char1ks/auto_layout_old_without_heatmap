@@ -71,6 +71,10 @@ class SearchDetDetector(DetectorBase):
         _, heatmap_resized = self._heatmap_generator.generate_heatmap(image)
         heatmap_resized = self._heatmap_generator.apply_threshold(heatmap_resized)
         heatmap_np = heatmap_resized.cpu().numpy()
+
+        # # DEBUG
+        # cv2.imwrite(".local/detector_debug_heatmap.png", (heatmap_np*255).astype(np.uint8))
+
         masks = self._segmenter.segment(image, heatmap=heatmap_np)
 
         result = []

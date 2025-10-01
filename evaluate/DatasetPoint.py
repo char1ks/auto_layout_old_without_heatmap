@@ -13,7 +13,6 @@ from COCOAnnotations import COCOAnnotation
 from Tracer import Tracer
 from ReportGenerator import ReportGenerator
 from Context import Context
-
 import numpy as np
 EVAL_CLASSES_PATH = Path(__file__).parent
 sys.path.insert(0, str(EVAL_CLASSES_PATH))

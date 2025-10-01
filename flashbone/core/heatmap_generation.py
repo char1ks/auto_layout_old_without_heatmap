@@ -138,11 +138,16 @@ class HeatmapGenerator:
 
         return heatmap, heatmap_resized
 
-    def apply_threshold(self, hm_arr: torch.Tensor) -> torch.Tensor:
+    def apply_threshold(self, hm_arr: torch.Tensor, heatmap_threshold: float | None = None) -> torch.Tensor:
+        thrsh = self.threshold_dotp
         if self.use_cosine_similarity_for_heatmap:
-            hm_arr[hm_arr < self.threshold_cosine] = 0
+            thrsh = self.threshold_cosine
+        if heatmap_threshold is not None:
+            thrsh = heatmap_threshold
+        if self.use_cosine_similarity_for_heatmap:
+            hm_arr[hm_arr < thrsh] = 0
         else:
-            hm_arr[hm_arr < self.threshold_dotp] = 0 # some initial thresholding
+            hm_arr[hm_arr < thrsh] = 0
             hm_arr /= np.abs(hm_arr).max()
         return hm_arr
 

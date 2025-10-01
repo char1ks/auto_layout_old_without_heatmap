@@ -1,10 +1,9 @@
 import abc
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
-import cv2
 from PIL import Image
 
 
@@ -21,14 +20,14 @@ class DetectorBase(abc.ABC):
     @abc.abstractmethod
     def set_references(
         self,
-        pos_by_class: Dict[str, List[Image.Image]],
-        neg_imgs: List[Image.Image],
+        pos_by_class: dict[str, list[Image.Image]],
+        neg_imgs: list[Image.Image],
     ) -> None:
         """Stores references (by class, plus optional negatives)."""
         pass
 
     @abc.abstractmethod
-    def find_present_elements(self, image_np: np.ndarray, *args, **kwargs) -> list[DetectionResult]:
+    def detect(self, image_np: np.ndarray, *args, **kwargs) -> list[DetectionResult]:
         """Runs detection on a single image (RGB ndarray)."""
         pass
 
@@ -49,11 +48,11 @@ class MockDetector(DetectorBase):
     def __init__(self, mask_size: int = 32, seed: int = 1337):
         self.mask_size = int(mask_size)
         self.rng = np.random.default_rng(seed)
-        self.known_classes: List[str] = []
+        self.known_classes: list[str] = []
         self.neg_count: int = 0
 
     # ---------- helpers ----------
-    def _rand_bbox(self, H: int, W: int) -> List[int]:
+    def _rand_bbox(self, H: int, W: int) -> list[int]:
         # generate bbox within image
         bw = int(self.rng.integers(max(10, W // 20), max(20, W // 3)))
         bh = int(self.rng.integers(max(10, H // 20), max(20, H // 3)))
@@ -61,7 +60,7 @@ class MockDetector(DetectorBase):
         y = int(self.rng.integers(0, max(1, H - bh)))
         return [x, y, bw, bh]
 
-    def _bbox_mask(self, H: int, W: int, bbox_xywh: List[int]) -> List[List[int]]:
+    def _bbox_mask(self, H: int, W: int, bbox_xywh: list[int]) -> list[list[int]]:
         gx = gy = self.mask_size
         x, y, bw, bh = bbox_xywh
         x2, y2 = x + bw, y + bh
@@ -75,18 +74,18 @@ class MockDetector(DetectorBase):
     # ---------- base API ----------
     def read_reference_images(
         self,
-        positive_dir: Union[str, Path],
-        negative_dir: Optional[Union[str, Path]] = None,
-    ) -> Tuple[Dict[str, List[Image.Image]], List[Image.Image]]:
-        pos_by_class: Dict[str, List[Image.Image]] = {}
-        neg_imgs: List[Image.Image] = []
+        positive_dir: str | Path,
+        negative_dir: str | Path | None = None,
+    ) -> tuple[dict[str, list[Image.Image]], list[Image.Image]]:
+        pos_by_class: dict[str, list[Image.Image]] = {}
+        neg_imgs: list[Image.Image] = []
 
         positive_dir = Path(positive_dir)
         if positive_dir.exists():
             # Expect subfolders named by class id
             for sub in sorted([p for p in positive_dir.iterdir() if p.is_dir()]):
                 cls_name = sub.name
-                imgs: List[Image.Image] = []
+                imgs: list[Image.Image] = []
                 for img_path in sorted(sub.glob("*")):
                     try:
                         with Image.open(img_path) as im:
@@ -110,20 +109,20 @@ class MockDetector(DetectorBase):
 
     def set_references(
         self,
-        pos_by_class: Dict[str, List[Image.Image]],
-        neg_imgs: List[Image.Image],
+        pos_by_class: dict[str, list[Image.Image]],
+        neg_imgs: list[Image.Image],
     ) -> None:
         # store known class names; ignore actual image content for the mock
         self.known_classes = sorted(list(pos_by_class.keys()))
         self.neg_count = len(neg_imgs)
 
-    def find_present_elements(self, image_np: np.ndarray, output_dir: str = "output") -> Dict[str, Any]:
+    def find_present_elements(self, image_np: np.ndarray, output_dir: str = "output") -> dict[str, Any]:
         if image_np.ndim != 3 or image_np.shape[2] != 3:
             raise ValueError("image_np must be an RGB image ndarray of shape (H, W, 3).")
         H, W = image_np.shape[:2]
 
         num = int(self.rng.integers(1, 4))  # 1..3 detections
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for _ in range(num):
             bbox = self._rand_bbox(H, W)
             mask_2d = self._bbox_mask(H, W, bbox)

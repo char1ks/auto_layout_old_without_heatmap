@@ -1,29 +1,19 @@
 # NOTE: (@gas) reference is Meta example notebook: https://github.com/facebookresearch/dinov3/blob/main/notebooks/dinotxt_inference.ipynb
 import math
+from pathlib import Path
 from dataclasses import dataclass
 
 import torch
 from PIL import Image
 
-try :
+try:
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-except Exception :
+except Exception:
     pass
 
 import torchvision.transforms.functional as TF
 
-# try:
-#     from dinov3.hub import backbones as dino_backbones
-# except ImportError:
-#     project_root = Path(__file__ ).resolve().parent.parent.parent
-#     dinov3_repo_path = project_root
-#     if str(dinov3_repo_path) not in sys.path:
-#         sys.path.insert(0, str(dinov3_repo_path))
-#     inner_dinov3_path = project_root / 'dinov3'
-#     if str(inner_dinov3_path) not in sys.path :
-#         sys.path.insert(0, str(inner_dinov3_path))
-#     from dinov3.hub import backbones as dino_backbones
 from dinov3.hub.dinotxt import dinov3_vitl16_dinotxt_tet1280d20h24l
 from dinov3.data.transforms import make_classification_eval_transform
 
@@ -49,8 +39,9 @@ MODEL_TO_NUM_LAYERS = {
     MODEL_DINOV3_VIT7B: 40,
 }
 
-# TODO: (@gas) make configurable instead of hardcode
-DINOV3_LOCATION = "/home/synetra/ml_segmentation/vendor/dinov3"
+
+_proj_base = Path(__file__).resolve().parent.parent.parent
+DINOV3_LOCATION = _proj_base / "vendor/dinov3"
 
 
 class DinoV3VisionTextEncoderGaz:

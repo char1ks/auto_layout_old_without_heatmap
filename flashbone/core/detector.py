@@ -1,8 +1,7 @@
+import cv2
 import numpy as np
 from PIL import Image
-import cv2
 
-# from flashbone.core.filtering import MaskFilter  
 from flashbone.core.segmentation import SamSegmenter
 from flashbone.core.classifier import ClassifierKNN, ClassData
 from flashbone.core.heatmap_generation import HeatmapGenerator
@@ -11,7 +10,6 @@ from flashbone.core.detector_base import DetectorBase, DetectionResult
 
 class SearchDetDetector(DetectorBase):
     def __init__(self, segmenter: SamSegmenter, classifier: ClassifierKNN, heatmap_generator: HeatmapGenerator) -> None:
-        # self.mask_filter = MaskFilter(self.params) # TODO: add and test masks filter
         self._segmenter = segmenter
         self._classifier = classifier
         self._heatmap_generator = heatmap_generator
@@ -67,13 +65,13 @@ class SearchDetDetector(DetectorBase):
         self._heatmap_generator.init_pooled_features_train(
             positive_images=positives, negative_images=neg_imgs)
 
-    def find_present_elements(self, image: Image.Image) -> list[DetectionResult]:
+    def detect(self, image: Image.Image, heatmap_threshold: float | None = None, class_threshold: float = 0.5, *args, **kwargs) -> list[DetectionResult]:
         _, heatmap_resized = self._heatmap_generator.generate_heatmap(image)
 
         # # DEBUG
         # cv2.imwrite(".local/detector_debug_heatmap.png", (heatmap_resized.cpu().numpy()*255).astype(np.uint8))
 
-        heatmap_resized = self._heatmap_generator.apply_threshold(heatmap_resized)
+        heatmap_resized = self._heatmap_generator.apply_threshold(heatmap_resized, heatmap_threshold)
         heatmap_np = heatmap_resized.cpu().numpy()
 
         # # DEBUG
@@ -87,8 +85,7 @@ class SearchDetDetector(DetectorBase):
             cls_preds = self._classifier.predict(
                 images=[image],
                 masks=[Image.fromarray(mask)],
-                threshold=0.4,
-                mask_threshold=0.5,
+                threshold=class_threshold,
             )
             if len(cls_preds):
                 # NOTE: (@gas) [0] bc a batch of 1 used to process a single input image
@@ -164,7 +161,8 @@ if __name__=="__main__":
         pos_by_class={0: [train_image_pos]}, neg_imgs=[train_image_neg_1, train_image_neg_2])
 
     start = time.perf_counter()
-    results = detector.find_present_elements(img_pil_right)
+    results = detector.detect(
+        img_pil_right, heatmap_threshold=0.3, class_threshold=0.4)
     end = time.perf_counter()
     print(f"{int((end-start)*1000)} ms.") 
 

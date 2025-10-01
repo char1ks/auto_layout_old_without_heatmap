@@ -199,7 +199,7 @@ class SamSegmenter:
         min_overlap_ratio: float = 0.6,
     ) -> list[np.ndarray]:
         if heatmap is not None:
-            # TODO: (@gas) with points, it could be false negatives
+            # NOTE: (@gas) with these points, it could be false negatives - review and drop if unneeded
             # points = sample_points_with_value(heatmap, value=0.0, n=5, seed=42)
             # # NOTE: (@gas) pass background points as 0's
             # masks = self._generate_sam_masks_np(image, points, [0]*len(points))

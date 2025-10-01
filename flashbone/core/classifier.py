@@ -79,7 +79,7 @@ class ClassifierKNN:
         images: list[Image.Image], 
         masks: list[Image.Image] = [], 
         threshold: float = 0.474, 
-        mask_threshold: float = 0.5, 
+        mask_threshold: float = 0.3, 
         topk: int = 1,
     ) -> list[ClassifierPrediction]:
         # TODO: (@gas) adopt for batched encoding (`encoder` TODOs must be resolved before that)

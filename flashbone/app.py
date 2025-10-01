@@ -90,14 +90,11 @@ class LatencyLoggingMiddleware(BaseHTTPMiddleware):
             )
 
 
-# TODO: (@gas) instead of instantiating with some predefined parameters - pass them from the infer request
 def init_detector() -> DetectorBase:
     sam_model = FastSAM('FastSAM-x.pt')
     encoder = DinoV3EncoderGaz()
     heatmap_generator = HeatmapGenerator(
         dino_fe=encoder, 
-        # use_cosine_similarity_for_heatmap=False,
-        # threshold_dotp=15,
         use_cosine_similarity_for_heatmap=True,
         threshold_cosine=0.4,
     )
@@ -225,7 +222,7 @@ async def infer(
     batch_results: List[Dict[str, Any]] = []
     for im in pil_imgs:
         start = time.perf_counter()
-        res = detector.find_present_elements(im)
+        res = detector.detect(im)
         res_dict = [asdict(r) for r in res]
         end = time.perf_counter()
         dt = (end - start) * 1000

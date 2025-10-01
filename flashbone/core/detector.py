@@ -69,11 +69,15 @@ class SearchDetDetector(DetectorBase):
 
     def find_present_elements(self, image: Image.Image) -> list[DetectionResult]:
         _, heatmap_resized = self._heatmap_generator.generate_heatmap(image)
+
+        # # DEBUG
+        # cv2.imwrite(".local/detector_debug_heatmap.png", (heatmap_resized.cpu().numpy()*255).astype(np.uint8))
+
         heatmap_resized = self._heatmap_generator.apply_threshold(heatmap_resized)
         heatmap_np = heatmap_resized.cpu().numpy()
 
         # # DEBUG
-        # cv2.imwrite(".local/detector_debug_heatmap.png", (heatmap_np*255).astype(np.uint8))
+        # cv2.imwrite(".local/detector_debug_heatmap_thresh.png", (heatmap_np*255).astype(np.uint8))
 
         masks = self._segmenter.segment(image, heatmap=heatmap_np)
 
@@ -138,8 +142,10 @@ if __name__=="__main__":
     # ---
     heatmap_generator = HeatmapGenerator(
         dino_fe=encoder, 
-        use_cosine_similarity_for_heatmap=False,
-        threshold_dotp=10, 
+        # use_cosine_similarity_for_heatmap=False,
+        # threshold_dotp=10, 
+        use_cosine_similarity_for_heatmap=True,
+        threshold_cosine=0.3, 
     )
     sam = SamSegmenter(
         sam_model=sam_model,

@@ -90,14 +90,16 @@ class LatencyLoggingMiddleware(BaseHTTPMiddleware):
             )
 
 
-# TODO: (@gas) instead of instantiate with some predefined parameters - pass them from the infer request
+# TODO: (@gas) instead of instantiating with some predefined parameters - pass them from the infer request
 def init_detector() -> DetectorBase:
     sam_model = FastSAM('FastSAM-x.pt')
     encoder = DinoV3EncoderGaz()
     heatmap_generator = HeatmapGenerator(
         dino_fe=encoder, 
-        use_cosine_similarity_for_heatmap=False,
-        threshold_dotp=15,
+        # use_cosine_similarity_for_heatmap=False,
+        # threshold_dotp=15,
+        use_cosine_similarity_for_heatmap=True,
+        threshold_cosine=0.4,
     )
     sam = SamSegmenter(
         sam_model=sam_model,

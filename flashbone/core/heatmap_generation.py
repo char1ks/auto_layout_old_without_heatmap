@@ -180,7 +180,11 @@ if __name__=="__main__":
     import cv2
 
     model = DinoV3EncoderGaz()
-    heatmap_generator = HeatmapGenerator(dino_fe=model, use_cosine_similarity_for_heatmap=False)
+    heatmap_generator = HeatmapGenerator(
+        dino_fe=model, 
+        use_cosine_similarity_for_heatmap=False,
+        threshold_dotp=10,
+    )
  
     img_pil_ex = Image.open(".local/example.jpg").convert("RGB")
     # warmup
@@ -206,7 +210,7 @@ if __name__=="__main__":
     print(heatmap_resized.shape, heatmap_resized.min(), heatmap_resized.max())
     print(f"{int((end-start)*1000)} ms.") 
 
-    heatmap_resized = heatmap_generator.apply_threshold(heatmap_resized, threshold_dotp=5)
+    heatmap_resized = heatmap_generator.apply_threshold(heatmap_resized)
     heatmap_np = heatmap_resized.cpu().numpy()
 
     cv2.imwrite(".local/crop_debug_gaz.png", cv2.cvtColor(np.asarray(train_image_pos), cv2.COLOR_RGB2BGR))

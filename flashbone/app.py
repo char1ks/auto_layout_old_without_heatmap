@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Tuple
 from dataclasses import asdict
 
-from fastapi import FastAPI, File, UploadFile, Request, Response, HTTPException, Depends
+from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -112,6 +112,48 @@ def init_detector() -> DetectorBase:
     return detector
 
 
+async def parse_infer_form(request: Request) -> Tuple[List[Image.Image], float, float]:
+    """
+    Parse form data for inference endpoint.
+    
+    Returns:
+        (images, heatmap_threshold, class_threshold)
+    """
+    form: FormData = await request.form()
+    
+    # Parse threshold parameters
+    heatmap_threshold = None
+    class_threshold = 0.5  # Default value
+    
+    if "heatmap_threshold" in form:
+        try:
+            heatmap_threshold = float(form["heatmap_threshold"])
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid heatmap_threshold value")
+    
+    if "class_threshold" in form:
+        try:
+            class_threshold = float(form["class_threshold"])
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid class_threshold value")
+    
+    # Parse images
+    pil_imgs: List[Image.Image] = []
+    if "images" not in form:
+        raise HTTPException(status_code=400, detail="No images found in form data")
+    
+    images = form.getlist("images")
+    for f in images:
+        if isinstance(f, StarletteUploadFile):
+            data = await f.read()
+            try:
+                pil_imgs.append(Image.open(io.BytesIO(data)).convert("RGB"))
+            except Exception:
+                pil_imgs.append(Image.new("RGB", (256, 256)))
+    
+    return pil_imgs, heatmap_threshold, class_threshold
+
+
 async def parse_pos_neg_from_form(request: Request) -> Tuple[Dict[str, List[Image.Image]], List[Image.Image]]:
     """
     Multipart form format:
@@ -207,22 +249,16 @@ async def set_examples(
 
 @app.post("/api/v1/infer")
 async def infer(
-    images: List[UploadFile] = File(..., description="List of 3-channel images"),
+    request: Request,
     detector: DetectorBase = Depends(get_detector),
 ):
-    pil_imgs: List[Image.Image] = []
-    for f in images:
-        data = await f.read()
-        try:
-            pil_imgs.append(Image.open(io.BytesIO(data)).convert("RGB"))
-        except Exception:
-            pil_imgs.append(Image.new("RGB", (256, 256)))
+    pil_imgs, heatmap_threshold, class_threshold = await parse_infer_form(request)
 
     mean_latency_ms: float = 0.0
     batch_results: List[Dict[str, Any]] = []
     for im in pil_imgs:
         start = time.perf_counter()
-        res = detector.detect(im)
+        res = detector.detect(im, heatmap_threshold=heatmap_threshold, class_threshold=class_threshold)
         res_dict = [asdict(r) for r in res]
         end = time.perf_counter()
         dt = (end - start) * 1000

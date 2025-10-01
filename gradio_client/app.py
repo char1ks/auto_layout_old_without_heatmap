@@ -50,13 +50,18 @@ class APIClient:
             print(f"Error in set_references: {e}")
             return False
     
-    def infer(self, images: List[bytes]) -> List[Dict[str, Any]]:
+    def infer(self, images: List[bytes], heatmap_threshold: float = None, class_threshold: float = 0.5) -> List[Dict[str, Any]]:
         files = []
         for idx, img_bytes in enumerate(images):
             files.append(("images", (f"img_{idx}.png", img_bytes, "image/png")))
         
+        data = {}
+        if heatmap_threshold is not None:
+            data["heatmap_threshold"] = str(heatmap_threshold)
+        data["class_threshold"] = str(class_threshold)
+        
         try:
-            response = self.session.post(f"{self.base_url}/api/v1/infer", files=files)
+            response = self.session.post(f"{self.base_url}/api/v1/infer", files=files, data=data)
             if response.status_code == 200:
                 return response.json()
             else:
@@ -291,7 +296,7 @@ def clear_training_data():
     training_state["ready_for_inference"] = False
     return "Training data cleared", False, "No training images", None, None
 
-def perform_inference(image):
+def perform_inference(image, heatmap_threshold, class_threshold):
     if image is None:
         return "Please provide an image for inference", None
     
@@ -307,7 +312,12 @@ def perform_inference(image):
         
         # Convert to bytes and send for inference
         img_bytes = image_to_bytes(pil_image)
-        results = client.infer([img_bytes])
+        
+        # Parse thresholds - convert empty strings to appropriate defaults
+        heatmap_thresh = None if heatmap_threshold == "" or heatmap_threshold is None else float(heatmap_threshold)
+        class_thresh = 0.5 if class_threshold == "" or class_threshold is None else float(class_threshold)
+        
+        results = client.infer([img_bytes], heatmap_threshold=heatmap_thresh, class_threshold=class_thresh)
         
         if not results:
             return "No results returned from server", pil_image
@@ -445,6 +455,19 @@ def create_interface():
         
         with gr.Row():
             with gr.Column():
+                heatmap_threshold_input = gr.Number(
+                    label="Heatmap Threshold (optional)",
+                    value=None,
+                    placeholder="Leave empty for default",
+                    precision=2
+                )
+                class_threshold_input = gr.Number(
+                    label="Class Threshold",
+                    value=0.5,
+                    minimum=0.0,
+                    maximum=1.0,
+                    precision=2
+                )
                 inference_image = gr.Image(label="Upload Image for Inference", type="pil")
                 infer_btn = gr.Button("Run Inference", variant="primary")
                 
@@ -454,7 +477,7 @@ def create_interface():
         
         infer_btn.click(
             fn=perform_inference,
-            inputs=[inference_image],
+            inputs=[inference_image, heatmap_threshold_input, class_threshold_input],
             outputs=[inference_results, result_image]
         )
     

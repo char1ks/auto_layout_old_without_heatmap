@@ -4,15 +4,13 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 import sys
-
+_project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_project_root))
 import numpy as np
 from PIL import Image
-from Dataset import Dataset
-from DatasetModel import DatasetModel
-from COCOAnnotations import COCOAnnotation
-
-EVAL_CLASSES_PATH = Path(__file__).parent.parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
+from evaluate.Dataset import Dataset
+from evaluate.DatasetModel import DatasetModel
+from evaluate.COCOAnnotations import COCOAnnotation
 
 
 class ArchiveVOCDataset(Dataset):

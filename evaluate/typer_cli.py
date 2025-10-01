@@ -5,44 +5,33 @@ import json
 import importlib
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
-
+import sys
+import inspect
+import builtins
+from contextlib import contextmanager
+_project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(_project_root))
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-import sys as _sys
-from pathlib import Path as _Path
-from Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
-from DatasetPoint import DatasetPoint
-from metrics import (
+
+from evaluate.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
+from evaluate.DatasetPoint import DatasetPoint
+from evaluate.metrics import (
     MetricOutputModel,
     MeanAveragePrecision,
     MeanIntersectionOverUnion,
     DiceCoefficient,
     ClassificationReportMetric,
 )
-from Tracer import Tracer
-import sys
-import os
-from pathlib import Path
+from evaluate.Tracer import Tracer
+
 from searchdet_pipeline.core.detector import SearchDetDetector
 from searchdet_pipeline.core.config import get_preset_config
-from contextlib import contextmanager
-import inspect
-import builtins
 
-os.environ["MPLBACKEND"] = "Agg"
-_pkg_root = _Path(__file__).parent
-_sys.path.insert(0, str(_pkg_root.parent))
 App = typer.Typer()
 console = Console()
-_current_dir = Path(__file__).parent
-_project_root = _current_dir.parent
-sys.path.insert(0, str(_project_root))
-_repo_dinov3 = _project_root / "dinov3"
-if (_repo_dinov3 / "dinov3").exists():
-    sys.path.insert(0, str(_repo_dinov3))
-    sys.path.insert(0, str((_repo_dinov3 / "dinov3")))
 
 @contextmanager
 def suppress_print_from(prefixes: list[str]):

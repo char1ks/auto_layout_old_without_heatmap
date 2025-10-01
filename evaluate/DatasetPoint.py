@@ -2,20 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import  List, Optional, Tuple,Union, Callable
-import sys
-from DatasetModel import DatasetModel
-from Dataset import Dataset
-from DetectorBase import DetectorBase
-from metrics import (
+from evaluate.DatasetModel import DatasetModel
+from evaluate.Dataset import Dataset
+from evaluate.DetectorBase import DetectorBase
+from evaluate.metrics import (
     Metric, MetricOutputModel
 )
-from COCOAnnotations import COCOAnnotation
-from Tracer import Tracer
-from ReportGenerator import ReportGenerator
-from Context import Context
+from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.Tracer import Tracer
+from evaluate.ReportGenerator import ReportGenerator
+from evaluate.Context import Context
 import numpy as np
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
 class DatasetPoint:
     def __init__(self,dataset: Union[Dataset, DatasetModel],detector: DetectorBase,metrics: Optional[List[Metric]] = None, reporter: Optional[Tracer] = None,) -> None:

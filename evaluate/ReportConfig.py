@@ -1,8 +1,4 @@
 from dataclasses import dataclass
-import sys
-from pathlib import Path
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
 @dataclass
 class ReportConfig:

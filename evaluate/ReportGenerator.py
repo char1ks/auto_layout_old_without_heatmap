@@ -4,7 +4,6 @@ from typing import List, Optional, Dict, Any, Union, Tuple
 from pathlib import Path
 from datetime import datetime
 import os
-import sys
 import json
 import csv
 import statistics
@@ -14,17 +13,15 @@ import matplotlib as mpl
 from rich.console import Console
 from rich.table import Table
 from rich import box
-from Context import Context
-from metrics import MetricOutputModel
-from ReportConfig import ReportConfig
+from evaluate.Context import Context
+from evaluate.metrics import MetricOutputModel
+from evaluate.ReportConfig import ReportConfig
 
 mpl.rcParams["svg.fonttype"] = "none"  
 mpl.rcParams["savefig.facecolor"] = "white"
 mpl.rcParams["figure.facecolor"] = "white"
 mpl.rcParams["axes.facecolor"] = "white"
 mpl.rcParams["savefig.transparent"] = False
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
 
 class ReportGenerator(ReportConfig):
     def __init__(self, **kwargs: Any) -> None:

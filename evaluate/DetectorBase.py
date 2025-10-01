@@ -4,8 +4,8 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any, Callable
 from PIL import Image
-from Context import Context
-from COCOAnnotations import COCOAnnotation
+from evaluate.Context import Context
+from evaluate.COCOAnnotations import COCOAnnotation
 
 class DetectorBase(abc.ABC):
     def __init__(self, name: Optional[str] = None):

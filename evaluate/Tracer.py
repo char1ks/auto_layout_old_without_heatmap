@@ -3,17 +3,13 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional
 from datetime import datetime
 import json
-import sys
 import cProfile
 import pstats
 from contextlib import contextmanager
 import subprocess
 import tempfile
 import os
-from pathlib import Path
-from Context import Context
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
+from evaluate.Context import Context
 
 
 class Tracer:

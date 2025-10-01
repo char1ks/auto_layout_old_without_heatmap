@@ -11,12 +11,8 @@ except ImportError:
     from typing_extensions import TypedDict
 from sklearn.metrics import classification_report, precision_recall_curve, average_precision_score
 from torchmetrics import JaccardIndex, F1Score
-import sys
-from pathlib import Path
-from DatasetModel import DatasetModel
-from COCOAnnotations import COCOAnnotation
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
+from evaluate.DatasetModel import DatasetModel
+from evaluate.COCOAnnotations import COCOAnnotation
 
 
 

@@ -1,12 +1,9 @@
 import abc
 import json
 from pathlib import Path
-import sys
 from typing import Any
-from COCOAnnotations import COCOAnnotation
-from DatasetModel import DatasetModel
-EVAL_CLASSES_PATH = Path(__file__).parent
-sys.path.insert(0, str(EVAL_CLASSES_PATH))
+from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.DatasetModel import DatasetModel
 
 
 class Dataset(abc.ABC):

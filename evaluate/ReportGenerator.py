@@ -1,455 +1,138 @@
 from __future__ import annotations
-
-from typing import List, Optional, Dict, Any, Union, Tuple
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
-import os
-import json
-import csv
-import statistics
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib as mpl
+import os, json, statistics, numpy as np, matplotlib.pyplot as plt, matplotlib as mpl
 from rich.console import Console
 from rich.table import Table
 from rich import box
+from evaluate.ReportConfig import ReportConfig
 from evaluate.Context import Context
 from evaluate.metrics import MetricOutputModel
-from evaluate.ReportConfig import ReportConfig
 
-mpl.rcParams["svg.fonttype"] = "none"  
-mpl.rcParams["savefig.facecolor"] = "white"
-mpl.rcParams["figure.facecolor"] = "white"
-mpl.rcParams["axes.facecolor"] = "white"
-mpl.rcParams["savefig.transparent"] = False
+mpl.rcParams.update({"figure.facecolor":"white","axes.facecolor":"white","savefig.transparent":False,"svg.fonttype":"none","lines.markersize":3.0,"lines.linewidth":1.5})
 
 class ReportGenerator(ReportConfig):
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.console = Console()
-        self.fig_w: float = 6.0
-        self.fig_h: float = 3.0
-        self.tick_fontsize: int = 8
-        self.max_label_len: int = 14
+    def __init__(self, **kwargs: Any)->None:
+        super().__init__(**kwargs); self.console=Console(); self.fw=6.4; self.fh=4.0; self.fs=9; self.maxlen=18
 
-    def generate_report(
-        self,
-        contexts: List[Context],
-        metrics: List[MetricOutputModel],
-        dump_report: bool = True,
-        output_dir: Optional[Union[str, Path]] = None,
-    ) -> Optional[Path]:
-        timing_stats = self._collect_timing_stats(contexts)
-        self._generate_terminal_report(metrics, timing_stats, verbose=dump_report)
-        if not dump_report:
-            return None
-        report_dir = Path(output_dir) if output_dir else Path(os.getcwd()) / "report"
-        report_dir.mkdir(parents=True, exist_ok=True)
-        images = self._save_graphs(report_dir, metrics, timing_stats, contexts)
-        self._write_markdown(report_dir, metrics, timing_stats, images, contexts)
-        self._write_json(report_dir, metrics, timing_stats)
-        self.console.print(f"[green]Отчёт сохранён в[/green] {report_dir}")
-        return report_dir
-    def _generate_terminal_report(self, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any], verbose: bool = False) -> None:
-        self.console.rule("МЕТРИКИ (сводная таблица)")
-        t = Table(box=box.SIMPLE_HEAVY)
-        t.add_column("Metric", style="cyan", no_wrap=True)
-        t.add_column("Score", justify="right")
-        for m in metrics or []:
-            score = f"{m.score:.4f}" if isinstance(m.score, (int, float)) else str(m.score)
-            t.add_row(m.metric_name, score)
+    def generate_report(self, contexts: List[Context], metrics: List[MetricOutputModel], dump_report: bool=False, output_dir: Optional[str]=None)->Optional[Path]:
+        timing=self._timing(contexts); self._terminal(metrics,timing,verbose=dump_report)
+        if not dump_report: return None
+        od=Path(output_dir) if output_dir else Path(os.getcwd())/"report"; od.mkdir(parents=True,exist_ok=True)
+        imgs=self._save_graphs(od,metrics,timing,contexts); self._write_md(od,metrics,timing,imgs,contexts); self._write_json(od,metrics,timing); self.console.print(f"[green]Отчёт сохранён в[/green] {od}"); return od
+
+    def _timing(self, contexts: List[Context])->Dict[str,Any]:
+        d=[float(c.duration) for c in (contexts or []) if getattr(c,"duration",None) is not None]
+        s=sum(1 for c in contexts if not getattr(c,"error",None)); e=sum(1 for c in contexts if getattr(c,"error",None))
+        out={"total_runs":len(contexts or []),"success":s,"errors":e,"durations":d}
+        if d: out.update({"mean":float(statistics.mean(d)),"median":float(statistics.median(d)),"std":float(statistics.pstdev(d)) if len(d)>1 else 0.0})
+        return out
+
+    def _build_step(self, r, p):
+        r=np.asarray(r,float); p=np.asarray(p,float)
+        m=np.isfinite(r)&np.isfinite(p); r,p=r[m],p[m]
+        if r.size<1 or p.size<1: return np.array([0.0]), np.array([0.0])
+        o=np.argsort(r); r,p=r[o],p[o]
+        ur, idx, cnts = np.unique(r, return_index=True, return_counts=True)
+        up=np.zeros_like(ur); s=0
+        for i,c in enumerate(cnts): up[i]=float(np.max(p[s:s+c])); s+=c
+        return ur, up
+
+    def _pad01(self, ur: np.ndarray, up: np.ndarray)->Tuple[np.ndarray,np.ndarray]:
+        if ur.size==0: return np.array([0.0,1.0]), np.array([0.0,0.0])
+        u0=float(up[0]); ul=float(up[-1])
+        R=np.concatenate(([0.0], ur, [1.0])) if (ur[0]>0.0 or ur[-1]<1.0) else ur
+        P=np.concatenate(([u0], up, [ul])) if (ur[0]>0.0 or ur[-1]<1.0) else up
+        return R, P
+
+    def _plot_pr(self, curve: Dict[str, Any], title: str, path: Path):
+        ur, up = self._build_step(curve.get("recall", []), curve.get("precision", []))
+        ur, up = self._pad01(ur, up)
+        fig=plt.figure(figsize=(self.fw,self.fh), dpi=120); ax=fig.add_subplot(111)
+        ax.step(ur, up, where="post"); ax.scatter(ur, up, s=8)
+        ax.set_xlim(0,1); ax.set_ylim(0,1); ax.grid(True, alpha=0.25)
+        ax.set_xlabel("Recall"); ax.set_ylabel("Precision"); ax.set_title(title)
+        fig.tight_layout(); fig.savefig(path, format="svg", facecolor="white", bbox_inches="tight", dpi=150); plt.close(fig)
+
+    def _save_graphs(self, od: Path, metrics: List[MetricOutputModel], timing: Dict[str,Any], contexts: List[Context])->Dict[str,str]:
+        imgs={}
+        def save(fn,k, fig=None):
+            if fig is not None:
+                fig.tight_layout(); p=od/fn; fig.savefig(p,format="svg",facecolor="white",bbox_inches="tight",dpi=150); plt.close(fig); imgs[k]=str(p)
+            else:
+                p=od/fn; plt.tight_layout(); plt.savefig(p,format="svg",facecolor="white",bbox_inches="tight",dpi=150); plt.close(); imgs[k]=str(p)
+        if timing.get("durations"):
+            fig=plt.figure(figsize=(self.fw,self.fh), dpi=120); ax=fig.add_subplot(111)
+            ax.hist(timing["durations"],bins=20); ax.set_title("Durations (sec)"); save("durations_hist.svg","durations_hist",fig)
+            fig=plt.figure(figsize=(self.fw,self.fh), dpi=120); ax=fig.add_subplot(111)
+            ax.plot(timing["durations"]); ax.set_title("Durations by run"); save("durations_series.svg","durations_series",fig)
+
+        m_map=next((m for m in metrics if m.metric_name=="map"),None)
+        if m_map and isinstance(m_map.stats,dict):
+            st=m_map.stats; cats=list(st.get("categories") or []); gt=list(st.get("gt_counts") or []); pr=list(st.get("pred_counts") or [])
+            if cats and gt:
+                fig=plt.figure(figsize=(self.fw,self.fh), dpi=120); ax=fig.add_subplot(111)
+                ax.bar(range(len(cats)),gt); ax.set_xticks(range(len(cats))); ax.set_xticklabels([str(s)[:self.maxlen] for s in cats], rotation=45, ha="right", fontsize=self.fs)
+                ax.set_title("GT class distribution"); save("gt_class_distribution.svg","gt_class_distribution",fig)
+            if cats and pr:
+                fig=plt.figure(figsize=(self.fw,self.fh), dpi=120); ax=fig.add_subplot(111)
+                ax.bar(range(len(cats)),pr); ax.set_xticks(range(len(cats))); ax.set_xticklabels([str(s)[:self.maxlen] for s in cats], rotation=45, ha="right", fontsize=self.fs)
+                ax.set_title("Pred class distribution"); save("pred_class_distribution.svg","pred_class_distribution",fig)
+
+            thr=st.get("iou_thresholds") or []; apm=st.get("ap_iou_macro") or []
+            if thr and apm:
+                xs=[float(t) for t in thr if isinstance(t,(int,float))]
+                ys=[float(v) for v in apm if isinstance(v,(int,float))]
+                n=min(len(xs),len(ys)); xs,ys=xs[:n],ys[:n]
+                pairs=sorted([(x,y) for x,y in zip(xs,ys) if 0.0<=x<=1.0 and 0.0<=y<=1.0], key=lambda t:t[0])
+                if pairs:
+                    xx,yy=zip(*pairs); fig=plt.figure(figsize=(self.fw,self.fh), dpi=120); ax=fig.add_subplot(111)
+                    ax.plot(xx,yy, marker='o'); ax.set_xlim(0,1); ax.set_ylim(0,1); ax.grid(True, alpha=0.25)
+                    ax.set_xticks(sorted(set(xx))); ax.set_title("AP vs IoU"); ax.set_xlabel("IoU threshold"); ax.set_ylabel("AP (macro)")
+                    for x_i,y_i in pairs: ax.annotate(f"{y_i:.3f}", (x_i,y_i), textcoords="offset points", xytext=(0,6), ha="center", fontsize=self.fs)
+                    save("ap_vs_iou.svg","ap_vs_iou",fig)
+
+            for k_raw in thr or []:
+                k=f"{float(k_raw):.2f}"
+                pm=(st.get("pr_macro") or {}).get(k); mi=(st.get("pr_micro") or {}).get(k)
+                if pm: self._plot_pr(pm, f"PR Curve (Macro) @IoU={k}", od/f"pr_macro_{k.replace('.','')}.svg"); imgs[f"pr_macro_{k.replace('.','')}"]=str(od/f"pr_macro_{k.replace('.','')}.svg")
+                if mi: self._plot_pr(mi, f"PR Curve (Micro) @IoU={k}", od/f"pr_micro_{k.replace('.','')}.svg"); imgs[f"pr_micro_{k.replace('.','')}"]=str(od/f"pr_micro_{k.replace('.','')}.svg")
+
+            per=st.get("per_class_ap_avg") or st.get("per_class_ap") or []
+            if cats and per:
+                pairs=sorted([(cats[i],float(per[i])) for i in range(min(len(cats),len(per)))], key=lambda x:x[1], reverse=True)
+                fig=plt.figure(figsize=(self.fw,self.fh), dpi=120); ax=fig.add_subplot(111)
+                ax.bar(range(len(pairs)),[p[1] for p in pairs]); ax.set_xticks(range(len(pairs))); ax.set_xticklabels([str(p[0])[:self.maxlen] for p in pairs],rotation=45,ha="right",fontsize=self.fs)
+                ax.set_title("AP per class"); save("per_class_ap.svg","per_class_ap",fig)
+
+        return imgs
+
+    def _terminal(self, metrics: List[MetricOutputModel], timing: Dict[str,Any], verbose: bool=False)->None:
+        self.console.rule("МЕТРИКИ"); t=Table(box=box.SIMPLE_HEAVY); t.add_column("Metric",style="cyan"); t.add_column("Score",justify="right")
+        for m in metrics or []: t.add_row(m.metric_name, f"{float(m.score):.4f}")
         self.console.print(t)
-
-        self.console.rule("Статистика времени ")
-        tt = Table(box=box.SIMPLE_HEAVY)
-        tt.add_column("Показатель", style="magenta")
-        tt.add_column("Значение", justify="right")
-        for k in [
-            ("Запусков", timing_stats.get("total_runs", 0)),
-            ("Успешных", timing_stats.get("success", 0)),
-            ("Ошибок", timing_stats.get("errors", 0)),
-            ("Среднее, сек", f"{float(timing_stats.get('mean', 0.0)):.4f}"),
-            ("Медиана, сек", f"{float(timing_stats.get('median', 0.0)):.4f}"),
-            ("Std, сек", f"{float(timing_stats.get('std', 0.0)):.4f}"),
-            ("Мин, сек", f"{float(timing_stats.get('min', 0.0)):.4f}"),
-            ("Макс, сек", f"{float(timing_stats.get('max', 0.0)):.4f}"),
-        ]:
-            tt.add_row(str(k[0]), str(k[1]))
-        self.console.print(tt)
-
-        spans_avg: Dict[str, float] = timing_stats.get("spans_avg", {})
-        if spans_avg and self.include_spans:
-            st = Table(title="Среднее время по спанам", box=box.SIMPLE_HEAVY)
-            st.add_column("Этап")
-            st.add_column("Среднее, сек", justify="right")
-            for name, val in sorted(spans_avg.items(), key=lambda x: x[1], reverse=True):
-                st.add_row(name, f"{float(val):.4f}")
+        if verbose:
+            self.console.rule("СТАТИСТИКА ВРЕМЕНИ"); st=Table(box=box.SIMPLE_HEAVY); st.add_column("Всего"); st.add_column("Успех"); st.add_column("Ошибки"); st.add_column("Среднее"); st.add_column("Медиана")
+            st.add_row(str(timing.get("total_runs",0)),str(timing.get("success",0)),str(timing.get("errors",0)),f"{float(timing.get('mean',0.0)):.4f}",f"{float(timing.get('median',0.0)):.4f}")
             self.console.print(st)
 
-    def _collect_timing_stats(self, contexts: List[Context]) -> Dict[str, Any]:
-        durations: List[float] = []
-        success = 0
-        errors = 0
-        spans: Dict[str, List[float]] = {}
-        for c in contexts or []:
-            if c.duration is not None:
-                durations.append(float(c.duration))
-            if c.success:
-                success += 1
-            if c.error:
-                errors += 1
-            if self.include_spans and getattr(c, "spans", None):
-                for s in c.spans:
-                    name = str(s.get("name", s.get("stage", "span")))
-                    val = s.get("duration") or s.get("time") or 0
-                    if isinstance(val, (int, float)):
-                        spans.setdefault(name, []).append(float(val))
-        stats: Dict[str, Any] = {
-            "total_runs": len(contexts or []),
-            "success": success,
-            "errors": errors,
-            "durations": durations,
-        }
-        if durations:
-            stats.update(
-                {
-                    "mean": float(statistics.mean(durations)),
-                    "median": float(statistics.median(durations)),
-                    "std": float(statistics.pstdev(durations)) if len(durations) > 1 else 0.0,
-                    "min": float(min(durations)),
-                    "max": float(max(durations)),
-                }
-            )
-        if spans:
-            stats["spans_avg"] = {k: float(statistics.mean(v)) for k, v in spans.items() if v}
-        else:
-            stats["spans_avg"] = {}
-        return stats
-
-
-
-    def _save_graphs(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any], contexts: List[Context]) -> Dict[str, str]:
-        images: Dict[str, str] = {}
-
-        def save(filename: str, key: str) -> None:
-            p = report_dir / filename
-            plt.tight_layout()
-            plt.savefig(p, format="svg", facecolor="white", bbox_inches="tight", transparent=False, dpi=150)
-            plt.close()
-            images[key] = str(p)
-
-        durations = timing_stats.get("durations", [])
-        if durations:
-            plt.figure(figsize=(self.fig_w, self.fig_h))
-            plt.hist(durations, bins=20, color="#4C78A8")
-            plt.title("Durations (sec)")
-            plt.tick_params(labelsize=self.tick_fontsize)
-            save("durations_hist.svg", "durations_hist")
-
-            plt.figure(figsize=(self.fig_w, self.fig_h))
-            plt.plot(durations, color="#F58518")
-            plt.title("Durations by run")
-            plt.tick_params(labelsize=self.tick_fontsize)
-            save("durations_series.svg", "durations_series")
-
-        spans_avg: Dict[str, float] = timing_stats.get("spans_avg", {})
-        if spans_avg:
-            span_names = list(spans_avg.keys())
-            span_values = [spans_avg[k] for k in span_names]
-            short_names = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in span_names]
-            plt.figure(figsize=(self.fig_w, self.fig_h))
-            plt.barh(short_names, span_values, color="#54A24B")
-            plt.title("Avg span time (sec)")
-            plt.tick_params(axis="y", labelsize=self.tick_fontsize)
-            plt.tick_params(axis="x", labelsize=self.tick_fontsize)
-            save("spans_avg.svg", "spans_avg")
-
-        map_metric: Optional[MetricOutputModel] = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
-        if map_metric and isinstance(map_metric.stats, dict):
-            st = map_metric.stats
-            categories = st.get("categories") or []
-            gt_counts = st.get("gt_counts") or []
-            pred_counts = st.get("pred_counts") or []
-
-            if self.include_class_distributions and categories:
-                for title, counts, color, key, fname in [
-                    ("GT class distribution", gt_counts, "#4C78A8", "gt_class_distribution", "gt_class_distribution.svg"),
-                    ("Predicted class distribution", pred_counts, "#F58518", "pred_class_distribution", "pred_class_distribution.svg"),
-                ]:
-                    if counts:
-                        x_positions = list(range(len(categories)))
-                        labels = [str(c) for c in categories]
-                        labels = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in labels]
-                        plt.figure(figsize=(self.fig_w, self.fig_h))
-                        plt.bar(x_positions, counts, color=color)
-                        plt.title(title)
-                        plt.xticks(x_positions, labels, rotation=45, ha="right", fontsize=self.tick_fontsize)
-                        plt.tick_params(axis="y", labelsize=self.tick_fontsize)
-                        save(fname, key)
-
-            ap_macro = st.get("ap_iou_macro") or []
-            ap_micro = st.get("ap_iou_micro") or []
-            ious = st.get("iou_thresholds") or []
-            if self.include_ap_graphs and ious:
-                plt.figure(figsize=(self.fig_w, self.fig_h))
-                plotted = False
-                if ap_macro and len(ap_macro) == len(ious):
-                    plt.plot(ious, ap_macro, label="macro", color="#4C78A8", linewidth=2, linestyle='-', marker='o', markersize=3)
-                    plotted = True
-                if ap_micro and len(ap_micro) == len(ious):
-                    plt.plot(ious, ap_micro, label="micro", color="#F58518", linewidth=2, linestyle='--', marker='s', markersize=3)
-                    plotted = True
-                if plotted:
-                    plt.xlabel("IoU threshold")
-                    plt.ylabel("AP")
-                    plt.title("AP vs IoU")
-                    plt.legend(fontsize=self.tick_fontsize)
-                    plt.grid(True, alpha=0.3)
-                    plt.tick_params(labelsize=self.tick_fontsize)
-                    save("ap_vs_iou.svg", "ap_vs_iou")
-                else:
-                    plt.close()
-
-            if self.include_ap_graphs:
-                for key, tag in [("0.50", "050"), ("0.75", "075")]:
-                    macro_dict = st.get("pr_macro", {}) or {}
-                    micro_dict = st.get("pr_micro", {}) or {}
-                    prM = macro_dict.get(key) or macro_dict.get(f"{float(key):.2f}")
-                    prm = micro_dict.get(key) or micro_dict.get(f"{float(key):.2f}")
-                    for pr, color, label, fname_key, marker in [
-                        (prM, "#4C78A8", f"PR Curve (Macro) @IoU={key}", f"pr_macro_{tag}", 'o'),
-                        (prm, "#F58518", f"PR Curve (Micro) @IoU={key}", f"pr_micro_{tag}", 's'),
-                    ]:
-                        if pr and pr.get("recall") and pr.get("precision") and len(pr["recall"]) > 1 and len(pr["precision"]) > 1:
-                            plt.figure(figsize=(self.fig_w, self.fig_h))
-                            plt.plot(pr["recall"], pr["precision"], color=color, linewidth=2, marker=marker, markersize=3, alpha=0.8)
-                            plt.xlabel("Recall")
-                            plt.ylabel("Precision")
-                            plt.title(label)
-                            plt.grid(True, alpha=0.3)
-                            plt.xlim(0, 1)
-                            plt.ylim(0, 1)
-                            if key == "0.50" and st.get("mAP@0.5"):
-                                ap_score = st["mAP@0.5"]
-                                plt.text(0.6, 0.2, f'AP@0.5: {ap_score:.3f}', fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-                            if key == "0.75" and st.get("mAP@0.75"):
-                                ap_score = st["mAP@0.75"]
-                                plt.text(0.6, 0.2, f'AP@0.75: {ap_score:.3f}', fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-                            plt.tick_params(labelsize=self.tick_fontsize)
-                            save(f"{fname_key}.svg", fname_key)
-            if self.include_ap_graphs:
-                macro_pts: List[Tuple[float, float, str]] = [] 
-                micro_pts: List[Tuple[float, float, str]] = []
-                prM_all = st.get("pr_macro", {}) or {}
-                prm_all = st.get("pr_micro", {}) or {}
-                for thr in ious:
-                    key = f"{float(thr):.2f}"
-                    for pr_dict, store in [(prM_all, macro_pts), (prm_all, micro_pts)]:
-                        pr = pr_dict.get(key)
-                        if pr and pr.get("recall") and pr.get("precision") and len(pr["recall"]) == len(pr["precision"]) and len(pr["recall"]) > 0:
-                            r = np.array(pr["recall"], dtype=float)
-                            p = np.array(pr["precision"], dtype=float)
-                            f1 = (2 * p * r) / (p + r + 1e-12)
-                            idx = int(np.nanargmax(f1))
-                            store.append((float(r[idx]), float(p[idx]), key))
-                if macro_pts:
-                    plt.figure(figsize=(self.fig_w, self.fig_h))
-                    plt.scatter([x for x, _, _ in macro_pts], [y for _, y, _ in macro_pts], c="#4C78A8")
-                    for x, y, label in macro_pts:
-                        x_f = float(x)
-                        y_f = float(y)
-                        plt.annotate(label, (x_f, y_f), textcoords="offset points", xytext=(4, 2), fontsize=7)
-                    plt.xlabel("Recall")
-                    plt.ylabel("Precision")
-                    plt.title("Macro PR best-points per IoU threshold")
-                    plt.xlim(0, 1)
-                    plt.ylim(0, 1)
-                    plt.grid(True, alpha=0.3)
-                    plt.tick_params(labelsize=self.tick_fontsize)
-                    save("ap_pr_points_macro.svg", "ap_pr_points_macro")
-                if micro_pts:
-                    plt.figure(figsize=(self.fig_w, self.fig_h))
-                    plt.scatter([x for x, _, _ in micro_pts], [y for _, y, _ in micro_pts], c="#F58518")
-                    for x, y, label in micro_pts:
-                        x_f = float(x)
-                        y_f = float(y)
-                        plt.annotate(label, (x_f, y_f), textcoords="offset points", xytext=(4, 2), fontsize=7)
-                    plt.xlabel("Recall")
-                    plt.ylabel("Precision")
-                    plt.title("Micro PR best-points per IoU threshold")
-                    plt.xlim(0, 1)
-                    plt.ylim(0, 1)
-                    plt.grid(True, alpha=0.3)
-                    plt.tick_params(labelsize=self.tick_fontsize)
-                    save("ap_pr_points_micro.svg", "ap_pr_points_micro")
-            per_ap = st.get("per_class_ap_avg") or st.get("per_class_ap") or []
-            cats = st.get("categories") or []
-            if self.include_ap_graphs and cats and per_ap:
-                pairs = [(cats[i], float(per_ap[i])) for i in range(min(len(cats), len(per_ap)))]
-                pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
-                if pairs_sorted:
-                    names_tup, values_tup = zip(*pairs_sorted)
-                    names = list(names_tup)
-                    values = list(values_tup)
-                    names_short = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in names]
-                    plt.figure(figsize=(self.fig_w, self.fig_h))
-                    plt.bar(range(len(names_short)), values, color="#4C78A8")
-                    plt.title("Per-class AP (sorted)")
-                    plt.xlabel("Class")
-                    plt.ylabel("AP")
-                    plt.xticks(range(len(names_short)), names_short, rotation=45, ha="right", fontsize=self.tick_fontsize)
-                    plt.grid(True, alpha=0.3)
-                    plt.tick_params(axis="y", labelsize=self.tick_fontsize)
-                    save("per_class_ap.svg", "per_class_ap")
-                    csv_path = report_dir / "per_class_ap.csv"
-                    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.writer(f)
-                        writer.writerow(["class", "AP"])
-                        writer.writerows(pairs_sorted)
-                    images["per_class_ap_csv"] = str(csv_path)
-                k = max(1, int(self.top_k_lowest_map or 5))
-                pairs_low = sorted(pairs, key=lambda x: x[1])[:k]
-                if pairs_low:
-                    names_low_tup, values_low_tup = zip(*pairs_low)
-                    names_low = list(names_low_tup)
-                    values_low = list(values_low_tup)
-                    names_low_short = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in names_low]
-                    plt.figure(figsize=(self.fig_w, self.fig_h))
-                    plt.bar(range(len(names_low_short)), values_low, color="#E45756")
-                    plt.title(f"Lowest {k} AP classes")
-                    plt.xlabel("Class")
-                    plt.ylabel("AP")
-                    plt.xticks(range(len(names_low_short)), names_low_short, rotation=45, ha="right", fontsize=self.tick_fontsize)
-                    plt.grid(True, alpha=0.3)
-                    plt.tick_params(axis="y", labelsize=self.tick_fontsize)
-                    save("per_class_ap_lowest.svg", "per_class_ap_lowest")
-                    csv_path_low = report_dir / "per_class_ap_lowest.csv"
-                    with open(csv_path_low, 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.writer(f)
-                        writer.writerow(["class", "AP"])
-                        writer.writerows(pairs_low)
-                    images["per_class_ap_lowest_csv"] = str(csv_path_low)
-
-        return images
-
-    def _write_markdown(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any], images: Dict[str, str], contexts: List[Context]) -> None:
-        lines: List[str] = []
-        lines.append("# Отчёт по оценке модели\n\n")
-        lines.append(f"Сгенерирован: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        if contexts:
-            for ctx in contexts:
-                if hasattr(ctx, 'extra') and ctx.extra:
-                    model_class = ctx.extra.get('model_class')
-                    model_module = ctx.extra.get('model_module') 
-                    model_doc = ctx.extra.get('model_doc')
-                    if model_class:
-                        lines.append(f"**Модель:** {model_class}\n")
-                    if model_module:
-                        lines.append(f"**Модуль:** {model_module}\n")
-                    if model_doc:
-                        lines.append(f"**Описание:** {model_doc}\n")
-                    lines.append("\n")
-                    break
-        lines.append("## Статистика времени выполнения\n\n")
-        lines.append(f"- Всего запусков: {timing_stats.get('total_runs', 0)}\n")
-        lines.append(f"- Успешных: {timing_stats.get('success', 0)}\n")
-        lines.append(f"- Ошибок: {timing_stats.get('errors', 0)}\n")
-        if timing_stats.get('mean'):
-            lines.append(f"- Среднее время: {timing_stats['mean']:.4f} сек\n")
-        if timing_stats.get('median'):
-            lines.append(f"- Медиана: {timing_stats['median']:.4f} сек\n")
-        lines.append("\n")
-        lines.append("## Метрики\n\n")
+    def _write_md(self, od: Path, metrics: List[MetricOutputModel], timing: Dict[str,Any], imgs: Dict[str,str], contexts: List[Context])->None:
+        lines=[f"# Отчёт по оценке модели\n\nСгенерирован: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n## Статистика времени выполнения\n\n- Всего запусков: {timing.get('total_runs',0)}\n- Успешных: {timing.get('success',0)}\n- Ошибок: {timing.get('errors',0)}\n- Среднее время: {float(timing.get('mean',0.0)):.4f} сек\n- Медиана: {float(timing.get('median',0.0)):.4f} сек\n\n## Метрики\n"]
         for m in metrics or []:
-            desc = ""
-            if hasattr(m, 'stats') and isinstance(m.stats, dict):
-                desc = m.stats.get('doc', '')
-            
-            lines.append(f"### {m.metric_name}\n")
-            if desc:
-                lines.append(f"{desc}\n\n")
-            
-            if str(m.metric_name) == "classification_report" and isinstance(m.stats, dict) and m.stats.get("text"):
-                text = m.stats.get("text")
-                lines.append("```\n")
-                lines.append(text if isinstance(text, str) else str(text))
-                if not str(text).endswith("\n"):
-                    lines.append("\n")
-                lines.append("```\n\n")
-            else:
-                score = f"{m.score:.4f}" if isinstance(m.score, (int, float)) else str(m.score)
-                lines.append(f"**Значение:** {score}\n\n")
-        if images:
-            lines.append("## Графики\n\n")
-            if images.get("durations_hist"):
-                lines.append("Гистограмма времени: показывает распределение длительности запусков 'Histogram(duration_values, bins=20)'\n\n")
-                lines.append(f"![Гистограмма времени]({images['durations_hist']})\n\n")
-            if images.get("durations_series"):
-                lines.append("Время по запускам: показывает изменение времени выполнения 'plot(run_index, duration)'\n\n")
-                lines.append(f"![Время по запускам]({images['durations_series']})\n\n")
-            if images.get("spans_avg"):
-                lines.append("Среднее время этапов: показывает среднюю длительность каждого этапа 'mean(span_durations)'\n\n")
-                lines.append(f"![Среднее время этапов]({images['spans_avg']})\n\n")
-            if images.get("gt_class_distribution"):
-                lines.append("Распределение GT: показывает количество объектов по классам 'bar(classes, gt_counts)'\n\n")
-                lines.append(f"![Распределение GT]({images['gt_class_distribution']})\n\n")
-            if images.get("pred_class_distribution"):
-                lines.append("Распределение предсказаний: показывает количество предсказанных объектов 'bar(classes, pred_counts)'\n\n")
-                lines.append(f"![Распределение предсказаний]({images['pred_class_distribution']})\n\n")
-            
-            if images.get("ap_vs_iou"):
-                lines.append("AP vs IoU: показывает зависимость точности от порога пересечения 'plot(iou_thresholds, ap_values)'\n\n")
-                lines.append(f"![AP vs IoU]({images['ap_vs_iou']})\n\n")
-            
-            for tag in ["050", "075"]:
-                if images.get(f"pr_macro_{tag}"):
-                    lines.append(f"PR макро @{tag[0]}.{tag[1:]}: показывает точность и полноту 'Precision = TP/(TP+FP), Recall = TP/(TP+FN)'\n\n")
-                    lines.append(f"![PR макро @{tag[0]}.{tag[1:]}]({images[f'pr_macro_{tag}']})\n\n")
-                if images.get(f"pr_micro_{tag}"):
-                    lines.append(f"PR микро @{tag[0]}.{tag[1:]}: показывает агрегированную точность 'Precision_micro = Σ(TP_i)/Σ(TP_i+FP_i)'\n\n")
-                    lines.append(f"![PR микро @{tag[0]}.{tag[1:]}]({images[f'pr_micro_{tag}']})\n\n")
-            
-            if images.get("ap_pr_points_macro"):
-                lines.append("Лучшие точки PR макро: показывает оптимальные точки по F1 'F1 = 2·P·R/(P+R)'\n\n")
-                lines.append(f"![Лучшие точки PR макро]({images['ap_pr_points_macro']})\n\n")
-            if images.get("ap_pr_points_micro"):
-                lines.append("Лучшие точки PR микро: показывает оптимальные микро точки 'F1_micro = 2·P_micro·R_micro/(P_micro+R_micro)'\n\n")
-                lines.append(f"![Лучшие точки PR микро]({images['ap_pr_points_micro']})\n\n")
-            
-            if images.get("per_class_ap"):
-                lines.append("AP по классам: показывает точность для каждого класса 'AP_class = ∫₀¹ P(R) dR'\n\n")
-                lines.append(f"![AP по классам]({images['per_class_ap']})\n\n")
+            lines.append(f"### {m.metric_name}\n**Значение:** {float(m.score):.4f}\n\n")
+            if m.metric_name=="classification_report" and isinstance(m.stats,dict) and m.stats.get("text"):
+                lines.append("```\n"+str(m.stats["text"]).strip()+"\n```\n\n")
+        def addimg(k,t):
+            p=imgs.get(k)
+            if p: lines.append(f"![{t}]({Path(p).name})\n\n")
+        lines+=["## Графики\n\n"]; addimg("durations_hist","Гистограмма времени"); addimg("durations_series","Время по запускам")
+        addimg("gt_class_distribution","Распределение GT"); addimg("pred_class_distribution","Распределение предсказаний"); addimg("ap_vs_iou","AP vs IoU")
+        for k in ["050","075"]:
+            addimg(f"pr_macro_{k}",f"PR макро @{k.replace('0','0.')}"); addimg(f"pr_micro_{k}",f"PR микро @{k.replace('0','0.')}")
+        addimg("per_class_ap","AP по классам")
+        (od/"report.md").write_text("".join(lines),encoding="utf-8")
 
-        map_metric = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
-        if map_metric and isinstance(map_metric.stats, dict):
-            st = map_metric.stats
-            lines.append("## Детали mAP\n\n")
-            for key in ["mAP", "mAP@0.5", "mAP@0.75", "mAP_small", "mAP_medium", "mAP_large"]:
-                if key in st:
-                    try:
-                        lines.append(f"- {key}: {float(st[key]):.4f}\n")
-                    except Exception:
-                        lines.append(f"- {key}: {st[key]}\n")
-            
-            cats = st.get("categories") or []
-            per_ap = st.get("per_class_ap_avg") or st.get("per_class_ap") or []
-            gt_counts = st.get("gt_counts") or []
-            if cats and per_ap:
-                k = max(1, int(self.top_k_lowest_map or 5))
-                pairs = [(cats[i], float(per_ap[i]), int(gt_counts[i]) if i < len(gt_counts) else 0) for i in range(min(len(cats), len(per_ap)))]
-                pairs_low = sorted(pairs, key=lambda x: x[1])[:k]
-                if pairs_low:
-                    lines.append("\n### Низшие по AP классы\n\n")
-                    lines.append("| class | AP | support |\n|---|---:|---:|\n")
-                    for name, ap, sup in pairs_low:
-                        lines.append(f"| {name} | {ap:.4f} | {sup} |\n")
-            lines.append("\n")
-        (report_dir / "report.md").write_text("".join(lines), encoding="utf-8")
-    def _write_json(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any]) -> None:
-        data = {
-            "metrics": [
-                {"metric_name": m.metric_name, "score": m.score, "stats": m.stats} for m in (metrics or [])
-            ],
-            "timing": timing_stats,
-        }
-        (report_dir / "report.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    def _write_json(self, od: Path, metrics: List[MetricOutputModel], timing: Dict[str,Any])->None:
+        data={"metrics":[{"metric_name":m.metric_name,"score":m.score,"stats":m.stats} for m in (metrics or [])],"timing":timing}
+        (od/"report.json").write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8")

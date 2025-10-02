@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import List, Optional, Dict, Any, Union, Tuple
 from pathlib import Path
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 import os
 import json
 import csv
 import statistics
-from dataclasses import asdict
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -449,12 +449,7 @@ class ReportGenerator(ReportConfig):
     def _write_json(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any]) -> None:
         data = {
             "metrics": [
-                {
-                    "metric_name": m.metric_name, 
-                    "score": m.score, 
-                    "stats": asdict(m.stats) if hasattr(m.stats, '__dataclass_fields__') else m.stats
-                } 
-                for m in (metrics or [])
+                {"metric_name": m.metric_name, "score": float(m.score) if isinstance(m.score,(int,float)) else m.score, "stats": (asdict(m.stats) if is_dataclass(m.stats) else m.stats)} for m in (metrics or [])
             ],
             "timing": timing_stats,
         }

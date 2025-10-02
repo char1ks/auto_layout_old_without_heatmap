@@ -7,7 +7,7 @@ def test_map_perfect_predictions(build_gt_dataset, build_perfect_predictions_fro
     out = metric.compute(gt, preds)
     assert out.metric_name == "mAP"
     assert out.score >= 0.95, f"Expected high mAP, got {out.score}"
-    assert len(out.stats.get("categories", [])) >= 1
+    assert len(out.stats.to_dict().get("categories", [])) >= 1
 
 
 def test_map_empty_predictions(build_gt_dataset, build_empty_predictions):
@@ -61,7 +61,7 @@ def test_classification_report_majority_labels(build_gt_dataset, build_predictio
     metric = ClassificationReportMetric()
     out = metric.compute(gt, preds)
     assert out.metric_name == "classification_report"
-    assert isinstance(out.stats.get("dict", {}), dict)
+    assert isinstance(out.stats.to_dict().get("dict", {}), dict)
     assert out.score >= 0.0
 
 

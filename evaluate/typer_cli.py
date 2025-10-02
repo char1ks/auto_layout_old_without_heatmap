@@ -7,6 +7,7 @@ import sys
 import inspect
 import builtins
 from contextlib import contextmanager
+from dataclasses import asdict
 _project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(_project_root))
 import typer
@@ -121,7 +122,8 @@ class EvalCLI:
         by_name: Dict[str, MetricOutputModel] = {m.metric_name: m for m in metrics}
         if "mAP" in by_name:
             m = by_name["mAP"]
-            stats: Dict[str, Any] = m.stats or {}
+            stats_obj = m.stats
+            stats: Dict[str, Any] = asdict(stats_obj) if hasattr(stats_obj, "__dataclass_fields__") else (stats_obj or {})
             t = Table(title="Mean Average Precision (mAP)")
             t.add_column("Metric")
             t.add_column("Value", justify="right")
@@ -168,7 +170,11 @@ class EvalCLI:
         if self.save_metrics:
             metrics_path = out_dir / "metrics.json"
             serializable = [
-                {"metric_name": m.metric_name, "score": m.score, "stats": m.stats}
+                {
+                    "metric_name": m.metric_name,
+                    "score": m.score,
+                    "stats": asdict(m.stats) if hasattr(m.stats, "__dataclass_fields__") else m.stats,
+                }
                 for m in metrics
             ]
             metrics_path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -122,8 +122,7 @@ class EvalCLI:
         by_name: Dict[str, MetricOutputModel] = {m.metric_name: m for m in metrics}
         if "mAP" in by_name:
             m = by_name["mAP"]
-            stats_obj = m.stats
-            stats: Dict[str, Any] = asdict(stats_obj) if hasattr(stats_obj, "__dataclass_fields__") else (stats_obj or {})
+            stats: Dict[str, Any] = m.stats.to_dict() if hasattr(m.stats, 'to_dict') else (m.stats or {})
             t = Table(title="Mean Average Precision (mAP)")
             t.add_column("Metric")
             t.add_column("Value", justify="right")
@@ -173,7 +172,7 @@ class EvalCLI:
                 {
                     "metric_name": m.metric_name,
                     "score": m.score,
-                    "stats": asdict(m.stats) if hasattr(m.stats, "__dataclass_fields__") else m.stats,
+                    "stats": m.stats.to_dict() if hasattr(m.stats, 'to_dict') else m.stats,
                 }
                 for m in metrics
             ]

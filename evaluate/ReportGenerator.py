@@ -166,8 +166,8 @@ class ReportGenerator(ReportConfig):
             save("spans_avg.svg", "spans_avg")
 
         map_metric: Optional[MetricOutputModel] = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
-        if map_metric and isinstance(map_metric.stats, dict):
-            st = map_metric.stats
+        if map_metric and hasattr(map_metric.stats, 'to_dict'):
+            st = map_metric.stats.to_dict()
             categories = st.get("categories") or []
             gt_counts = st.get("gt_counts") or []
             pred_counts = st.get("pred_counts") or []
@@ -363,20 +363,23 @@ class ReportGenerator(ReportConfig):
         lines.append("## Метрики\n\n")
         for m in metrics or []:
             desc = ""
-            if hasattr(m, 'stats') and isinstance(m.stats, dict):
-                desc = m.stats.get('doc', '')
+            if hasattr(m, 'stats') and hasattr(m.stats, 'to_dict'):
+                stats_dict = m.stats.to_dict()
+                desc = stats_dict.get('doc', '')
             
             lines.append(f"### {m.metric_name}\n")
             if desc:
                 lines.append(f"{desc}\n\n")
             
-            if str(m.metric_name) == "classification_report" and isinstance(m.stats, dict) and m.stats.get("text"):
-                text = m.stats.get("text")
-                lines.append("```\n")
-                lines.append(text if isinstance(text, str) else str(text))
-                if not str(text).endswith("\n"):
-                    lines.append("\n")
-                lines.append("```\n\n")
+            if str(m.metric_name) == "classification_report" and hasattr(m, 'stats') and hasattr(m.stats, 'to_dict'):
+                stats_dict = m.stats.to_dict()
+                text = stats_dict.get("text")
+                if text:
+                    lines.append("```\n")
+                    lines.append(text if isinstance(text, str) else str(text))
+                    if not str(text).endswith("\n"):
+                        lines.append("\n")
+                    lines.append("```\n\n")
             else:
                 score = f"{m.score:.4f}" if isinstance(m.score, (int, float)) else str(m.score)
                 lines.append(f"**Значение:** {score}\n\n")
@@ -449,7 +452,7 @@ class ReportGenerator(ReportConfig):
     def _write_json(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any]) -> None:
         data = {
             "metrics": [
-                {"metric_name": m.metric_name, "score": float(m.score) if isinstance(m.score,(int,float)) else m.score, "stats": (asdict(m.stats) if is_dataclass(m.stats) else m.stats)} for m in (metrics or [])
+                {"metric_name": m.metric_name, "score": float(m.score) if isinstance(m.score,(int,float)) else m.score, "stats": (m.stats.to_dict() if hasattr(m.stats, 'to_dict') else m.stats)} for m in (metrics or [])
             ],
             "timing": timing_stats,
         }

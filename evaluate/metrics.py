@@ -207,7 +207,7 @@ class MeanAveragePrecision(Metric):
             "pr_curves_per_threshold": {f"{thr:.2f}": pr_curves_per_thr[thr] for thr in thresholds},
         }
 
-        return MetricOutputModel(self.name, map_overall, Stats(payload=data, meta=Meta(doc=(self.__class__.__doc__ or '').strip())))
+        return MetricOutputModel(self.name, map_overall, Stats(data=data, meta=Meta(doc=(self.__class__.__doc__ or '').strip())))
 
 class MeanIntersectionOverUnion(Metric):
     name="mIoU"
@@ -218,14 +218,13 @@ class MeanIntersectionOverUnion(Metric):
         pr_pts = pr or []
         files = sorted({str(a.file_name or 'f') for a in (gt_pts + pr_pts)})
 
-        height = int(gt.image_height or 0)
-        width  = int(gt.image_width  or 0)
-        if height <= 0 or width <= 0:
-            for a in (gt_pts + pr_pts):
-                mask = a.mask
-                if isinstance(mask, np.ndarray) and mask.ndim >= 2:
-                    height, width = int(mask.shape[0]), int(mask.shape[1])
-                    break
+        # Определяем размеры изображения из масок
+        height, width = 0, 0
+        for a in (gt_pts + pr_pts):
+            mask = a.mask
+            if isinstance(mask, np.ndarray) and mask.ndim >= 2:
+                height, width = int(mask.shape[0]), int(mask.shape[1])
+                break
         if height <= 0 or width <= 0:
             return np.zeros((1,), np.uint8), np.zeros((1,), np.uint8)
 

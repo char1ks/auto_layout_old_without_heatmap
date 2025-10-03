@@ -127,10 +127,10 @@ class MeanAveragePrecision(Metric):
     def compute(self, ground_truth: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
         gt_by, pr_by, label_names = self._group(ground_truth, prediction)
         thresholds = [float(t) for t in self.iou_thresholds]
-        L, T = len(label_names), len(thresholds)
+        num_labels, num_thresholds = len(label_names), len(thresholds)
 
         # AP/PR хранилища
-        ap_per_label_per_thr = {lab: [0.0] * T for lab in label_names}
+        ap_per_label_per_thr = {lab: [0.0] * num_thresholds for lab in label_names}
         pr_curves_per_thr = {thr: {} for thr in thresholds}
         y_store = {thr: {} for thr in thresholds}
 
@@ -175,14 +175,14 @@ class MeanAveragePrecision(Metric):
             pr_macro[key] = {"precision": [float(x) for x in pm], "recall": [float(x) for x in recall_grid]}
 
             # macro-AP как среднее AP по меткам для данного порога
-            ap_macro.append(float(np.mean([ap_per_label_per_thr[lab][ti] for lab in label_names])) if L else 0.0)
+            ap_macro.append(float(np.mean([ap_per_label_per_thr[lab][ti] for lab in label_names])) if num_labels else 0.0)
 
         # агрегаты
         map_overall = float(np.mean(ap_macro)) if ap_macro else 0.0
         pick = lambda t: float(ap_macro[int(np.argmin([abs(x - t) for x in thresholds]))]) if ap_macro else 0.0
         map_50, map_75 = pick(0.5), pick(0.75)
-        idx_05 = int(np.argmin([abs(x - 0.5) for x in thresholds])) if T else 0
-        per_class_ap_05 = [float(ap_per_label_per_thr[lab][idx_05]) for lab in label_names] if L and T else []
+        idx_05 = int(np.argmin([abs(x - 0.5) for x in thresholds])) if num_thresholds else 0
+        per_class_ap_05 = [float(ap_per_label_per_thr[lab][idx_05]) for lab in label_names] if num_labels and num_thresholds else []
 
         # counts
         gt_counts = [sum(len(v) for v in (gt_by.get(lab, {}) or {}).values()) for lab in label_names]
@@ -193,7 +193,7 @@ class MeanAveragePrecision(Metric):
             "gt_counts": gt_counts,
             "pred_counts": pred_counts,
             "per_class_ap": per_class_ap_05,
-            "per_class_ap_avg": [float(np.mean(ap_per_label_per_thr[lab])) if T else 0.0 for lab in label_names],
+            "per_class_ap_avg": [float(np.mean(ap_per_label_per_thr[lab])) if num_thresholds else 0.0 for lab in label_names],
             "map": map_overall,
             "map_50": map_50,
             "map_75": map_75,

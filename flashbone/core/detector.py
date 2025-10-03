@@ -6,13 +6,21 @@ from flashbone.core.segmentation import SamSegmenter
 from flashbone.core.classifier import ClassifierKNN, ClassData
 from flashbone.core.heatmap_generation import HeatmapGenerator
 from flashbone.core.detector_base import DetectorBase, DetectionResult
+from flashbone.core.image_resizer import ImageResizer
 
 
 class SearchDetDetector(DetectorBase):
-    def __init__(self, segmenter: SamSegmenter, classifier: ClassifierKNN, heatmap_generator: HeatmapGenerator) -> None:
+    def __init__(
+        self, 
+        segmenter: SamSegmenter, 
+        classifier: ClassifierKNN, 
+        heatmap_generator: HeatmapGenerator,
+        image_resizer: ImageResizer,
+    ) -> None:
         self._segmenter = segmenter
         self._classifier = classifier
         self._heatmap_generator = heatmap_generator
+        self._image_resizer = image_resizer
 
     def _bbox_from_mask(self, mask: np.ndarray) -> list[int]:
         seg = (mask > 0).astype(bool)
@@ -66,7 +74,9 @@ class SearchDetDetector(DetectorBase):
             positive_images=positives, negative_images=neg_imgs)
 
     def detect(self, image: Image.Image, heatmap_threshold: float | None = None, class_threshold: float = 0.5, *args, **kwargs) -> list[DetectionResult]:
-        _, heatmap_resized = self._heatmap_generator.generate_heatmap(image)
+        resized_img, ctx = self._image_resizer.resize(np.array(image))
+        resized_img_pil = Image.fromarray(resized_img)
+        _, heatmap_resized = self._heatmap_generator.generate_heatmap(resized_img_pil)
 
         # # DEBUG
         # cv2.imwrite(".local/detector_debug_heatmap.png", (heatmap_resized.cpu().numpy()*255).astype(np.uint8))
@@ -77,13 +87,13 @@ class SearchDetDetector(DetectorBase):
         # # DEBUG
         # cv2.imwrite(".local/detector_debug_heatmap_thresh.png", (heatmap_np*255).astype(np.uint8))
 
-        masks = self._segmenter.segment(image, heatmap=heatmap_np)
+        masks = self._segmenter.segment(resized_img_pil, heatmap=heatmap_np)
 
-        result = []
+        dets = []
         for mask in masks:
             bbox = self._bbox_from_mask(mask)
             cls_preds = self._classifier.predict(
-                images=[image],
+                images=[resized_img_pil],
                 masks=[Image.fromarray(mask)],
                 threshold=class_threshold,
             )
@@ -92,16 +102,17 @@ class SearchDetDetector(DetectorBase):
                 cls_pred = cls_preds[0]
                 if cls_pred.class_id < 0: # NOTE: (@gas) skip no class results
                     continue
-                md = DetectionResult(
+                det = DetectionResult(
                     bbox=bbox,
                     area=int(mask.sum()),
                     polygons=self._mask_to_polygons(mask),
                     score=float(cls_pred.score), 
                     class_id=int(cls_pred.class_id),
                 )
-                result.append(md)
-
-        return result
+                dets.append(det)
+        
+        restored_dets = self._image_resizer.restore_dets(dets, ctx)
+        return restored_dets
 
 
 if __name__=="__main__":
@@ -114,6 +125,7 @@ if __name__=="__main__":
     from flashbone.core.segmentation import SegmenterConfig
     from flashbone.core.heatmap_generation import HeatmapGenerator, crop_by_mask
     from flashbone.core.classifier import ClassifierKNN
+    from flashbone.core.image_resizer import ImageResizer
 
     img_pil_ex = Image.open(".local/example.jpg").convert("RGB")
 
@@ -154,7 +166,13 @@ if __name__=="__main__":
         )
     )
     classifier = ClassifierKNN(encoder=encoder, d=1024)
-    detector = SearchDetDetector(segmenter=sam, classifier=classifier, heatmap_generator=heatmap_generator)
+    image_resizer = ImageResizer(max_side=1024)
+    detector = SearchDetDetector(
+        segmenter=sam, 
+        classifier=classifier, 
+        heatmap_generator=heatmap_generator,
+        image_resizer=image_resizer,
+    )
     # ---
 
     detector.set_references(

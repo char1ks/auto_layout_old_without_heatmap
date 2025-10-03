@@ -9,8 +9,8 @@ from PIL import Image
 
 @dataclass
 class DetectionResult:
-    polygons: list[list[list[int]]]
-    bbox: list[int]
+    polygons: list[list[list[int]]] # [[[x, y], ...], [...]]
+    bbox: list[int] # [x, y, w, h]
     area: float
     score: float 
     class_id: int

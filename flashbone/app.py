@@ -24,6 +24,8 @@ from flashbone.core.heatmap_generation import HeatmapGenerator
 from flashbone.core.classifier import ClassifierKNN
 from flashbone.core.detector import SearchDetDetector
 from flashbone.core.detector_base import DetectorBase
+from flashbone.core.image_resizer import ImageResizer
+
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -108,7 +110,13 @@ def init_detector() -> DetectorBase:
         )
     )
     classifier = ClassifierKNN(encoder=encoder, d=1024)
-    detector = SearchDetDetector(segmenter=sam, classifier=classifier, heatmap_generator=heatmap_generator)
+    image_resizer = ImageResizer(max_side=1024)
+    detector = SearchDetDetector(
+        segmenter=sam, 
+        classifier=classifier, 
+        heatmap_generator=heatmap_generator,
+        image_resizer=image_resizer,
+    )
     return detector
 
 

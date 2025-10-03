@@ -5,9 +5,11 @@ import os
 import numpy as np
 from PIL import Image, ImageDraw
 from typing import Dict, List, Optional, Tuple, Any
-import base64
-import json
 import math
+
+# TODO: (@gas):
+#     - add negative examples for training
+#     - add buttons for training and inference, with classification endpoint
 
 # Server configuration
 HOST = os.getenv("HOST", "127.0.0.1")

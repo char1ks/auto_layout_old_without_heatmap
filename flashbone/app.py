@@ -277,6 +277,8 @@ async def infer(
 
     return JSONResponse(content=jsonable_encoder(batch_results))
 
+# TODO: (@gas) add method for text/image based classification
+
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):

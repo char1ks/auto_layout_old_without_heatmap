@@ -104,6 +104,9 @@ class MeanAveragePrecision(Metric):
         # вернём нулевой AP и базовую PR-кривую,если вход пустой
         if not y_true:
             return 0.0, [1.0], [0.0]
+        # если нет положительного класса, избегаем предупреждения и возвращаем тривиальную кривую
+        if int(np.sum(np.asarray(y_true))) == 0:
+            return 0.0, [1.0], [0.0]
 
         # AP по меткам и скору
         ap_value = float(average_precision_score(y_true, y_score))
@@ -269,8 +272,21 @@ class MeanIntersectionOverUnion(Metric):
 class DiceCoefficient(Metric):
     name="dice"
     def compute(self,gt:DatasetModel,prediction:List[CocoAnnotation],**kwargs)->MetricOutputModel:
-        yt,yp=MeanIntersectionOverUnion()._stack(gt,prediction); s=float(f1_score(yt,yp,average="binary"))
-        return MetricOutputModel(self.name,s,Stats(meta=Meta(doc=(self.__class__.__doc__ or '').strip(),formula='Dice = 2PR/(P+R)')))
+
+
+        miou = MeanIntersectionOverUnion()
+        gt_pts, pr_pts, files, labels, h, w = miou._space(gt, prediction)
+
+
+        y_true = np.concatenate([miou._flat_mask(gt_pts, f, h, w, None) for f in files], 0) if files else np.array([], dtype=np.uint8)
+        y_pred = np.concatenate([miou._flat_mask(pr_pts, f, h, w, None) for f in files], 0) if files else np.array([], dtype=np.uint8)
+        
+        s = float(f1_score(y_true, y_pred, average="binary", zero_division=0)) if y_true.size and y_pred.size else 0.0
+        return MetricOutputModel(
+            self.name,
+            s,
+            Stats(meta=Meta(doc=(self.__class__.__doc__ or '').strip(), formula='Dice = 2PR/(P+R)'))
+        )
 
 class ClassificationReportMetric(Metric):
     name="classification_report"

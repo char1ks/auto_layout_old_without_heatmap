@@ -49,7 +49,7 @@ typer = "^0.9.0"
 rich = "^13.0.0"
 PyYAML = "^6.0"
 dinov3 = { path = "dinov3", develop = true }
-
+triton = { version = ">=2.0,<4.0", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
 faiss-cpu = "*"
 segment-anything-hq = "0.3"
 selenium = "4.35.0"

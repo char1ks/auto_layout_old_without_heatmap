@@ -3,19 +3,16 @@ import json
 import importlib
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
-import sys
 import inspect
 import builtins
 from contextlib import contextmanager
-from dataclasses import asdict
-_project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(_project_root))
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from evaluate.Example_datasets.voc_dataset import voc_dataset
+from evaluate.Example_datasets.voc_dataset import VocDataset
 from evaluate.pipeline import Pipeline
 from evaluate.metrics import (
     MetricOutputModel,
@@ -189,7 +186,7 @@ class EvalCLI:
         ds_root = ds_spec.get("root") or ds_spec.get("dataset_dir") or ds_spec.get("path")
         if not ds_root:
             raise ValueError("dataset.root is required in config")
-        DatasetClass = _load_obj(ds_spec["cls"]) if ds_spec.get("cls") and isinstance(ds_spec["cls"], str) else voc_dataset
+        DatasetClass = _load_obj(ds_spec["cls"]) if ds_spec.get("cls") and isinstance(ds_spec["cls"], str) else VocDataset
         DetectorClass = _load_obj(det_spec["cls"]) if det_spec.get("cls") and isinstance(det_spec["cls"], str) else SearchDetDetector
         dataset = DatasetClass.from_path(
             Path(ds_root),

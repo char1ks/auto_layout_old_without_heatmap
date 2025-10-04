@@ -90,9 +90,26 @@ def meta_mixed_types_dict():
 
 @pytest.fixture
 def dataset_model_from_meta_dict(coco_annotations_list, meta_valid_dict):
-    return DatasetModel(data_points=coco_annotations_list, meta=meta_valid_dict)
+    meta = DatasetMeta(
+        name=meta_valid_dict["name"],
+        categories=meta_valid_dict["categories"],
+        color_channels=meta_valid_dict["color_channels"],
+        total_images=meta_valid_dict["total_images"],
+        total_annotations=meta_valid_dict["total_annotations"],
+        dataset_type=meta_valid_dict["dataset_type"],
+        url=meta_valid_dict["url"]
+    )
+    return DatasetModel(data_points=coco_annotations_list, meta=meta)
 
 @pytest.fixture
 def dataset_model_from_meta_obj(coco_annotations_list, meta_valid_dict):
-    meta = DatasetMeta.from_dict(meta_valid_dict)
+    meta = DatasetMeta(
+        name=meta_valid_dict["name"],
+        categories=meta_valid_dict["categories"],
+        color_channels=meta_valid_dict["color_channels"],
+        total_images=meta_valid_dict["total_images"],
+        total_annotations=meta_valid_dict["total_annotations"],
+        dataset_type=meta_valid_dict["dataset_type"],
+        url=meta_valid_dict["url"]
+    )
     return DatasetModel(data_points=coco_annotations_list, meta=meta)

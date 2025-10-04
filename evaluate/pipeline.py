@@ -100,10 +100,3 @@ class Pipeline:
         except Exception as e:
             print(f"Report generation failed: {e}")
         return preds, metrics
-    @property
-    def predictions(self) -> List[CocoAnnotation]:
-        return list(self._predictions)
-
-    @property
-    def last_metrics(self) -> Optional[List[MetricOutputModel]]:
-        return self._last_metrics

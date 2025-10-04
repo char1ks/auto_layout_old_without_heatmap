@@ -10,8 +10,4 @@ from evaluate.dataset_meta import DatasetMeta
 class DatasetModel:
     data_points: List[CocoAnnotation]
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
-    meta: DatasetMeta = field(default_factory=DatasetMeta) 
-
-    def __post_init__(self) -> None:
-        if isinstance(self.meta, dict):
-            self.meta = DatasetMeta.from_dict(self.meta)
+    meta: DatasetMeta = field(default_factory=DatasetMeta)

@@ -4,19 +4,29 @@ import numpy as np
 from PIL import Image, ImageDraw
 from evaluate.dataset import Dataset
 from evaluate.dataset_model import DatasetModel
+from evaluate.dataset_meta import DatasetMeta
 from evaluate.coco_annotation import CocoAnnotation
-
+import json
+        
 class CocoDataset(Dataset):
     @classmethod
     def from_json(cls, obj: dict[str, Any]) -> "CocoDataset":
         annotations = cls._build_annotations(obj, base_dir=None)
-        meta = obj.get('meta', {})
-        meta.update({
-            'dataset_type': 'coco_dataset',
-            'total_images': len(obj.get('images', [])),
-            'total_annotations': len(obj.get('annotations', [])),
-            'categories': obj.get('categories', [])
-        })
+        existing_meta = obj.get('meta', {})
+        
+        meta = DatasetMeta(
+            dataset_type='coco_dataset',
+            total_images=len(obj.get('images', [])),
+            total_annotations=len(obj.get('annotations', [])),
+            categories=obj.get('categories', []),
+            uid=existing_meta.get('uid'),
+            name=existing_meta.get('name'),
+            url=existing_meta.get('url'),
+            color_channels=existing_meta.get('color_channels', []),
+            source_path=existing_meta.get('source_path'),
+            base_directory=existing_meta.get('base_directory'),
+            extra=existing_meta.get('extra', {})
+        )
         
         data = DatasetModel(
             data_points=annotations,
@@ -26,22 +36,26 @@ class CocoDataset(Dataset):
     
     @classmethod
     def from_path(cls, path: Path, **kwargs: Any) -> "CocoDataset":
-        import json
-        
         with open(path, 'r', encoding='utf-8') as f:
             obj = json.load(f)
         
         base_dir = Path(path).parent
         annotations = cls._build_annotations(obj, base_dir=base_dir)
-        meta = obj.get('meta', {})
-        meta.update({
-            'dataset_type': 'chicken_detection',
-            'source_path': str(path),
-            'base_directory': str(base_dir),
-            'total_images': len(obj.get('images', [])),
-            'total_annotations': len(obj.get('annotations', [])),
-            'categories': obj.get('categories', [])
-        })
+        existing_meta = obj.get('meta', {})
+        
+        meta = DatasetMeta(
+            dataset_type='chicken_detection',
+            source_path=str(path),
+            base_directory=str(base_dir),
+            total_images=len(obj.get('images', [])),
+            total_annotations=len(obj.get('annotations', [])),
+            categories=obj.get('categories', []),
+            uid=existing_meta.get('uid'),
+            name=existing_meta.get('name'),
+            url=existing_meta.get('url'),
+            color_channels=existing_meta.get('color_channels', []),
+            extra=existing_meta.get('extra', {})
+        )
         
         data = DatasetModel(
             data_points=annotations,
@@ -49,8 +63,8 @@ class CocoDataset(Dataset):
         )
         return cls(dataset=data)
 
-    @classmethod
-    def _build_annotations(cls, obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
+    @staticmethod
+    def _build_annotations(obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
         images_by_id: Dict[int, Dict[str, Any]] = {int(im.get('id')): im for im in obj.get('images', []) if 'id' in im}
         categories_by_id: Dict[int, Dict[str, Any]] = {int(cat.get('id')): cat for cat in obj.get('categories', []) if 'id' in cat}
         anns: List[CocoAnnotation] = []
@@ -65,7 +79,6 @@ class CocoDataset(Dataset):
                 height: int = int(image_info.get('height', 0) or 0)
                 cat_id = ann.get('category_id')
                 cat = categories_by_id.get(int(cat_id)) if cat_id is not None else None
-                # Ensure label is strictly int | str (no None)
                 label: int | str
                 if isinstance(cat, dict):
                     name_val = cat.get('name')

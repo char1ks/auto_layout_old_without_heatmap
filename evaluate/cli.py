@@ -208,13 +208,24 @@ class EvalCLI:
         dataset, detector, metrics_list = self._build_from_config()
         reporter = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
         with suppress_print_from(["searchdet_pipeline"]):
-            preds, metrics = Pipeline(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter).run(
-                positive_dir=self.positive_dir,
-                negative_dir=self.negative_dir,
-                image_root=Path(dataset.root) if hasattr(dataset, "root") else None,
-                dump_report=True,
-                report_output_dir=out_dir,
-            )
+            with reporter.profile(
+                sort="cumtime",
+                top_k=50,
+                dump_path=str(out_dir / "profiler.prof"),
+                flamegraph_path=str(out_dir / "flamegraph.svg"),
+            ):
+                preds, metrics = Pipeline(
+                    dataset=dataset,
+                    detector=detector,
+                    metrics=metrics_list,
+                    reporter=reporter,
+                ).run(
+                    positive_dir=self.positive_dir,
+                    negative_dir=self.negative_dir,
+                    image_root=Path(dataset.root) if hasattr(dataset, "root") else None,
+                    dump_report=True,
+                    report_output_dir=out_dir,
+                )
         self._save_artifacts(preds, metrics, out_dir)
         self._pretty_print(metrics, out_dir)
         console.print(Panel.fit("Evaluation completed", style="bold green"))

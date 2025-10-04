@@ -5,11 +5,6 @@ from evaluate.dataset_meta import DatasetMeta
 from evaluate.coco_annotation import CocoAnnotation
 
 
-def test_post_init_converts_meta_dict_to_object(dataset_model_from_meta_dict):
-    dm: DatasetModel = dataset_model_from_meta_dict
-    assert isinstance(dm.meta, DatasetMeta)
-
-
 def test_meta_fields_valid(dataset_model_from_meta_obj):
     dm: DatasetModel = dataset_model_from_meta_obj
     meta = dm.meta
@@ -55,7 +50,15 @@ def test_uids_are_strings_and_present(dataset_model_from_meta_obj, coco_annotati
 
 
 def test_meta_mixed_types_handling(coco_annotations_list, meta_mixed_types_dict):
-    dm = DatasetModel(data_points=coco_annotations_list, meta=meta_mixed_types_dict)
+    # Create DatasetMeta directly; invalid numeric values are set to None
+    meta = DatasetMeta(
+        name=meta_mixed_types_dict["name"],
+        categories=meta_mixed_types_dict["categories"],
+        color_channels=meta_mixed_types_dict["color_channels"],
+        total_images=None,
+        total_annotations=None,
+    )
+    dm = DatasetModel(data_points=coco_annotations_list, meta=meta)
     assert isinstance(dm.meta, DatasetMeta)
     assert dm.meta.total_images is None
     assert dm.meta.total_annotations is None

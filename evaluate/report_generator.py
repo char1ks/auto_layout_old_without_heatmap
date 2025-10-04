@@ -18,12 +18,6 @@ from evaluate.context import Context
 from evaluate.metrics import MetricOutputModel
 from evaluate.report_config import ReportConfig
 
-mpl.rcParams["svg.fonttype"] = "none"  
-mpl.rcParams["savefig.facecolor"] = "white"
-mpl.rcParams["figure.facecolor"] = "white"
-mpl.rcParams["axes.facecolor"] = "white"
-mpl.rcParams["savefig.transparent"] = False
-
 class ReportGenerator(ReportConfig):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -32,6 +26,11 @@ class ReportGenerator(ReportConfig):
         self.fig_h: float = 3.0
         self.tick_fontsize: int = 8
         self.max_label_len: int = 14
+        mpl.rcParams["svg.fonttype"] = self.svg_fonttype
+        mpl.rcParams["savefig.facecolor"] = self.savefig_facecolor
+        mpl.rcParams["figure.facecolor"] = self.figure_facecolor
+        mpl.rcParams["axes.facecolor"] = self.axes_facecolor
+        mpl.rcParams["savefig.transparent"] = self.savefig_transparent
 
     def generate_report(
         self,
@@ -74,6 +73,8 @@ class ReportGenerator(ReportConfig):
             ("Std, сек", f"{float(timing_stats.get('std', 0.0)):.4f}"),
             ("Мин, сек", f"{float(timing_stats.get('min', 0.0)):.4f}"),
             ("Макс, сек", f"{float(timing_stats.get('max', 0.0)):.4f}"),
+            ("p95, сек", f"{float(timing_stats.get('p95', 0.0)):.4f}"),
+            ("p99, сек", f"{float(timing_stats.get('p99', 0.0)):.4f}"),
         ]:
             tt.add_row(str(k[0]), str(k[1]))
         self.console.print(tt)
@@ -119,6 +120,8 @@ class ReportGenerator(ReportConfig):
                     "std": float(statistics.pstdev(durations)) if len(durations) > 1 else 0.0,
                     "min": float(min(durations)),
                     "max": float(max(durations)),
+                    "p95": float(np.percentile(durations, 95)),
+                    "p99": float(np.percentile(durations, 99)),
                 }
             )
         if spans:
@@ -359,6 +362,10 @@ class ReportGenerator(ReportConfig):
             lines.append(f"- Среднее время: {timing_stats['mean']:.4f} сек\n")
         if timing_stats.get('median'):
             lines.append(f"- Медиана: {timing_stats['median']:.4f} сек\n")
+        if timing_stats.get('p95'):
+            lines.append(f"- p95: {timing_stats['p95']:.4f} сек\n")
+        if timing_stats.get('p99'):
+            lines.append(f"- p99: {timing_stats['p99']:.4f} сек\n")
         lines.append("\n")
         lines.append("## Метрики\n\n")
         for m in metrics or []:

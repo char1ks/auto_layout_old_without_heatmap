@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from evaluate.coco_annotation import CocoAnnotation
 from evaluate.dataset_model import DatasetModel
+from evaluate.dataset_meta import DatasetMeta
 
 
 class Dataset(abc.ABC):
@@ -14,10 +15,21 @@ class Dataset(abc.ABC):
     @classmethod
     def from_json(cls: type["Dataset"], obj: dict[str, Any]) -> "Dataset":
         annotations = cls._build_annotations(obj, base_dir=None)
-        data = DatasetModel(
-            data_points=annotations,
-            meta=obj.get('meta', {})
+        existing_meta = obj.get('meta', {})
+        meta = DatasetMeta(
+            uid=existing_meta.get('uid'),
+            name=existing_meta.get('name'),
+            categories=obj.get('categories', existing_meta.get('categories', [])),
+            total_images=len(obj.get('images', [])) if 'images' in obj else existing_meta.get('total_images'),
+            total_annotations=len(obj.get('annotations', [])) if 'annotations' in obj else existing_meta.get('total_annotations'),
+            url=existing_meta.get('url'),
+            color_channels=existing_meta.get('color_channels', []),
+            source_path=existing_meta.get('source_path'),
+            base_directory=existing_meta.get('base_directory'),
+            dataset_type=existing_meta.get('dataset_type'),
+            extra=existing_meta.get('extra', {})
         )
+        data = DatasetModel(data_points=annotations, meta=meta)
         return cls(dataset=data)
 
     @classmethod
@@ -26,13 +38,24 @@ class Dataset(abc.ABC):
             obj = json.load(f)
         base_dir = Path(path).parent
         annotations = cls._build_annotations(obj, base_dir=base_dir)
-        data = DatasetModel(
-            data_points=annotations,
-            meta=obj.get('meta', {})
+        existing_meta = obj.get('meta', {})
+        meta = DatasetMeta(
+            uid=existing_meta.get('uid'),
+            name=existing_meta.get('name'),
+            categories=obj.get('categories', existing_meta.get('categories', [])),
+            total_images=len(obj.get('images', [])) if 'images' in obj else existing_meta.get('total_images'),
+            total_annotations=len(obj.get('annotations', [])) if 'annotations' in obj else existing_meta.get('total_annotations'),
+            url=existing_meta.get('url'),
+            color_channels=existing_meta.get('color_channels', []),
+            source_path=str(path),
+            base_directory=str(base_dir),
+            dataset_type=existing_meta.get('dataset_type'),
+            extra=existing_meta.get('extra', {})
         )
+        data = DatasetModel(data_points=annotations, meta=meta)
         return cls(dataset=data)
 
-    @classmethod
+    @staticmethod
     @abc.abstractmethod
-    def _build_annotations(cls: type["Dataset"], obj: dict[str, Any], base_dir: Path | None) -> list[CocoAnnotation]:
+    def _build_annotations(obj: dict[str, Any], base_dir: Path | None) -> list[CocoAnnotation]:
         pass

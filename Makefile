@@ -56,7 +56,7 @@ tests:
 
 .PHONY: run
 run: 
-	PYTHONPATH=. poetry run python -m evaluate.typer_cli
+PYTHONPATH=. poetry run python -m evaluate.cli
 
 .PHONY: build
 build: 

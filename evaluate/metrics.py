@@ -208,51 +208,64 @@ class MeanAveragePrecision(Metric):
         }
 
         return MetricOutputModel(self.name, map_overall, Stats(data=data, meta=Meta(doc=(self.__class__.__doc__ or '').strip())))
-
 class MeanIntersectionOverUnion(Metric):
-    name="mIoU"
+    name = "mIoU"
 
-    # Собирает бинарные векторы y_true и y_pred для IoU/Dice мержит маски по файлам и конкатенирует
-    def _stack(self, gt: DatasetModel, pr: List[CocoAnnotation]):
+    # плоская бинарная маска файла
+    def _flat_mask(self, points: List[CocoAnnotation], file_key: str, h: int, w: int, label_key: Optional[str] = None) -> np.ndarray:
+        acc = np.zeros((h, w), np.uint8)
+        for ann in points:
+            same_file = str(ann.file_name or "f") == file_key
+            same_label = (label_key is None) or (str(ann.label) == label_key)
+            if not (same_file and same_label):
+                continue
+            m = ann.mask
+            if isinstance(m, np.ndarray) and m.shape[:2] == (h, w):
+                acc |= (m > 0).astype(np.uint8)
+        return acc.reshape(-1)
+
+    # подготовка всякой ерунды,по типу имен файлов и классов 
+    def _space(self, gt: DatasetModel, pr: List[CocoAnnotation]) -> Tuple[List[CocoAnnotation], List[CocoAnnotation], List[str], List[str], int, int]:
         gt_pts = gt.data_points or []
         pr_pts = pr or []
-        files = sorted({str(a.file_name or 'f') for a in (gt_pts + pr_pts)})
+        files = sorted({str(a.file_name or "f") for a in (gt_pts + pr_pts)})
+        labels = sorted({str(a.label) for a in (gt_pts + pr_pts)})
+        h = int(getattr(gt, "image_height", 0) or 0)
+        w = int(getattr(gt, "image_width", 0) or 0)
+        if h <= 0 or w <= 0:
+            h, w = next(((int(a.mask.shape[0]), int(a.mask.shape[1]))
+                         for a in (gt_pts + pr_pts)
+                         if isinstance(a.mask, np.ndarray) and a.mask.ndim >= 2),
+                        (0, 0))
+        return gt_pts, pr_pts, files, labels, h, w
 
-        # Определяем размеры изображения из масок
-        height, width = 0, 0
-        for a in (gt_pts + pr_pts):
-            mask = a.mask
-            if isinstance(mask, np.ndarray) and mask.ndim >= 2:
-                height, width = int(mask.shape[0]), int(mask.shape[1])
-                break
-        if height <= 0 or width <= 0:
-            return np.zeros((1,), np.uint8), np.zeros((1,), np.uint8)
+    def compute(self, gt: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
+        gt_pts, pr_pts, files, labels, h, w = self._space(gt, prediction)
+        # MICRO
+        y_true_micro = np.concatenate([self._flat_mask(gt_pts, f, h, w, None) for f in files], 0)
+        y_pred_micro = np.concatenate([self._flat_mask(pr_pts, f, h, w, None) for f in files], 0)
+        micro_iou = float(jaccard_score(y_true_micro, y_pred_micro, average="binary", zero_division=0))
 
-        # Мержит все валидные маски одного файла в один плоский вектор (0/1)
-        def merged_mask(points: List[CocoAnnotation], fname: str) -> np.ndarray:
-            acc = np.zeros((height, width), np.uint8)
-            for a in points:
-                if str(a.file_name or 'f') != fname:
-                    continue
-                mask = a.mask
-                if isinstance(mask, np.ndarray) and mask.shape[:2] == (height, width):
-                    acc |= (mask > 0).astype(np.uint8)
-            return acc.reshape(-1)
+        # MACRO
+        per_class = []
+        for lab in labels:
+            y_true_lab = np.concatenate([self._flat_mask(gt_pts, f, h, w, lab) for f in files], 0)
+            y_pred_lab = np.concatenate([self._flat_mask(pr_pts, f, h, w, lab) for f in files], 0)
+            iou_lab = float(jaccard_score(y_true_lab, y_pred_lab, average="binary", zero_division=0))
+            per_class.append({"label": lab, "iou": iou_lab})
+        macro_iou = float(np.mean([c["iou"] for c in per_class])) if per_class else micro_iou
 
-        y_true_list, y_pred_list = [], []
-        for fname in files:
-            y_true_list.append(merged_mask(gt_pts, fname))
-            y_pred_list.append(merged_mask(pr_pts, fname))
-
-        y_true = np.concatenate(y_true_list, 0) if y_true_list else np.zeros((1,), np.uint8)
-        y_pred = np.concatenate(y_pred_list, 0) if y_pred_list else np.zeros((1,), np.uint8)
-
-        return y_true, y_pred
-    
-    def compute(self,gt:DatasetModel,prediction:List[CocoAnnotation],**kwargs)->MetricOutputModel:
-        yt,yp=self._stack(gt,prediction); s=float(jaccard_score(yt,yp,average="binary"))
-        return MetricOutputModel(self.name,s,Stats(meta=Meta(doc=(self.__class__.__doc__ or '').strip(),formula='IoU = |X∩Y|/|X∪Y|')))
-
+        data = {
+            "micro_iou": micro_iou,
+            "macro_iou": macro_iou,
+            "per_class": per_class,
+            "labels": labels
+        }
+        return MetricOutputModel(
+            self.name,
+            micro_iou,
+            Stats(data=data, meta=Meta(doc=(self.__class__.__doc__ or "").strip(), formula="IoU = |X∩Y| / |X∪Y|"))
+        )
 class DiceCoefficient(Metric):
     name="dice"
     def compute(self,gt:DatasetModel,prediction:List[CocoAnnotation],**kwargs)->MetricOutputModel:

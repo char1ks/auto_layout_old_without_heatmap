@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
+from dataclasses import dataclass, asdict
 from datetime import datetime
 import json
 import sys
@@ -11,6 +12,30 @@ import subprocess
 import tempfile
 import os
 from evaluate.context import Context
+
+
+@dataclass
+class TraceSpan:
+    name: Optional[str]
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    duration: Optional[float]
+    attributes: Dict[str, Any]
+
+
+@dataclass
+class TraceRecord:
+    uid: str
+    detector_name: str
+    image_shape: Optional[tuple[int, int, int]]
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    duration: Optional[float]
+    success: bool
+    error: Optional[str]
+    metrics: Dict[str, Any]
+    extra: Dict[str, Any]
+    spans: List[TraceSpan]
 
 
 class Tracer:
@@ -24,7 +49,7 @@ class Tracer:
         self.trace_file = trace_file
         self.sinks = sinks or []
 
-    def serialize(self, ctx: Context) -> Dict[str, Any]:
+    def serialize(self, ctx: Context) -> TraceRecord:
         def ser_dt(dt: Optional[datetime]):
             return dt.isoformat() + "Z" if isinstance(dt, datetime) else None
 
@@ -33,44 +58,45 @@ class Tracer:
             if ctx.started_at and ctx.ended_at
             else None
         )
-        spans_out: List[Dict[str, Any]] = []
+        spans_out: List[TraceSpan] = []
         for s in ctx.spans:
             st = s.get("started_at")
             en = s.get("ended_at")
             d = (en - st).total_seconds() if isinstance(st, datetime) and isinstance(en, datetime) else None
             spans_out.append(
-                {
-                    "name": s.get("name"),
-                    "started_at": ser_dt(st),
-                    "ended_at": ser_dt(en),
-                    "duration": d,
-                    "attributes": s.get("attributes", {}),
-                }
+                TraceSpan(
+                    name=s.get("name"),
+                    started_at=ser_dt(st),
+                    ended_at=ser_dt(en),
+                    duration=d,
+                    attributes=s.get("attributes", {}),
+                )
             )
 
-        return {
-            "uid": ctx.uid,
-            "detector_name": ctx.detector_name,
-            "image_shape": ctx.image_shape,
-            "started_at": ser_dt(ctx.started_at),
-            "ended_at": ser_dt(ctx.ended_at),
-            "duration": duration_val,
-            "success": ctx.success,
-            "error": ctx.error,
-            "metrics": ctx.metrics,
-            "extra": ctx.extra,
-            "spans": spans_out,
-        }
+        return TraceRecord(
+            uid=ctx.uid,
+            detector_name=ctx.detector_name,
+            image_shape=ctx.image_shape,
+            started_at=ser_dt(ctx.started_at),
+            ended_at=ser_dt(ctx.ended_at),
+            duration=duration_val,
+            success=ctx.success,
+            error=ctx.error,
+            metrics=ctx.metrics,
+            extra=ctx.extra,
+            spans=spans_out,
+        )
 
-    def emit(self, ctx: Context) -> Dict[str, Any]:
+    def emit(self, ctx: Context) -> TraceRecord:
         payload = self.serialize(ctx)
+        payload_dict = asdict(payload)
         if self.to_stdout:
-            print(json.dumps(payload, ensure_ascii=False, default=str), file=sys.stdout)
+            print(json.dumps(payload_dict, ensure_ascii=False, default=str), file=sys.stdout)
         for sink in self.sinks:
-            sink(payload)
+            sink(payload_dict)
         if self.trace_file:
             with open(self.trace_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+                f.write(json.dumps(payload_dict, ensure_ascii=False, default=str) + "\n")
         return payload
     def frame_graph(self, prof_path: str, svg_path: str) -> None:
         result = subprocess.run([sys.executable, "-m", "flameprof", prof_path], capture_output=True, text=True)

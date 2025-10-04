@@ -17,14 +17,20 @@ class VocDataset(Dataset):
     @classmethod
     def from_json(cls, obj: dict[str, Any]) -> "VocDataset":
         annotations = cls._build_annotations(obj, base_dir=None)
-        meta = obj.get("meta", {})
-        meta.update(
-            {
-                "dataset_type": "voc_detection",
-                "total_images": len(obj.get("images", [])),
-                "total_annotations": len(obj.get("annotations", [])),
-                "categories": obj.get("categories", []),
-            }
+        existing_meta = obj.get("meta", {})
+        
+        meta = DatasetMeta(
+            dataset_type="voc_detection",
+            total_images=len(obj.get("images", [])),
+            total_annotations=len(obj.get("annotations", [])),
+            categories=obj.get("categories", []),
+            uid=existing_meta.get("uid"),
+            name=existing_meta.get("name"),
+            url=existing_meta.get("url"),
+            color_channels=existing_meta.get("color_channels", []),
+            source_path=existing_meta.get("source_path"),
+            base_directory=existing_meta.get("base_directory"),
+            extra=existing_meta.get("extra", {})
         )
         data = DatasetModel(data_points=annotations, meta=meta)
         return cls(dataset=data)
@@ -61,8 +67,8 @@ class VocDataset(Dataset):
         )
         return cls(dataset=DatasetModel(data_points=anns, meta=meta))
 
-    @classmethod
-    def _build_annotations(cls, obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
+    @staticmethod
+    def _build_annotations(obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
         images_by_id = {int(im["id"]): im for im in obj.get("images", []) if "id" in im}
         categories_by_id = {int(cat["id"]): cat for cat in obj.get("categories", []) if "id" in cat}
         anns = []

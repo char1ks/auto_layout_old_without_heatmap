@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "auto_layout_old_without_heatmap"
+name = "flashbone"
 version = "0.1.0"
 description = ""
 authors = ["aodnoral@synetra"]

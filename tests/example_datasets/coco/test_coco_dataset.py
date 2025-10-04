@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import numpy as np
-from evaluate.Example_datasets.COCODataset import ChickenDataset
+from evaluate.Example_datasets.coco_dataset import CocoDataset
 
 
 def build_coco_like(minimal: bool = False) -> dict:
@@ -27,7 +27,7 @@ def build_coco_like(minimal: bool = False) -> dict:
 
 def test_build_annotations_bbox_and_poly_mask():
     obj = build_coco_like(minimal=False)
-    anns = ChickenDataset._build_annotations(obj, base_dir=None)
+    anns = CocoDataset._build_annotations(obj, base_dir=None)
     assert len(anns) == 2
     a0 = next(a for a in anns if a.file_name == "img1.jpg")
     assert a0.bbox == [10.0, 5.0, 20.0, 10.0]
@@ -44,7 +44,7 @@ def test_build_annotations_bbox_and_poly_mask():
 
 def test_from_json_meta_counts():
     obj = build_coco_like(minimal=True)
-    ds = ChickenDataset.from_json(obj)
+    ds = CocoDataset.from_json(obj)
     model = ds.data
     assert model.meta.dataset_type == "coco_dataset"
     assert model.meta.total_images == 2
@@ -57,7 +57,7 @@ def test_from_path_reads_and_sets_meta(tmp_path: Path):
     obj = build_coco_like(minimal=False)
     json_path = tmp_path / "demo.json"
     json_path.write_text(json.dumps(obj), encoding="utf-8")
-    ds = ChickenDataset.from_path(json_path)
+    ds = CocoDataset.from_path(json_path)
     model = ds.data
     assert model.meta.dataset_type == "chicken_detection"
     assert model.meta.source_path == str(json_path)

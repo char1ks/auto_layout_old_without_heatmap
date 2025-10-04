@@ -2,19 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import  List, Optional, Tuple,Union, Callable
-from evaluate.DatasetModel import DatasetModel
-from evaluate.Dataset import Dataset
-from evaluate.DetectorBase import DetectorBase
+from evaluate.dataset_model import DatasetModel
+from evaluate.dataset import Dataset
+from evaluate.detector_base import DetectorBase
 from evaluate.metrics import (
     Metric, MetricOutputModel
 )
-from evaluate.COCOAnnotations import COCOAnnotation
-from evaluate.Tracer import Tracer
-from evaluate.ReportGenerator import ReportGenerator
-from evaluate.Context import Context
+from evaluate.coco_annotation import CocoAnnotation
+from evaluate.tracer import Tracer
+from evaluate.report_generator import ReportGenerator
+from evaluate.context import Context
 import numpy as np
 
-class DatasetPoint:
+class Pipeline:
     def __init__(self,dataset: Union[Dataset, DatasetModel],detector: DetectorBase,metrics: Optional[List[Metric]] = None, reporter: Optional[Tracer] = None,) -> None:
         if isinstance(dataset, Dataset):
             self.dataset_model: DatasetModel = dataset.data
@@ -26,7 +26,7 @@ class DatasetPoint:
         self.detector: DetectorBase = detector
         self.metrics: List[Metric] = metrics or []
         self.reporter: Optional[Tracer] = reporter
-        self._predictions: List[COCOAnnotation] = []
+        self._predictions: List[CocoAnnotation] = []
         self._last_metrics: Optional[List[MetricOutputModel]] = None
         self._contexts: List[Context] = []
         
@@ -34,11 +34,11 @@ class DatasetPoint:
         pos_by_class, neg_imgs = self.detector.read_reference_images(positive_dir, negative_dir)
         self.detector.set_references(pos_by_class, neg_imgs)
 
-    def detect_all(self,image_root: Optional[Union[str, Path]] = None,progress: Optional[Callable[[int, int, str | None], None]] = None,*args,**kwargs,) -> List[COCOAnnotation]:
+    def detect_all(self,image_root: Optional[Union[str, Path]] = None,progress: Optional[Callable[[int, int, str | None], None]] = None,*args,**kwargs,) -> List[CocoAnnotation]:
         image_root = Path(image_root) if image_root is not None else None
         file_names: List[str] = sorted({str(getattr(ann, "file_name")) for ann in self.dataset_model.data_points if getattr(ann, "file_name", None) is not None})
         self._contexts = []
-        predictions: List[COCOAnnotation] = []
+        predictions: List[CocoAnnotation] = []
         total = len(file_names)
         for idx, fname in enumerate(file_names, start=1):
             image_np: Optional[np.ndarray] = None
@@ -78,7 +78,7 @@ class DatasetPoint:
         self._predictions = predictions
         return predictions
 
-    def evaluate(self,predictions: Optional[List[COCOAnnotation]] = None,average: str = "micro",) -> List[MetricOutputModel]:
+    def evaluate(self,predictions: Optional[List[CocoAnnotation]] = None,average: str = "micro",) -> List[MetricOutputModel]:
         preds = predictions if predictions is not None else self._predictions
         results = []
         for metric in (self.metrics or []):
@@ -90,7 +90,7 @@ class DatasetPoint:
         self._last_metrics = results
         return results
 
-    def run(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,image_root: Optional[Union[str, Path]] = None,average: str = "micro",progress: Optional[Callable[[int, int, str | None], None]] = None,*args, dump_report: bool = False, report_output_dir: Optional[Union[str, Path]] = None, **kwargs,) -> Tuple[List[COCOAnnotation], List[MetricOutputModel]]:
+    def run(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,image_root: Optional[Union[str, Path]] = None,average: str = "micro",progress: Optional[Callable[[int, int, str | None], None]] = None,*args, dump_report: bool = False, report_output_dir: Optional[Union[str, Path]] = None, **kwargs,) -> Tuple[List[CocoAnnotation], List[MetricOutputModel]]:
         self.set_references(positive_dir, negative_dir)
         preds = self.detect_all(image_root=image_root, progress=progress, **kwargs)
         metrics = self.evaluate(preds, average=average)
@@ -101,7 +101,7 @@ class DatasetPoint:
             print(f"Report generation failed: {e}")
         return preds, metrics
     @property
-    def predictions(self) -> List[COCOAnnotation]:
+    def predictions(self) -> List[CocoAnnotation]:
         return list(self._predictions)
 
     @property

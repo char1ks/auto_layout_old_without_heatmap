@@ -5,7 +5,7 @@ import uuid
 
 #Этот класс служит для описание каждого изображения 
 @dataclass
-class COCOAnnotation:
+class CocoAnnotation:
     #Супер базовые поля,которые должны быть
     img: np.ndarray
     mask: np.ndarray  # Выполняет роль segmentation в COCO standara format

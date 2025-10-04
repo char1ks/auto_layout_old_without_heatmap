@@ -14,9 +14,9 @@ import matplotlib as mpl
 from rich.console import Console
 from rich.table import Table
 from rich import box
-from evaluate.Context import Context
+from evaluate.context import Context
 from evaluate.metrics import MetricOutputModel
-from evaluate.ReportConfig import ReportConfig
+from evaluate.report_config import ReportConfig
 
 mpl.rcParams["svg.fonttype"] = "none"  
 mpl.rcParams["savefig.facecolor"] = "white"

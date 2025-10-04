@@ -1,10 +1,10 @@
 import numpy as np
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.coco_annotation import CocoAnnotation
 
 
 def test_basic_creation(sample_image, sample_mask):
     h, w = sample_image.shape[:2]
-    ann = COCOAnnotation(
+    ann = CocoAnnotation(
         img=sample_image,
         mask=sample_mask,
         label=1,

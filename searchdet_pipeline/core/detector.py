@@ -27,9 +27,9 @@ from ..utils.validation import ImageValidator, DirectoryValidator, ValidationErr
 import torch
 from .models import MaskBackend, BackboneType
 
-from evaluate.DetectorBase import DetectorBase
-from evaluate.Context import Context
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.detector_base import DetectorBase
+from evaluate.context import Context
+from evaluate.coco_annotation import CocoAnnotation
 from searchdet_pipeline.core.binning_processor import bin_filter_heatmap
 
 
@@ -771,7 +771,7 @@ class SearchDetDetector(DetectorBase):
             print("   • Убедитесь что используется быстрый метод извлечения")
         print()
 
-    def _convert_to_annotations(self, results: Dict[str, Any], context: Context) -> List[COCOAnnotation]:
+    def _convert_to_annotations(self, results: Dict[str, Any], context: Context) -> List[CocoAnnotation]:
         annotations = []
         if 'masks' not in results:
             return annotations
@@ -809,7 +809,7 @@ class SearchDetDetector(DetectorBase):
                 else:
                     file_name = 'unknown.jpg'
                 
-                annotation = COCOAnnotation(
+                annotation = CocoAnnotation(
                     img=original_image if original_image is not None else np.zeros((height, width, 3), dtype=np.uint8),
                     mask=mask if mask is not None else np.zeros((height, width), dtype=np.uint8),
                     label=class_label,

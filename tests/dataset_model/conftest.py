@@ -3,12 +3,12 @@ import numpy as np
 from typing import List
 from pathlib import Path
 from PIL import Image
-from evaluate.COCOAnnotations import COCOAnnotation
-from evaluate.DatasetModel import DatasetModel
-from evaluate.DatasetMeta import DatasetMeta
+from evaluate.coco_annotation import CocoAnnotation
+from evaluate.dataset_model import DatasetModel
+from evaluate.dataset_meta import DatasetMeta
 
 @pytest.fixture
-def coco_annotations_list() -> List[COCOAnnotation]:
+def coco_annotations_list() -> List[CocoAnnotation]:
     static_dir = Path(__file__).parent.parent / "static"
     width_default, height_default = 400, 300
     static_data = [
@@ -31,7 +31,7 @@ def coco_annotations_list() -> List[COCOAnnotation]:
         ("fruit5.png", "snake fruit", [228, 147, 34, 29]),
         ("fruit5.png", "dragon fruit", [241, 189, 80, 67]),
     ]
-    anns: List[COCOAnnotation] = []
+    anns: List[CocoAnnotation] = []
     for file_name, label, bbox in static_data:
         img_path = static_dir / file_name
         if img_path.exists():
@@ -50,7 +50,7 @@ def coco_annotations_list() -> List[COCOAnnotation]:
             mask[y0:y1, x0:x1] = 1
         area = float(np.sum(mask > 0))
         anns.append(
-            COCOAnnotation(
+            CocoAnnotation(
                 img=img,
                 mask=mask,
                 label=label,

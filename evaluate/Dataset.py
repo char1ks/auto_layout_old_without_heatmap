@@ -2,8 +2,8 @@ import abc
 import json
 from pathlib import Path
 from typing import Any
-from evaluate.COCOAnnotations import COCOAnnotation
-from evaluate.DatasetModel import DatasetModel
+from evaluate.coco_annotation import CocoAnnotation
+from evaluate.dataset_model import DatasetModel
 
 
 class Dataset(abc.ABC):
@@ -34,5 +34,5 @@ class Dataset(abc.ABC):
 
     @classmethod
     @abc.abstractmethod
-    def _build_annotations(cls: type["Dataset"], obj: dict[str, Any], base_dir: Path | None) -> list[COCOAnnotation]:
+    def _build_annotations(cls: type["Dataset"], obj: dict[str, Any], base_dir: Path | None) -> list[CocoAnnotation]:
         pass

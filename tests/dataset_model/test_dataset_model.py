@@ -1,8 +1,8 @@
 from typing import List, Dict
 
-from evaluate.DatasetModel import DatasetModel
-from evaluate.DatasetMeta import DatasetMeta
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.dataset_model import DatasetModel
+from evaluate.dataset_meta import DatasetMeta
+from evaluate.coco_annotation import CocoAnnotation
 
 
 def test_post_init_converts_meta_dict_to_object(dataset_model_from_meta_dict):
@@ -23,7 +23,7 @@ def test_meta_fields_valid(dataset_model_from_meta_obj):
 
 
 def test_data_points_file_names_and_counts(coco_annotations_list):
-    anns: List[COCOAnnotation] = coco_annotations_list
+    anns: List[CocoAnnotation] = coco_annotations_list
     assert len(anns) == 18
     file_names = [a.file_name for a in anns]
     assert set(file_names) == {
@@ -37,7 +37,7 @@ def test_data_points_file_names_and_counts(coco_annotations_list):
 
 
 def test_bbox_mask_area_consistency(coco_annotations_list):
-    anns: List[COCOAnnotation] = coco_annotations_list
+    anns: List[CocoAnnotation] = coco_annotations_list
     for a in anns:
         x, y, w, h = a.bbox
         expected_area = int(w) * int(h)

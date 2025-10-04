@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, timedelta
-from evaluate.Context import Context
+from evaluate.context import Context
 
 @pytest.fixture
 def context_now() -> Context:

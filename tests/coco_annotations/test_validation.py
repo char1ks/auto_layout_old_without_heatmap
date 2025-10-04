@@ -1,10 +1,10 @@
 import numpy as np
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.coco_annotation import CocoAnnotation
 
 
 def test_image_and_mask_shapes_must_match(sample_image, sample_mask):
     h, w = sample_image.shape[:2]
-    ann = COCOAnnotation(
+    ann = CocoAnnotation(
         img=sample_image,
         mask=sample_mask,
         label="obj",

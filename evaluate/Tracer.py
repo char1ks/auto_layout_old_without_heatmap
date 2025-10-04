@@ -10,7 +10,7 @@ from contextlib import contextmanager
 import subprocess
 import tempfile
 import os
-from evaluate.Context import Context
+from evaluate.context import Context
 
 
 class Tracer:

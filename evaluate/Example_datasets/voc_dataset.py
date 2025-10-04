@@ -6,16 +6,16 @@ import xml.etree.ElementTree as ET
 import sys
 import numpy as np
 from PIL import Image
-from evaluate.Dataset import Dataset
-from evaluate.DatasetModel import DatasetModel
-from evaluate.DatasetMeta import DatasetMeta
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.dataset import Dataset
+from evaluate.dataset_model import DatasetModel
+from evaluate.dataset_meta import DatasetMeta
+from evaluate.coco_annotation import CocoAnnotation
 _project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_project_root))
 
-class ArchiveVOCDataset(Dataset):
+class VocDataset(Dataset):
     @classmethod
-    def from_json(cls, obj: dict[str, Any]) -> "ArchiveVOCDataset":
+    def from_json(cls, obj: dict[str, Any]) -> "VocDataset":
         annotations = cls._build_annotations(obj, base_dir=None)
         meta = obj.get("meta", {})
         meta.update(
@@ -30,7 +30,7 @@ class ArchiveVOCDataset(Dataset):
         return cls(dataset=data)
 
     @classmethod
-    def from_path(cls, path: Path, **kwargs: Any) -> "ArchiveVOCDataset":
+    def from_path(cls, path: Path, **kwargs: Any) -> "VocDataset":
         ann_dir = kwargs.get('ann_dir')
         img_dir = kwargs.get('img_dir')
         base_dir = Path(path)
@@ -62,7 +62,7 @@ class ArchiveVOCDataset(Dataset):
         return cls(dataset=DatasetModel(data_points=anns, meta=meta))
 
     @classmethod
-    def _build_annotations(cls, obj: dict[str, Any], base_dir: Path | None) -> List[COCOAnnotation]:
+    def _build_annotations(cls, obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
         images_by_id = {int(im["id"]): im for im in obj.get("images", []) if "id" in im}
         categories_by_id = {int(cat["id"]): cat for cat in obj.get("categories", []) if "id" in cat}
         anns = []
@@ -99,7 +99,7 @@ class ArchiveVOCDataset(Dataset):
                         img_arr = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
                     except Exception:
                         pass
-                anns.append(COCOAnnotation(
+                anns.append(CocoAnnotation(
                     img=img_arr, mask=mask_np, label=label, image_size=(width, height),
                     width=width, height=height, area=area, file_name=file_name, bbox=bbox
                 ))
@@ -108,7 +108,7 @@ class ArchiveVOCDataset(Dataset):
         return anns
 
     @staticmethod
-    def _parse_single_voc_xml(xml_path: Path, img_dir: Path) -> Tuple[List[COCOAnnotation], List[str]]:
+    def _parse_single_voc_xml(xml_path: Path, img_dir: Path) -> Tuple[List[CocoAnnotation], List[str]]:
         tree = ET.parse(xml_path)
         root = tree.getroot()
 
@@ -175,7 +175,7 @@ class ArchiveVOCDataset(Dataset):
             if x2 > x1 and y2 > y1:
                 mask_np[y1:y2, x1:x2] = 1
 
-            anns.append(COCOAnnotation(
+            anns.append(CocoAnnotation(
                 img=img_arr, mask=mask_np, label=label, image_size=(W_img, H_img),
                 width=W_img, height=H_img, area=area, file_name=file_name, bbox=[x, y, w, h]
             ))

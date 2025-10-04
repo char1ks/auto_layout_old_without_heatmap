@@ -4,8 +4,8 @@ import numpy as np
 from dataclasses import dataclass, asdict, field
 from typing import Dict, Any, List, Optional,Tuple
 from sklearn.metrics import classification_report, precision_recall_curve, average_precision_score, jaccard_score, f1_score
-from evaluate.DatasetModel import DatasetModel
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.dataset_model import DatasetModel
+from evaluate.coco_annotation import CocoAnnotation
 from shapely.geometry import box as _box_poly
 
 @dataclass
@@ -31,7 +31,7 @@ class MetricOutputModel:
 class Metric(abc.ABC):
     name:str="metric"
     @abc.abstractmethod
-    def compute(self, gt:DatasetModel, prediction:List[COCOAnnotation], **kwargs)->MetricOutputModel: ...
+    def compute(self, gt:DatasetModel, prediction:List[CocoAnnotation], **kwargs)->MetricOutputModel: ...
 
 def _iou(a: List[float], b: List[float]) -> float:
     pa, pb = _box_poly(a[0], a[1], a[2], a[3]), _box_poly(b[0], b[1], b[2], b[3])
@@ -43,7 +43,7 @@ class MeanAveragePrecision(Metric):
 
     def __init__(self, iou_thresholds: Optional[List[float]] = None) -> None:
         self.iou_thresholds = iou_thresholds or np.arange(0.5, 0.95 + 1e-9, 0.05).tolist()
-    def _group(self, ground_truth: DatasetModel, predictions: List[COCOAnnotation]):
+    def _group(self, ground_truth: DatasetModel, predictions: List[CocoAnnotation]):
         ground_truth_by: dict[str, dict[str, List[List[float]]]] = {}
         predictions_by: dict[str, List[Tuple[str, List[float], float]]] = {}
         label_names = set()
@@ -124,7 +124,7 @@ class MeanAveragePrecision(Metric):
         
         return float(ap_value), [float(x) for x in precision], [float(x) for x in recall]
 
-    def compute(self, ground_truth: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
+    def compute(self, ground_truth: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
         gt_by, pr_by, label_names = self._group(ground_truth, prediction)
         thresholds = [float(t) for t in self.iou_thresholds]
         num_labels, num_thresholds = len(label_names), len(thresholds)
@@ -213,7 +213,7 @@ class MeanIntersectionOverUnion(Metric):
     name="mIoU"
 
     # Собирает бинарные векторы y_true и y_pred для IoU/Dice мержит маски по файлам и конкатенирует
-    def _stack(self, gt: DatasetModel, pr: List[COCOAnnotation]):
+    def _stack(self, gt: DatasetModel, pr: List[CocoAnnotation]):
         gt_pts = gt.data_points or []
         pr_pts = pr or []
         files = sorted({str(a.file_name or 'f') for a in (gt_pts + pr_pts)})
@@ -229,7 +229,7 @@ class MeanIntersectionOverUnion(Metric):
             return np.zeros((1,), np.uint8), np.zeros((1,), np.uint8)
 
         # Мержит все валидные маски одного файла в один плоский вектор (0/1)
-        def merged_mask(points: List[COCOAnnotation], fname: str) -> np.ndarray:
+        def merged_mask(points: List[CocoAnnotation], fname: str) -> np.ndarray:
             acc = np.zeros((height, width), np.uint8)
             for a in points:
                 if str(a.file_name or 'f') != fname:
@@ -249,19 +249,19 @@ class MeanIntersectionOverUnion(Metric):
 
         return y_true, y_pred
     
-    def compute(self,gt:DatasetModel,prediction:List[COCOAnnotation],**kwargs)->MetricOutputModel:
+    def compute(self,gt:DatasetModel,prediction:List[CocoAnnotation],**kwargs)->MetricOutputModel:
         yt,yp=self._stack(gt,prediction); s=float(jaccard_score(yt,yp,average="binary"))
         return MetricOutputModel(self.name,s,Stats(meta=Meta(doc=(self.__class__.__doc__ or '').strip(),formula='IoU = |X∩Y|/|X∪Y|')))
 
 class DiceCoefficient(Metric):
     name="dice"
-    def compute(self,gt:DatasetModel,prediction:List[COCOAnnotation],**kwargs)->MetricOutputModel:
+    def compute(self,gt:DatasetModel,prediction:List[CocoAnnotation],**kwargs)->MetricOutputModel:
         yt,yp=MeanIntersectionOverUnion()._stack(gt,prediction); s=float(f1_score(yt,yp,average="binary"))
         return MetricOutputModel(self.name,s,Stats(meta=Meta(doc=(self.__class__.__doc__ or '').strip(),formula='Dice = 2PR/(P+R)')))
 
 class ClassificationReportMetric(Metric):
     name="classification_report"
-    def compute(self, gt: DatasetModel, prediction: List[COCOAnnotation], **kwargs) -> MetricOutputModel:
+    def compute(self, gt: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
     # входные точки
         gt_pts = gt.data_points or []
         pr_pts = prediction or []
@@ -271,7 +271,7 @@ class ClassificationReportMetric(Metric):
         pr_files = [str(a.file_name) for a in pr_pts if a.file_name is not None]
         files = sorted(set(gt_files) | set(pr_files))
         # вытаскиваем все метки по файлу 
-        def labels_for(points: List[COCOAnnotation], fname: str) -> List[str]:
+        def labels_for(points: List[CocoAnnotation], fname: str) -> List[str]:
             return [
                 str(a.label)
                 for a in points

@@ -4,8 +4,8 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any, Callable
 from PIL import Image
-from evaluate.Context import Context
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.context import Context
+from evaluate.coco_annotation import CocoAnnotation
 
 class DetectorBase(abc.ABC):
     def __init__(self, name: Optional[str] = None):
@@ -38,7 +38,7 @@ class DetectorBase(abc.ABC):
     def find_present_elements(self, image_np: np.ndarray, context: Context, *args, **kwargs) -> Dict[str, Any]:
         pass
     
-    def detect(self,image_np: np.ndarray, callback: Optional[Callable[[Context], None]] = None,*args, **kwargs) -> List[COCOAnnotation]:
+    def detect(self,image_np: np.ndarray, callback: Optional[Callable[[Context], None]] = None,*args, **kwargs) -> List[CocoAnnotation]:
         context = Context(
             detector_name=self.detector_name,
             image_shape=image_np.shape if image_np is not None else None
@@ -67,5 +67,5 @@ class DetectorBase(abc.ABC):
                 callback(context)
     
     @abc.abstractmethod
-    def _convert_to_annotations(self, results: Dict[str, Any], context: Context) -> List[COCOAnnotation]:
+    def _convert_to_annotations(self, results: Dict[str, Any], context: Context) -> List[CocoAnnotation]:
         pass

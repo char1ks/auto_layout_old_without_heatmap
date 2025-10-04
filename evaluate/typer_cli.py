@@ -15,8 +15,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from evaluate.Example_datasets.ArchiveVOCDataset import ArchiveVOCDataset
-from evaluate.DatasetPoint import DatasetPoint
+from evaluate.Example_datasets.voc_dataset import voc_dataset
+from evaluate.pipeline import Pipeline
 from evaluate.metrics import (
     MetricOutputModel,
     MeanAveragePrecision,
@@ -24,7 +24,7 @@ from evaluate.metrics import (
     DiceCoefficient,
     ClassificationReportMetric,
 )
-from evaluate.Tracer import Tracer
+from evaluate.tracer import Tracer
 
 from searchdet_pipeline.core.detector import SearchDetDetector
 from searchdet_pipeline.core.config import get_preset_config
@@ -189,7 +189,7 @@ class EvalCLI:
         ds_root = ds_spec.get("root") or ds_spec.get("dataset_dir") or ds_spec.get("path")
         if not ds_root:
             raise ValueError("dataset.root is required in config")
-        DatasetClass = _load_obj(ds_spec["cls"]) if ds_spec.get("cls") and isinstance(ds_spec["cls"], str) else ArchiveVOCDataset
+        DatasetClass = _load_obj(ds_spec["cls"]) if ds_spec.get("cls") and isinstance(ds_spec["cls"], str) else voc_dataset
         DetectorClass = _load_obj(det_spec["cls"]) if det_spec.get("cls") and isinstance(det_spec["cls"], str) else SearchDetDetector
         dataset = DatasetClass.from_path(
             Path(ds_root),
@@ -208,7 +208,7 @@ class EvalCLI:
         dataset, detector, metrics_list = self._build_from_config()
         reporter = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
         with suppress_print_from(["searchdet_pipeline"]):
-            preds, metrics = DatasetPoint(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter).run(
+            preds, metrics = Pipeline(dataset=dataset, detector=detector, metrics=metrics_list, reporter=reporter).run(
                 positive_dir=self.positive_dir,
                 negative_dir=self.negative_dir,
                 image_root=Path(dataset.root) if hasattr(dataset, "root") else None,

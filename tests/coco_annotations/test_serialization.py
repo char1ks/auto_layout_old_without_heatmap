@@ -1,9 +1,9 @@
 import json
 import numpy as np
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.coco_annotation import CocoAnnotation
 
 
-def to_serializable_dict(ann: COCOAnnotation) -> dict:
+def to_serializable_dict(ann: CocoAnnotation) -> dict:
     return {
         "uid": ann.uid,
         "file_name": ann.file_name,
@@ -34,7 +34,7 @@ def test_basic_json_serialization(sample_coco_annotation):
 
 def test_serialization_without_optional_fields(sample_image, sample_mask):
     h, w = sample_image.shape[:2]
-    ann = COCOAnnotation(
+    ann = CocoAnnotation(
         img=sample_image,
         mask=sample_mask,
         label=1,

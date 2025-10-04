@@ -2,13 +2,13 @@ from pathlib import Path
 from typing import Any, List, Dict
 import numpy as np
 from PIL import Image, ImageDraw
-from evaluate.Dataset import Dataset
-from evaluate.DatasetModel import DatasetModel
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.dataset import Dataset
+from evaluate.dataset_model import DatasetModel
+from evaluate.coco_annotation import CocoAnnotation
 
-class ChickenDataset(Dataset):
+class CocoDataset(Dataset):
     @classmethod
-    def from_json(cls, obj: dict[str, Any]) -> "ChickenDataset":
+    def from_json(cls, obj: dict[str, Any]) -> "CocoDataset":
         annotations = cls._build_annotations(obj, base_dir=None)
         meta = obj.get('meta', {})
         meta.update({
@@ -25,7 +25,7 @@ class ChickenDataset(Dataset):
         return cls(dataset=data)
     
     @classmethod
-    def from_path(cls, path: Path, **kwargs: Any) -> "ChickenDataset":
+    def from_path(cls, path: Path, **kwargs: Any) -> "CocoDataset":
         import json
         
         with open(path, 'r', encoding='utf-8') as f:
@@ -50,10 +50,10 @@ class ChickenDataset(Dataset):
         return cls(dataset=data)
 
     @classmethod
-    def _build_annotations(cls, obj: dict[str, Any], base_dir: Path | None) -> List[COCOAnnotation]:
+    def _build_annotations(cls, obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
         images_by_id: Dict[int, Dict[str, Any]] = {int(im.get('id')): im for im in obj.get('images', []) if 'id' in im}
         categories_by_id: Dict[int, Dict[str, Any]] = {int(cat.get('id')): cat for cat in obj.get('categories', []) if 'id' in cat}
-        anns: List[COCOAnnotation] = []
+        anns: List[CocoAnnotation] = []
         for ann in obj.get('annotations', []) or []:
             try:
                 image_id = int(ann.get('image_id'))
@@ -126,7 +126,7 @@ class ChickenDataset(Dataset):
                 else:
                     img_arr = np.zeros((height, width, 3), dtype=np.uint8)
                 anns.append(
-                    COCOAnnotation(
+                    CocoAnnotation(
                         img=img_arr,
                         mask=mask_np,
                         label=label,

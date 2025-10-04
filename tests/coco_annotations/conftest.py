@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from evaluate.COCOAnnotations import COCOAnnotation
+from evaluate.coco_annotation import CocoAnnotation
 @pytest.fixture
 def sample_image() -> np.ndarray:
     return (np.random.rand(50, 30, 3) * 255).astype(np.uint8)
@@ -14,9 +14,9 @@ def sample_mask() -> np.ndarray:
 
 
 @pytest.fixture
-def sample_coco_annotation(sample_image: np.ndarray, sample_mask: np.ndarray) -> COCOAnnotation:
+def sample_coco_annotation(sample_image: np.ndarray, sample_mask: np.ndarray) -> CocoAnnotation:
     height, width = sample_image.shape[:2]
-    ann = COCOAnnotation(
+    ann = CocoAnnotation(
         img=sample_image,
         mask=sample_mask,
         label="object",
@@ -43,11 +43,11 @@ def coco_annotation_factory():
         score: float | None = None,
         confidence: float | None = None,
         file_name: str = "factory_img.jpg",
-    ) -> COCOAnnotation:
+    ) -> CocoAnnotation:
         img = (np.random.rand(height, width, 3) * 255).astype(np.uint8)
         mask = np.zeros((height, width), dtype=np.uint8)
         mask[0 : height // 2, 0 : width // 2] = 1
-        return COCOAnnotation(
+        return CocoAnnotation(
             img=img,
             mask=mask,
             label=label,

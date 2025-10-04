@@ -35,7 +35,7 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         # Merge selected extras
-        for key in ("method", "path", "status", "duration_ms", "client", "request_id", "detail"):
+        for key in ("method", "path", "status", "duration_ms", "client", "request_id", "detail", "inference"):
             if hasattr(record, key):
                 payload[key] = getattr(record, key)
         return json.dumps(payload, ensure_ascii=False)
@@ -273,7 +273,7 @@ async def infer(
         mean_latency_ms += dt / len(pil_imgs)
         batch_results.append(res_dict)
 
-    logger.info(f"mean inference time ms.: {mean_latency_ms}")
+    logger.info("Inference completed", extra={"inference": round(mean_latency_ms, 2)})
 
     return JSONResponse(content=jsonable_encoder(batch_results))
 

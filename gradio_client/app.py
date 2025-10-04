@@ -8,8 +8,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import math
 
 # TODO: (@gas):
-#     - add negative examples for training
-#     - add buttons for training and inference, with classification endpoint
+#     - add button for zero-shot classification, with text or video query (for now without training)
 
 # Server configuration
 HOST = os.getenv("HOST", "127.0.0.1")
@@ -141,6 +140,7 @@ client = APIClient(BASE_URL, USERNAME, PASSWORD)
 # Global state for training images
 training_state = {
     "images": {},  # {class_id: [cropped_images]}
+    "negative_images": [],  # [cropped_images]
     "ready_for_inference": False
 }
 
@@ -219,21 +219,21 @@ def check_server_status():
         return "❌ Server is not accessible"
 
 def add_training_image(image, class_id, bbox_str):
-    """Add training image using coordinate input"""
+    """Add positive training image using coordinate input"""
     if image is None or not class_id.strip():
-        return "Please provide both an image and class ID", None, "No training images", None
-    
+        return "Please provide both an image and class ID", None, _create_training_summary(), None
+
     class_id = class_id.strip()
-    
+
     # Convert gradio image format to PIL
     if hasattr(image, 'image'):
         pil_image = image.image
     else:
         pil_image = image
-    
+
     if isinstance(pil_image, np.ndarray):
         pil_image = Image.fromarray(pil_image)
-    
+
     # Parse bbox coordinates
     bbox_data = None
     if bbox_str.strip():
@@ -243,48 +243,98 @@ def add_training_image(image, class_id, bbox_str):
                 bbox_data = coords
         except ValueError:
             pass
-    
+
     # If bbox is provided, crop the image
     cropped_image = pil_image
     if bbox_data and len(bbox_data) == 4:
         x1, y1, x2, y2 = bbox_data
         if x1 < x2 and y1 < y2:
             cropped_image = crop_image(pil_image, (x1, y1, x2, y2))
-            display_image = draw_bbox_on_image(pil_image, (x1, y1, x2, y2))
+            display_image = cropped_image  # Show cropped result
         else:
             display_image = pil_image
     else:
         display_image = pil_image
-    
+
     # Add to training state
     if class_id not in training_state["images"]:
         training_state["images"][class_id] = []
-    
+
     training_state["images"][class_id].append(cropped_image)
-    
-    # Create summary text
+
+    # Create training grid
+    grid_image = create_training_grid()
+
+    return f"Added positive image for class '{class_id}'", display_image, _create_training_summary(), grid_image
+
+def add_negative_image(image, bbox_str):
+    """Add negative training image using coordinate input"""
+    if image is None:
+        return "Please provide an image", None, _create_training_summary()
+
+    # Convert gradio image format to PIL
+    if hasattr(image, 'image'):
+        pil_image = image.image
+    else:
+        pil_image = image
+
+    if isinstance(pil_image, np.ndarray):
+        pil_image = Image.fromarray(pil_image)
+
+    # Parse bbox coordinates
+    bbox_data = None
+    if bbox_str.strip():
+        try:
+            coords = [int(x.strip()) for x in bbox_str.split(",")]
+            if len(coords) == 4:
+                bbox_data = coords
+        except ValueError:
+            pass
+
+    # If bbox is provided, crop the image
+    cropped_image = pil_image
+    if bbox_data and len(bbox_data) == 4:
+        x1, y1, x2, y2 = bbox_data
+        if x1 < x2 and y1 < y2:
+            cropped_image = crop_image(pil_image, (x1, y1, x2, y2))
+            display_image = cropped_image  # Show cropped result
+        else:
+            display_image = pil_image
+    else:
+        display_image = pil_image
+
+    # Add to negative training state
+    training_state["negative_images"].append(cropped_image)
+
+    return f"Added negative image ({len(training_state['negative_images'])} total)", display_image, _create_training_summary()
+
+def _create_training_summary():
+    """Create summary text of training data"""
     summary = "Training Images:\n"
     for cid, imgs in training_state["images"].items():
         summary += f"- Class '{cid}': {len(imgs)} images\n"
-    
-    # Create training grid
-    grid_image = create_training_grid()
-    
-    return f"Added image for class '{class_id}'", display_image, summary, grid_image
+    if training_state["negative_images"]:
+        summary += f"- Negative: {len(training_state['negative_images'])} images\n"
+    if not training_state["images"] and not training_state["negative_images"]:
+        summary = "No training images"
+    return summary
 
 def send_training_data():
-    if not training_state["images"]:
+    if not training_state["images"] and not training_state["negative_images"]:
         return "No training images to send", False
-    
+
     try:
-        # Convert images to bytes
+        # Convert positive images to bytes
         positive_images = {}
         for class_id, images in training_state["images"].items():
             positive_images[class_id] = [image_to_bytes(img) for img in images]
-        
+
+        # Convert negative images to bytes
+        negative_images = [image_to_bytes(img) for img in training_state["negative_images"]] if training_state["negative_images"] else None
+
         # Send to server
-        success = client.set_references(positive_images)
-        
+        success = client.set_references(positive_images, negative_images)
+
         if success:
             training_state["ready_for_inference"] = True
             return "✅ Training data sent successfully!", True
@@ -295,6 +345,7 @@ def send_training_data():
 
 def clear_training_data():
     training_state["images"].clear()
+    training_state["negative_images"].clear()
     training_state["ready_for_inference"] = False
     return "Training data cleared", False, "No training images", None, None
 
@@ -403,26 +454,49 @@ def create_interface():
         
         # Step 1: Training
         gr.Markdown("## Step 1: Training Data")
-        
+
+        # Positive images
+        gr.Markdown("### Positive Images")
         with gr.Row():
             with gr.Column(scale=1):
-                training_image = gr.Image(label="Upload Training Image", type="pil")
+                training_image = gr.Image(label="Upload Positive Training Image", type="pil", show_label=True)
+                coords_display = gr.Textbox(label="Mouse Coordinates (x, y)", value="", interactive=False)
                 class_id_input = gr.Textbox(label="Class ID", placeholder="Enter class identifier")
-                
+
                 gr.Markdown("**Optional: Crop using bounding box**")
                 gr.Markdown("Enter bbox coordinates as: x1,y1,x2,y2 (e.g., 100,100,300,300)")
                 bbox_input = gr.Textbox(label="Bounding Box (x1,y1,x2,y2)", placeholder="100,100,300,300")
-                
-                add_btn = gr.Button("Add Training Image", variant="primary")
-                
+
+                add_btn = gr.Button("Add Positive Image", variant="primary")
+
             with gr.Column(scale=1):
                 preview_image = gr.Image(label="Preview (with bbox if specified)", interactive=False)
                 add_status = gr.Textbox(label="Status", interactive=False)
-                training_summary = gr.Textbox(label="Training Data Summary", interactive=False, lines=5)
-                
+
             with gr.Column(scale=1):
                 training_grid = gr.Image(label="Training Images Grid", interactive=False)
-                gr.Markdown("**All images added for training**")
+                gr.Markdown("**All positive images added**")
+
+        # Negative images
+        gr.Markdown("### Negative Images")
+        with gr.Row():
+            with gr.Column(scale=1):
+                negative_image = gr.Image(label="Upload Negative Training Image", type="pil")
+                negative_coords_display = gr.Textbox(label="Mouse Coordinates (x, y)", value="", interactive=False)
+
+                gr.Markdown("**Optional: Crop using bounding box**")
+                gr.Markdown("Enter bbox coordinates as: x1,y1,x2,y2 (e.g., 100,100,300,300)")
+                negative_bbox_input = gr.Textbox(label="Bounding Box (x1,y1,x2,y2)", placeholder="100,100,300,300")
+
+                add_negative_btn = gr.Button("Add Negative Image", variant="secondary")
+
+            with gr.Column(scale=1):
+                negative_preview_image = gr.Image(label="Negative Preview (with bbox if specified)", interactive=False)
+                negative_add_status = gr.Textbox(label="Status", interactive=False)
+
+        # Training summary
+        with gr.Row():
+            training_summary = gr.Textbox(label="Training Data Summary", interactive=False, lines=5)
         
         with gr.Row():
             send_btn = gr.Button("Send Training Data to Server", variant="primary")
@@ -435,20 +509,27 @@ def create_interface():
             inputs=[training_image, class_id_input, bbox_input],
             outputs=[add_status, preview_image, training_summary, training_grid]
         )
-        
+
+        add_negative_btn.click(
+            fn=add_negative_image,
+            inputs=[negative_image, negative_bbox_input],
+            outputs=[negative_add_status, negative_preview_image, training_summary]
+        )
+
         send_btn.click(
             fn=send_training_data,
             outputs=[training_status, inference_ready]
         )
-        
-        def clear_training_data():
+
+        def clear_training_data_wrapper():
             training_state["images"].clear()
+            training_state["negative_images"].clear()
             training_state["ready_for_inference"] = False
-            return "Training data cleared", False, "No training images", None, None
-        
+            return "Training data cleared", False, "No training images", None, None, None, None
+
         clear_btn.click(
-            fn=clear_training_data,
-            outputs=[training_status, inference_ready, training_summary, preview_image, training_grid]
+            fn=clear_training_data_wrapper,
+            outputs=[training_status, inference_ready, training_summary, preview_image, training_grid, negative_preview_image, negative_add_status]
         )
         
         # Step 2: Inference
@@ -471,8 +552,9 @@ def create_interface():
                     precision=2
                 )
                 inference_image = gr.Image(label="Upload Image for Inference", type="pil")
+                inference_coords_display = gr.Textbox(label="Mouse Coordinates (x, y)", value="", interactive=False)
                 infer_btn = gr.Button("Run Inference", variant="primary")
-                
+
             with gr.Column():
                 result_image = gr.Image(label="Results (with polygons, bboxes, and class IDs)", interactive=False)
                 inference_results = gr.Textbox(label="Inference Results", interactive=False, lines=5)
@@ -482,7 +564,18 @@ def create_interface():
             inputs=[inference_image, heatmap_threshold_input, class_threshold_input],
             outputs=[inference_results, result_image]
         )
-    
+
+        # Event handlers for mouse coordinates on select (click)
+        def show_coords(evt: gr.SelectData):
+            if evt.index is not None:
+                x, y = evt.index
+                return f"x={x}, y={y}"
+            return ""
+
+        training_image.select(fn=show_coords, outputs=coords_display)
+        negative_image.select(fn=show_coords, outputs=negative_coords_display)
+        inference_image.select(fn=show_coords, outputs=inference_coords_display)
+
     return demo
 
 if __name__ == "__main__":

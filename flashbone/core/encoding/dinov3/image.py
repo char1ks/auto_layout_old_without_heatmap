@@ -1,76 +1,24 @@
 # NOTE: (@gas) reference is Meta example notebook: https://github.com/facebookresearch/dinov3/blob/main/notebooks/dinotxt_inference.ipynb
 import math
-from pathlib import Path
-from dataclasses import dataclass
 
 import torch
 from PIL import Image
-
 try:
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 except Exception:
     pass
-
 import torchvision.transforms.functional as TF
 
-from dinov3.hub.dinotxt import dinov3_vitl16_dinotxt_tet1280d20h24l
-from dinov3.data.transforms import make_classification_eval_transform
-
-PATCH_SIZE = 16
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
-
-
-MODEL_DINOV3_VITS = "dinov3_vits16"
-MODEL_DINOV3_VITSP = "dinov3_vits16plus"
-MODEL_DINOV3_VITB = "dinov3_vitb16"
-MODEL_DINOV3_VITL = "dinov3_vitl16"
-MODEL_DINOV3_VITHP = "dinov3_vith16plus"
-MODEL_DINOV3_VIT7B = "dinov3_vit7b16"
-
-
-MODEL_TO_NUM_LAYERS = {
-    MODEL_DINOV3_VITS: 12,
-    MODEL_DINOV3_VITSP: 12,
-    MODEL_DINOV3_VITB: 12,
-    MODEL_DINOV3_VITL: 24,
-    MODEL_DINOV3_VITHP: 32,
-    MODEL_DINOV3_VIT7B: 40,
-}
-
-
-_proj_base = Path(__file__).resolve().parent.parent.parent
-DINOV3_LOCATION = _proj_base / "vendor/dinov3"
-
-
-class DinoV3VisionTextEncoderGaz:
-    def __init__(self):
-        self.model, self.tokenizer = \
-            dinov3_vitl16_dinotxt_tet1280d20h24l(bpe_path_or_url="tokenizers/bpe_simple_vocab_16e6.txt.gz")
-        model = model.cuda()
-        self.preprocessor = make_classification_eval_transform()
- 
-    def encode(self, img: Image.Image, texts: list[str] = []) -> tuple[torch.Tensor, ...]:
-        image_tensor = torch.stack([self.preprocessor(img)], dim=0).cuda()
-        if texts:
-            tokenized_texts_tensor = self.tokenizer.tokenize(texts).cuda() 
-            with torch.autocast('cuda', dtype=torch.float16):
-                with torch.no_grad():
-                    image_features, patch_tokens, bb_patch_tokens = model.encode_image_with_patch_tokens(image_tensor)
-                    text_features = model.encode_text(tokenized_texts_tensor)
-            return image_features, patch_tokens, bb_patch_tokens, text_features
-        else:
-            with torch.autocast('cuda', dtype=torch.float16):
-                with torch.no_grad():
-                    image_features, patch_tokens, bb_patch_tokens = model.encode_image_with_patch_tokens(image_tensor)
-            return image_features, patch_tokens, bb_patch_tokens
-
-
-@dataclass
-class DinoFeaturesPT:
-    cls: torch.Tensor
-    patches: torch.Tensor
+from flashbone.core.encoding.base import (
+    MODEL_DINOV3_VITL, 
+    PATCH_SIZE, 
+    DINOV3_LOCATION, 
+    MODEL_TO_NUM_LAYERS, 
+    IMAGENET_MEAN, 
+    IMAGENET_STD,
+    DinoFeaturesPT, 
+)
 
 
 class DinoV3EncoderGaz:
@@ -123,7 +71,7 @@ class DinoV3EncoderGaz:
         resized = TF.normalize(resized, mean=IMAGENET_MEAN, std=IMAGENET_STD)
         resized = resized.cuda()
         with torch.inference_mode():
-            with torch.autocast(device_type='cuda', dtype=torch.float16):
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                 feats = self.model.get_intermediate_layers(
                     resized, 
                     n=range(self.n_layers), 
@@ -197,45 +145,3 @@ if __name__=="__main__":
 
     feats = model.encode([img_pil, img_pil_ex])
     print("Encode batch out shape: ", feats.cls.shape)
-
-
-# if __name__=="__main__":
-#     """
-#     https://github.com/facebookresearch/dinov3/blob/main/notebooks/dinotxt_inference.ipynb
-#     """
-#     import time
-
-#     import torch
-#     from PIL import Image
-
-#     from dinov3.hub.dinotxt import dinov3_vitl16_dinotxt_tet1280d20h24l
-#     from dinov3.data.transforms import make_classification_eval_transform
-
-#     model, tokenizer = dinov3_vitl16_dinotxt_tet1280d20h24l(bpe_path_or_url="tokenizers/bpe_simple_vocab_16e6.txt.gz")
-
-#     img_pil = Image.open(".local/example.jpg").convert("RGB")
-    
-#     image_preprocess = make_classification_eval_transform()
-#     image_tensor = torch.stack([image_preprocess(img_pil)], dim=0).cuda()
-#     texts = ["photo of dogs", "photo of a chair", "photo of a bowl", "photo of a tupperware"]
-#     class_names = ["dog", "chair", "bowl", "tupperware"]
-#     tokenized_texts_tensor = tokenizer.tokenize(texts).cuda()
-#     model = model.cuda()
-#     with torch.autocast('cuda', dtype=torch.float16):
-#         with torch.no_grad():
-#             image_features = model.encode_image(image_tensor)
-#             text_features = model.encode_text(tokenized_texts_tensor)
-
-#     start = time.perf_counter()
-#     with torch.autocast('cuda', dtype=torch.float16):
-#         with torch.no_grad():
-#             image_features = model.encode_image(image_tensor)
-#             text_features = model.encode_text(tokenized_texts_tensor)
-#     image_features /= image_features.norm(dim=-1, keepdim=True)
-#     text_features /= text_features.norm(dim=-1, keepdim=True)
-#     similarity = (
-#         text_features.cpu().float().numpy() @ image_features.cpu().float().numpy().T
-#     )
-#     end = time.perf_counter()
-#     print(similarity) 
-#     print(f"{int((end-start)*1000)} ms.") 

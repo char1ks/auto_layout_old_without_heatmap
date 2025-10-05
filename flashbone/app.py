@@ -18,13 +18,13 @@ from PIL import Image
 import numpy as np
 from ultralytics import FastSAM
 
-from flashbone.core.encoding import DinoV3EncoderGaz
+from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
 from flashbone.core.segmentation import SegmenterConfig, SamSegmenter
 from flashbone.core.heatmap_generation import HeatmapGenerator
-from flashbone.core.classifier import ClassifierKNN
-from flashbone.core.detector import SearchDetDetector
-from flashbone.core.detector_base import DetectorBase
-from flashbone.core.image_resizer import ImageResizer
+from flashbone.core.classification import ClassifierKNN
+from flashbone.core.detection.searchdet_detector import SearchDetDetector
+from flashbone.core.detection.base import DetectorBase
+from flashbone.core.image_resizing import ImageResizer
 
 
 class JsonFormatter(logging.Formatter):

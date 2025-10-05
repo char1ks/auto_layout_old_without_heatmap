@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from flashbone.core.detector_base import DetectionResult
+from flashbone.core.detection.base import DetectionResult
 
 
 @dataclass

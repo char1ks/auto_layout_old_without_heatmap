@@ -223,7 +223,7 @@ if __name__=="__main__":
     import time 
     import cv2
 
-    from flashbone.core.encoding import DinoV3EncoderGaz
+    from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
     from flashbone.core.heatmap_generation import HeatmapGenerator, crop_by_mask
 
     img_pil_ex = Image.open(".local/example.jpg").convert("RGB")

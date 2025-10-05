@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import faiss
 
-from flashbone.core.encoding import DinoV3EncoderGaz
+from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
 
 
 @dataclass

@@ -8,7 +8,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from einops import reduce
 import torch.nn.functional as F
 
-from flashbone.core.encoding import DinoV3EncoderGaz
+from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
 
 
 _logger = logging.getLogger("heatmap-generation")

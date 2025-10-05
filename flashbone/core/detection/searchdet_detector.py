@@ -3,10 +3,10 @@ import numpy as np
 from PIL import Image
 
 from flashbone.core.segmentation import SamSegmenter
-from flashbone.core.classifier import ClassifierKNN, ClassData
+from flashbone.core.classification import ClassifierKNN, ClassData
 from flashbone.core.heatmap_generation import HeatmapGenerator
-from flashbone.core.detector_base import DetectorBase, DetectionResult
-from flashbone.core.image_resizer import ImageResizer
+from flashbone.core.image_resizing import ImageResizer
+from flashbone.core.detection.base import DetectorBase, DetectionResult
 
 
 class SearchDetDetector(DetectorBase):
@@ -121,11 +121,11 @@ if __name__=="__main__":
     import time 
     from ultralytics import FastSAM
 
-    from flashbone.core.encoding import DinoV3EncoderGaz
+    from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
     from flashbone.core.segmentation import SegmenterConfig
     from flashbone.core.heatmap_generation import HeatmapGenerator, crop_by_mask
-    from flashbone.core.classifier import ClassifierKNN
-    from flashbone.core.image_resizer import ImageResizer
+    from flashbone.core.classification import ClassifierKNN
+    from flashbone.core.image_resizing import ImageResizer
 
     img_pil_ex = Image.open(".local/example.jpg").convert("RGB")
 

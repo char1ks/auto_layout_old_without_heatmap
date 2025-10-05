@@ -103,11 +103,32 @@ class Tracer:
             with open(self.trace_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload_dict, ensure_ascii=False, default=str) + "\n")
         return payload
-    def frame_graph(self, prof_path: str, svg_path: str) -> None:
-        result = subprocess.run([sys.executable, "-m", "flameprof", prof_path], capture_output=True, text=True)
-        if result.returncode == 0 and result.stdout:
-            with open(svg_path, "w", encoding="utf-8") as f:
-                f.write(result.stdout)
+    def frame_graph(self, prof_path: str, svg_path: str, timeout: int = 30) -> None:
+        import importlib.util
+        if importlib.util.find_spec("flameprof") is None:
+            logger.warning("flameprof package not found – skipping flamegraph generation")
+            return
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "flameprof", prof_path],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode == 0 and result.stdout:
+                with open(svg_path, "w", encoding="utf-8") as f:
+                    f.write(result.stdout)
+            else:
+                logger.warning(
+                    "flameprof exited with code %s – stdout: %s stderr: %s", result.returncode, result.stdout[:200], result.stderr[:200]
+                )
+        except subprocess.TimeoutExpired:
+            logger.warning("flameprof timed out after %s seconds – flamegraph will not be generated", timeout)
+        except FileNotFoundError as e:
+            logger.warning("flameprof executable not found (%s) – skipping flamegraph", e)
+        except Exception as e:
+            logger.warning("Unexpected error while generating flamegraph: %s", e)
+
 
     @contextmanager
     def profile(self, sort: str = "cumtime", top_k: int = 20, dump_path: Optional[str] = None, flamegraph_path: Optional[str] = None):

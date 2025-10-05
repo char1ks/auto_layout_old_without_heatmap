@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Optional
+import sys
 from rich.logging import RichHandler
 from rich.console import Console 
 def setup_logging(level: Optional[str] = None) -> None:

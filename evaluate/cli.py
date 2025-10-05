@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
 import inspect
+from dataclasses import asdict, is_dataclass
 import builtins
 from contextlib import contextmanager
 import typer
@@ -176,8 +177,13 @@ class EvalCLI:
             serializable = []
             for m in metrics:
                 stats_obj = m.stats
-                stats = stats_obj if isinstance(stats_obj, dict) else stats_obj
-                serializable.append({"metric_name": m.metric_name, "score": m.score, "stats": stats})
+                if isinstance(stats_obj, dict):
+                    stats_ser = stats_obj
+                elif is_dataclass(stats_obj):
+                    stats_ser = asdict(stats_obj)
+                else:
+                    stats_ser = str(stats_obj)
+                serializable.append({"metric_name": m.metric_name, "score": m.score, "stats": stats_ser})
             metrics_path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _build_from_config(self) -> tuple[Any, Any, List[Any]]:

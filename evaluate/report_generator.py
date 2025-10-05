@@ -170,7 +170,9 @@ class ReportGenerator(ReportConfig):
 
         map_metric: Optional[MetricOutputModel] = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
         if map_metric:
-            st = asdict(map_metric.stats) if is_dataclass(map_metric.stats) else map_metric.stats
+            st_raw = asdict(map_metric.stats) if is_dataclass(map_metric.stats) else map_metric.stats
+            data_dict = st_raw.get("data") if isinstance(st_raw, dict) and "data" in st_raw else st_raw
+            st = data_dict 
             categories = st.get("categories") or []
             gt_counts = st.get("gt_counts") or []
             pred_counts = st.get("pred_counts") or []
@@ -180,16 +182,17 @@ class ReportGenerator(ReportConfig):
                     ("GT class distribution", gt_counts, "#4C78A8", "gt_class_distribution", "gt_class_distribution.svg"),
                     ("Predicted class distribution", pred_counts, "#F58518", "pred_class_distribution", "pred_class_distribution.svg"),
                 ]:
-                    if counts:
-                        x_positions = list(range(len(categories)))
-                        labels = [str(c) for c in categories]
-                        labels = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in labels]
-                        plt.figure(figsize=(self.fig_w, self.fig_h))
-                        plt.bar(x_positions, counts, color=color)
-                        plt.title(title)
-                        plt.xticks(x_positions, labels, rotation=45, ha="right", fontsize=self.tick_fontsize)
-                        plt.tick_params(axis="y", labelsize=self.tick_fontsize)
-                        save(fname, key)
+                    if not counts or len(counts) != len(categories):
+                        counts = [0] * len(categories)
+                    x_positions = list(range(len(categories)))
+                    labels = [str(c) for c in categories]
+                    labels = [str(s)[:self.max_label_len-1] + "…" if len(str(s)) > self.max_label_len else str(s) for s in labels]
+                    plt.figure(figsize=(self.fig_w, self.fig_h))
+                    plt.bar(x_positions, counts, color=color)
+                    plt.title(title)
+                    plt.xticks(x_positions, labels, rotation=45, ha="right", fontsize=self.tick_fontsize)
+                    plt.tick_params(axis="y", labelsize=self.tick_fontsize)
+                    save(fname, key)
 
             ap_macro = st.get("ap_iou_macro") or []
             ap_micro = st.get("ap_iou_micro") or []

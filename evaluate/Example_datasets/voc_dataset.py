@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, List, Tuple
 import xml.etree.ElementTree as ET
-import sys
 import numpy as np
 from PIL import Image
 from evaluate.dataset import Dataset
 from evaluate.dataset_model import DatasetModel
 from evaluate.dataset_meta import DatasetMeta
 from evaluate.coco_annotation import CocoAnnotation
-from evaluate.logging import get_logger
+from evaluate.log_utils import get_logger
+_project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_project_root))
 logger = get_logger(__name__)
 
 class VocDataset(Dataset):

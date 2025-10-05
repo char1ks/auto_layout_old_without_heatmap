@@ -1,6 +1,9 @@
 !pip install poetry
 !git clone https://github.com/facebookresearch/dinov3.git
-!pip install poetry
+!poetry install
+!cp /content/drive/MyDrive/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth ~/.cache/torch/hub/checkpoints/
+!MPLBACKEND=Agg LOG_LEVEL=INFO poetry run python -m cli config.yaml
+
 РЕОМЕНДУЮ:ознакомьтесь с Makefile и запустите команды  make checks(для mypy и ruff),а также не забывайте
 менять config.yaml файл в папке evaluate для изменения параметров запуска тестирования
 

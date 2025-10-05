@@ -1,13 +1,16 @@
+import sys
 from pathlib import Path
 from typing import Any, List, Dict
 import numpy as np
 from PIL import Image, ImageDraw
+import json
 from evaluate.dataset import Dataset
 from evaluate.dataset_model import DatasetModel
 from evaluate.dataset_meta import DatasetMeta
 from evaluate.coco_annotation import CocoAnnotation
-from evaluate.logging import get_logger
-import json
+from evaluate.log_utils import get_logger
+_project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_project_root))
 
 logger = get_logger(__name__)
         

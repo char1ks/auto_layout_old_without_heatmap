@@ -1,17 +1,21 @@
 from __future__ import annotations
 import json
 import importlib
+import sys
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
 import inspect
 import builtins
 from contextlib import contextmanager
-
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+_project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(_project_root))
 
+from evaluate.log_utils import setup_logging, get_logger
+setup_logging()
 from evaluate.Example_datasets.voc_dataset import VocDataset
 from evaluate.pipeline import Pipeline
 from evaluate.metrics import (
@@ -28,6 +32,7 @@ from searchdet_pipeline.core.config import get_preset_config
 
 App = typer.Typer()
 console = Console()
+logger = get_logger(__name__)
 
 @contextmanager
 def suppress_print_from(prefixes: list[str]):
@@ -204,6 +209,8 @@ class EvalCLI:
         out_dir.mkdir(parents=True, exist_ok=True)
         dataset, detector, metrics_list = self._build_from_config()
         reporter = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
+        def _progress(idx: int, total: int, fname: Optional[str]) -> None:
+            logger.info(f"[{idx}/{total}] {fname if fname else ''}")
         with suppress_print_from(["searchdet_pipeline"]):
             with reporter.profile(
                 sort="cumtime",
@@ -221,6 +228,7 @@ class EvalCLI:
                     positive_dir=self.positive_dir,
                     negative_dir=self.negative_dir,
                     image_root=image_root,
+                    progress=_progress,
                     dump_report=True,
                     report_output_dir=out_dir,
                 )

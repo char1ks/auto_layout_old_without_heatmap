@@ -11,9 +11,11 @@ from contextlib import contextmanager
 import subprocess
 import tempfile
 import os
+from pathlib import Path
+_project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(_project_root))
 from evaluate.context import Context
-from evaluate.logging import get_logger
-
+from evaluate.log_utils import get_logger
 logger = get_logger(__name__)
 
 

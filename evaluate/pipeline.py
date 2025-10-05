@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Union, Callable
+import numpy as np
+_project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(_project_root))
 from evaluate.dataset_model import DatasetModel
 from evaluate.dataset import Dataset
 from evaluate.detector_base import DetectorBase
@@ -10,9 +14,7 @@ from evaluate.coco_annotation import CocoAnnotation
 from evaluate.tracer import Tracer
 from evaluate.report_generator import ReportGenerator
 from evaluate.context import Context
-from evaluate.logging import get_logger
-import numpy as np
-
+from evaluate.log_utils import get_logger
 logger = get_logger(__name__)
 
 class Pipeline:
@@ -49,6 +51,7 @@ class Pipeline:
         total = len(file_names)
 
         for idx, fname in enumerate(file_names, start=1):
+            logger.info(f"[{idx}/{total}] start {fname}")
             image_np: Optional[np.ndarray] = None
 
             for ann in self.dataset_model.data_points:
@@ -60,11 +63,13 @@ class Pipeline:
                 if image_root is None:
                     if progress:
                         progress(idx, total, fname)
+                    logger.info(f"[{idx}/{total}] skipped (no image in dataset) {fname}")
                     continue
                 img_path = (image_root / fname) if fname is not None else None
                 if img_path is None:
                     if progress:
                         progress(idx, total, fname)
+                    logger.info(f"[{idx}/{total}] skipped (bad path) {fname}")
                     continue
                 image_np = self.detector.read_input_img(img_path)
 
@@ -82,6 +87,7 @@ class Pipeline:
 
             if progress:
                 progress(idx, total, fname)
+            logger.info(f"[{idx}/{total}] done {fname} preds={len(det_anns)}")
 
         self._predictions = predictions
         return predictions

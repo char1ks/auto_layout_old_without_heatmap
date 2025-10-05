@@ -65,10 +65,10 @@ class MeanAveragePrecision(Metric):
                 continue
             file_key = str(annotation.file_name); label_key = str(annotation.label)
             label_names.add(label_key)
-            score_value = float(
-                annotation.score if hasattr(annotation, 'score') and annotation.score is not None
-                else (annotation.confidence if hasattr(annotation, 'confidence') and annotation.confidence is not None else 1.0)
-            )
+            score = annotation.score
+            if score is None:
+                score = annotation.confidence if annotation.confidence is not None else 1.0
+            score_value = float(score)
 
             predictions_by.setdefault(label_key, []).append((
                 file_key,
@@ -233,13 +233,10 @@ class MeanIntersectionOverUnion(Metric):
         pr_pts = pr or []
         files = sorted({str(a.file_name or "f") for a in (gt_pts + pr_pts)})
         labels = sorted({str(a.label) for a in (gt_pts + pr_pts)})
-        h = int(getattr(gt, "image_height", 0) or 0)
-        w = int(getattr(gt, "image_width", 0) or 0)
-        if h <= 0 or w <= 0:
-            h, w = next(((int(a.mask.shape[0]), int(a.mask.shape[1]))
-                         for a in (gt_pts + pr_pts)
-                         if isinstance(a.mask, np.ndarray) and a.mask.ndim >= 2),
-                        (0, 0))
+        h, w = next(((int(a.mask.shape[0]), int(a.mask.shape[1]))
+                     for a in (gt_pts + pr_pts)
+                     if isinstance(a.mask, np.ndarray) and a.mask.ndim >= 2),
+                    (0, 0))
         return gt_pts, pr_pts, files, labels, h, w
 
     def compute(self, gt: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:

@@ -100,7 +100,7 @@ class ReportGenerator(ReportConfig):
                 success += 1
             if c.error:
                 errors += 1
-            if self.include_spans and getattr(c, "spans", None):
+            if self.include_spans and c.spans:
                 for s in c.spans:
                     name = str(s.get("name", s.get("stage", "span")))
                     val = s.get("duration") or s.get("time") or 0
@@ -169,8 +169,8 @@ class ReportGenerator(ReportConfig):
             save("spans_avg.svg", "spans_avg")
 
         map_metric: Optional[MetricOutputModel] = next((m for m in (metrics or []) if str(m.metric_name).lower() in {"map", "meanaverageprecision"}), None)
-        if map_metric and hasattr(map_metric.stats, 'to_dict'):
-            st = map_metric.stats.to_dict()
+        if map_metric:
+            st = asdict(map_metric.stats) if is_dataclass(map_metric.stats) else map_metric.stats
             categories = st.get("categories") or []
             gt_counts = st.get("gt_counts") or []
             pred_counts = st.get("pred_counts") or []
@@ -342,7 +342,7 @@ class ReportGenerator(ReportConfig):
         lines.append(f"Сгенерирован: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         if contexts:
             for ctx in contexts:
-                if hasattr(ctx, 'extra') and ctx.extra:
+                if ctx.extra:
                     model_class = ctx.extra.get('model_class')
                     model_module = ctx.extra.get('model_module') 
                     model_doc = ctx.extra.get('model_doc')
@@ -370,16 +370,15 @@ class ReportGenerator(ReportConfig):
         lines.append("## Метрики\n\n")
         for m in metrics or []:
             desc = ""
-            if hasattr(m, 'stats') and hasattr(m.stats, 'to_dict'):
-                stats_dict = m.stats.to_dict()
+            stats_dict = asdict(m.stats) if is_dataclass(m.stats) else m.stats
+            if isinstance(stats_dict, dict):
                 desc = stats_dict.get('doc', '')
             
             lines.append(f"### {m.metric_name}\n")
             if desc:
                 lines.append(f"{desc}\n\n")
             
-            if str(m.metric_name) == "classification_report" and hasattr(m, 'stats') and hasattr(m.stats, 'to_dict'):
-                stats_dict = m.stats.to_dict()
+            if str(m.metric_name) == "classification_report" and isinstance(stats_dict, dict):
                 text = stats_dict.get("text")
                 if text:
                     lines.append("```\n")
@@ -459,7 +458,7 @@ class ReportGenerator(ReportConfig):
     def _write_json(self, report_dir: Path, metrics: List[MetricOutputModel], timing_stats: Dict[str, Any]) -> None:
         data = {
             "metrics": [
-                {"metric_name": m.metric_name, "score": float(m.score) if isinstance(m.score,(int,float)) else m.score, "stats": (m.stats.to_dict() if hasattr(m.stats, 'to_dict') else m.stats)} for m in (metrics or [])
+                {"metric_name": m.metric_name, "score": float(m.score) if isinstance(m.score,(int,float)) else m.score, "stats": (asdict(m.stats) if is_dataclass(m.stats) else m.stats)} for m in (metrics or [])
             ],
             "timing": timing_stats,
         }

@@ -37,7 +37,7 @@ def suppress_print_from(prefixes: list[str]):
             st = inspect.stack()
             for rec in st[1:]:
                 module = inspect.getmodule(rec[0])
-                name = getattr(module, "__name__", None)
+                name = module.__name__ if module is not None else None
                 if name and any(name.startswith(p) for p in prefixes):
                     return
                 if name:
@@ -57,7 +57,7 @@ def _load_obj(dotted: str) -> Any:
     if not module_path:
         raise ValueError(f"Bad dotted path: {dotted!r}")
     mod = importlib.import_module(module_path)
-    return getattr(mod, obj_name)
+    return vars(mod)[obj_name]
 
 
 def _read_config_file(path: Path) -> Dict[str, Any]:
@@ -104,6 +104,10 @@ def _resolve_metrics(metric_specs: Optional[List[str]]) -> List[Any]:
     return out
 
 
+def _odict(obj: Any) -> Dict[str, Any]:
+    return obj.__dict__ if "__dict__" in dir(obj) else {}
+
+
 class EvalCLI:
     def __init__(self, config_path: Path) -> None:
         self.config_path = Path(config_path)
@@ -119,7 +123,8 @@ class EvalCLI:
         by_name: Dict[str, MetricOutputModel] = {m.metric_name: m for m in metrics}
         if "mAP" in by_name:
             m = by_name["mAP"]
-            stats: Dict[str, Any] = m.stats.to_dict() if hasattr(m.stats, 'to_dict') else (m.stats or {})
+            stats_obj = m.stats
+            stats: Dict[str, Any] = stats_obj if isinstance(stats_obj, dict) else {}
             t = Table(title="Mean Average Precision (mAP)")
             t.add_column("Metric")
             t.add_column("Value", justify="right")
@@ -136,10 +141,7 @@ class EvalCLI:
                 tbl.add_column("Class")
                 tbl.add_column("AP", justify="right")
                 for c, a in zip(cats, aps):
-                    try:
-                        val = float(a)
-                    except Exception:
-                        val = 0.0
+                    val = float(a) if isinstance(a, (int, float)) or (isinstance(a, str) and a.replace(".", "", 1).isdigit()) else 0.0
                     tbl.add_row(str(c), f"{val:.4f}")
                 console.print(tbl)
         if "mIoU" in by_name:
@@ -154,25 +156,23 @@ class EvalCLI:
             preds_path = out_dir / "predictions.jsonl"
             with preds_path.open("w", encoding="utf-8") as f:
                 for p in preds:
+                    pd = _odict(p)
                     rec = {
-                        "file_name": getattr(p, "file_name", None),
-                        "label": getattr(p, "label", None),
-                        "bbox": getattr(p, "bbox", None),
-                        "score": getattr(p, "score", getattr(p, "confidence", None)),
-                        "width": getattr(p, "width", None),
-                        "height": getattr(p, "height", None),
+                        "file_name": pd.get("file_name"),
+                        "label": pd.get("label"),
+                        "bbox": pd.get("bbox"),
+                        "score": (pd["score"] if "score" in pd else pd.get("confidence")),
+                        "width": pd.get("width"),
+                        "height": pd.get("height"),
                     }
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         if self.save_metrics:
             metrics_path = out_dir / "metrics.json"
-            serializable = [
-                {
-                    "metric_name": m.metric_name,
-                    "score": m.score,
-                    "stats": m.stats.to_dict() if hasattr(m.stats, 'to_dict') else m.stats,
-                }
-                for m in metrics
-            ]
+            serializable = []
+            for m in metrics:
+                stats_obj = m.stats
+                stats = stats_obj if isinstance(stats_obj, dict) else stats_obj
+                serializable.append({"metric_name": m.metric_name, "score": m.score, "stats": stats})
             metrics_path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _build_from_config(self) -> tuple[Any, Any, List[Any]]:
@@ -211,6 +211,7 @@ class EvalCLI:
                 dump_path=str(out_dir / "profiler.prof"),
                 flamegraph_path=str(out_dir / "flamegraph.svg"),
             ):
+                image_root = (Path(dataset.root) if "root" in dir(dataset) and dataset.root is not None else None)
                 preds, metrics = Pipeline(
                     dataset=dataset,
                     detector=detector,
@@ -219,7 +220,7 @@ class EvalCLI:
                 ).run(
                     positive_dir=self.positive_dir,
                     negative_dir=self.negative_dir,
-                    image_root=Path(dataset.root) if hasattr(dataset, "root") else None,
+                    image_root=image_root,
                     dump_report=True,
                     report_output_dir=out_dir,
                 )

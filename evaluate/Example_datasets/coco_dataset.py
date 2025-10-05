@@ -6,7 +6,10 @@ from evaluate.dataset import Dataset
 from evaluate.dataset_model import DatasetModel
 from evaluate.dataset_meta import DatasetMeta
 from evaluate.coco_annotation import CocoAnnotation
+from evaluate.logging import get_logger
 import json
+
+logger = get_logger(__name__)
         
 class CocoDataset(Dataset):
     @classmethod
@@ -151,7 +154,8 @@ class CocoDataset(Dataset):
                         bbox=bbox,
                     )
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Не удалось обработать аннотацию: {e}. Аннотация: {ann}")
                 continue
 
         return anns

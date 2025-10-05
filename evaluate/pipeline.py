@@ -12,7 +12,10 @@ from evaluate.coco_annotation import CocoAnnotation
 from evaluate.tracer import Tracer
 from evaluate.report_generator import ReportGenerator
 from evaluate.context import Context
+from evaluate.logging import get_logger
 import numpy as np
+
+logger = get_logger(__name__)
 
 class Pipeline:
     def __init__(self,dataset: Union[Dataset, DatasetModel],detector: DetectorBase,metrics: Optional[List[Metric]] = None, reporter: Optional[Tracer] = None,) -> None:
@@ -86,7 +89,7 @@ class Pipeline:
                 result = metric.compute(self.dataset_model, preds, average=average)
                 results.append(result)
             except Exception as e:
-                print(f"Ошибка при вычислении метрики {metric.name}: {e}")
+                logger.error(f"Ошибка при вычислении метрики {metric.name}: {e}")
         self._last_metrics = results
         return results
 
@@ -98,5 +101,5 @@ class Pipeline:
             reporter = ReportGenerator()
             reporter.generate_report(self._contexts, metrics, dump_report=dump_report, output_dir=report_output_dir)
         except Exception as e:
-            print(f"Report generation failed: {e}")
+            logger.error(f"Report generation failed: {e}")
         return preds, metrics

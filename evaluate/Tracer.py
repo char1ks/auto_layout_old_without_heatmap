@@ -12,6 +12,9 @@ import subprocess
 import tempfile
 import os
 from evaluate.context import Context
+from evaluate.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -91,7 +94,7 @@ class Tracer:
         payload = self.serialize(ctx)
         payload_dict = asdict(payload)
         if self.to_stdout:
-            print(json.dumps(payload_dict, ensure_ascii=False, default=str), file=sys.stdout)
+            logger.info(json.dumps(payload_dict, ensure_ascii=False, default=str))
         for sink in self.sinks:
             sink(payload_dict)
         if self.trace_file:

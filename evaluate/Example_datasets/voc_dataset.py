@@ -10,8 +10,8 @@ from evaluate.dataset import Dataset
 from evaluate.dataset_model import DatasetModel
 from evaluate.dataset_meta import DatasetMeta
 from evaluate.coco_annotation import CocoAnnotation
-_project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(_project_root))
+from evaluate.logging import get_logger
+logger = get_logger(__name__)
 
 class VocDataset(Dataset):
     @classmethod
@@ -53,7 +53,8 @@ class VocDataset(Dataset):
                 file_anns, cats = cls._parse_single_voc_xml(xml_path, chosen_img_dir)
                 anns.extend(file_anns)
                 categories.extend(cats)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Не удалось обработать XML файл {xml_path}: {e}")
                 continue
 
         meta = DatasetMeta(

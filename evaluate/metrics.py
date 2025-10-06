@@ -47,6 +47,8 @@ class MeanAveragePrecision(Metric):
 
     def __init__(self, iou_thresholds: Optional[List[float]] = None) -> None:
         self.iou_thresholds = iou_thresholds or np.arange(0.5, 0.95 + 1e-9, 0.05).tolist()
+
+    # _group нормализует bbox в xyxy, группирует GT/предсказания по метке и файлу,сортирует предсказания по score. Подготавливает данные для матчинга и расчёта AP.
     def _group(self, ground_truth: DatasetModel, predictions: List[CocoAnnotation]):
         ground_truth_by: dict[str, dict[str, List[List[float]]]] = {}
         predictions_by: dict[str, List[Tuple[str, List[float], float]]] = {}
@@ -86,6 +88,8 @@ class MeanAveragePrecision(Metric):
             predictions_by[label_key].sort(key=lambda t: t[2], reverse=True)
 
         return ground_truth_by, predictions_by, sorted(label_names)
+        
+    # формирует y_true/y_score для построения PR-кривых и расчёта AP.
     def _match(self,predictions_for_label: List[Tuple[str, List[float], float]],ground_truth_by_file: dict[str, List[List[float]]],iou_threshold: float,):
         used_indices: Dict[str, set[int]] = {fname: set() for fname in ground_truth_by_file}
         y_true: List[int] = []

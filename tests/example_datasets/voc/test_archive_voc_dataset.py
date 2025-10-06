@@ -1,12 +1,12 @@
 from pathlib import Path
 import numpy as np
 import pytest
-from evaluate.example_datasets.voc_dataset import voc_dataset
+from evaluate.example_datasets.voc_dataset import VocDataset
 
 STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
 
 def test_from_path_meta_and_annotations(tmp_path: Path):
-    ds = voc_dataset.from_path(path=STATIC_DIR, ann_dir=STATIC_DIR, img_dir=STATIC_DIR)
+    ds = VocDataset.from_path(path=STATIC_DIR, ann_dir=STATIC_DIR, img_dir=STATIC_DIR)
     model = ds.data
     assert model.meta.dataset_type == "voc_detection"
     assert model.meta.total_images is not None and model.meta.total_images >= 1
@@ -26,7 +26,7 @@ def test_from_path_meta_and_annotations(tmp_path: Path):
 
 def test__parse_single_voc_xml_swapped():
     xml_path = STATIC_DIR / "fruit1.xml"
-    anns, cats = voc_dataset._parse_single_voc_xml(xml_path, img_dir=STATIC_DIR)
+    anns, cats = VocDataset._parse_single_voc_xml(xml_path, img_dir=STATIC_DIR)
     assert len(anns) == 3
     ann = next(a for a in anns if str(a.label) == "pineapple")
     assert ann.file_name == "fruit1.png"
@@ -41,6 +41,6 @@ def test__parse_single_voc_xml_swapped():
 
 def test__parse_single_voc_xml_swapped_dims():
     xml_path = STATIC_DIR / "fruit1.xml"
-    anns, cats = voc_dataset._parse_single_voc_xml(xml_path, img_dir=STATIC_DIR)
+    anns, cats = VocDataset._parse_single_voc_xml(xml_path, img_dir=STATIC_DIR)
     assert len(anns) == 3
     assert {"pineapple", "snake fruit", "dragon fruit"}.issubset(set(cats))

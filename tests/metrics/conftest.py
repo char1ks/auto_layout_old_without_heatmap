@@ -6,7 +6,7 @@ import pytest
 from evaluate.coco_annotation import CocoAnnotation
 from evaluate.dataset_model import DatasetModel
 from evaluate.dataset_meta import DatasetMeta
-from evaluate.example_datasets.voc_dataset import voc_dataset
+from evaluate.example_datasets.voc_dataset import VocDataset
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 RESULTS_DIR = STATIC_DIR / "results_fruit1"
@@ -15,7 +15,7 @@ ANN_JSON = RESULTS_DIR / "annotations.json"
 
 
 def _voc_gt_dataset() -> DatasetModel:
-    anns, _ = voc_dataset._parse_single_voc_xml(FRUIT_XML, STATIC_DIR)
+    anns, _ = VocDataset._parse_single_voc_xml(FRUIT_XML, STATIC_DIR)
     return DatasetModel(data_points=anns, meta=DatasetMeta(name="fruit1_gt"))
 
 

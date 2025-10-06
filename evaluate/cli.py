@@ -13,7 +13,7 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-
+import yaml 
 _project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(_project_root))
 
@@ -69,24 +69,20 @@ def _load_obj(dotted: str) -> Any:
 
 
 def _read_config_file(path: Path) -> Dict[str, Any]:
-    text = Path(path).read_text(encoding="utf-8")
-    suffix = Path(path).suffix.lower()
-    if suffix in {".yml", ".yaml"}:
-        try:
-            import yaml  # type: ignore
-        except Exception as e:
-            raise RuntimeError("PyYAML is required: pip install pyyaml") from e
-        data = yaml.safe_load(text) or {}
-        if not isinstance(data, dict):
-            raise ValueError("YAML root must be a mapping")
-        return data
-    elif suffix == ".json":
-        data = json.loads(text) or {}
-        if not isinstance(data, dict):
-            raise ValueError("JSON root must be an object")
-        return data
-    else:
-        raise ValueError(f"Unsupported config extension {suffix!r}")
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+        suffix = Path(path).suffix.lower()
+        
+        if suffix in {".yml", ".yaml"}:
+            data = yaml.safe_load(text)
+            return data if isinstance(data, dict) else {}
+        elif suffix == ".json":
+            data = json.loads(text)
+            return data if isinstance(data, dict) else {}
+        else:
+            return {}
+    except Exception:
+        return {}
 
 
 def _resolve_metrics(metric_specs: Optional[List[str]]) -> List[Any]:
@@ -180,6 +176,7 @@ class EvalCLI:
             serializable = []
             for m in metrics:
                 stats_obj = m.stats
+                stats_ser: Union[Dict[str, Any], str]
                 if isinstance(stats_obj, dict):
                     stats_ser = stats_obj
                 elif is_dataclass(stats_obj):

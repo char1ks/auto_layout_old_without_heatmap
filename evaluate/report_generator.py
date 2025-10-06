@@ -173,9 +173,9 @@ class ReportGenerator(ReportConfig):
             st_raw = asdict(map_metric.stats) if is_dataclass(map_metric.stats) else map_metric.stats
             data_dict = st_raw.get("data") if isinstance(st_raw, dict) and "data" in st_raw else st_raw
             st = data_dict 
-            categories = st.get("categories") or []
-            gt_counts = st.get("gt_counts") or []
-            pred_counts = st.get("pred_counts") or []
+            categories = st.get("categories") or [] if st is not None else []
+            gt_counts = st.get("gt_counts") or [] if st is not None else []
+            pred_counts = st.get("pred_counts") or [] if st is not None else []
 
             if self.include_class_distributions and categories:
                 for title, counts, color, key, fname in [
@@ -194,9 +194,9 @@ class ReportGenerator(ReportConfig):
                     plt.tick_params(axis="y", labelsize=self.tick_font_size)
                     save(fname, key)
 
-            ap_macro = st.get("ap_iou_macro") or []
-            ap_micro = st.get("ap_iou_micro") or []
-            ious = st.get("iou_thresholds") or []
+            ap_macro = st.get("ap_iou_macro") or [] if st is not None else []
+            ap_micro = st.get("ap_iou_micro") or [] if st is not None else []
+            ious = st.get("iou_thresholds") or [] if st is not None else []
             if self.include_ap_graphs and ious:
                 plt.figure(figsize=(self.figure_width, self.figure_height))
                 plotted = False
@@ -219,8 +219,8 @@ class ReportGenerator(ReportConfig):
 
             if self.include_ap_graphs:
                 for key, tag in [("0.50", "050"), ("0.75", "075")]:
-                    macro_dict = st.get("pr_macro", {}) or {}
-                    micro_dict = st.get("pr_micro", {}) or {}
+                    macro_dict = st.get("pr_macro", {}) or {} if st is not None else {}
+                    micro_dict = st.get("pr_micro", {}) or {} if st is not None else {}
                     prM = macro_dict.get(key) or macro_dict.get(f"{float(key):.2f}")
                     prm = micro_dict.get(key) or micro_dict.get(f"{float(key):.2f}")
                     for pr, color, label, fname_key, marker in [
@@ -236,10 +236,10 @@ class ReportGenerator(ReportConfig):
                             plt.grid(True, alpha=0.3)
                             plt.xlim(0, 1)
                             plt.ylim(0, 1)
-                            if key == "0.50" and st.get("mAP@0.5"):
+                            if key == "0.50" and st is not None and st.get("mAP@0.5"):
                                 ap_score = st["mAP@0.5"]
                                 plt.text(0.6, 0.2, f'AP@0.5: {ap_score:.3f}', fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-                            if key == "0.75" and st.get("mAP@0.75"):
+                            if key == "0.75" and st is not None and st.get("mAP@0.75"):
                                 ap_score = st["mAP@0.75"]
                                 plt.text(0.6, 0.2, f'AP@0.75: {ap_score:.3f}', fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
                             plt.tick_params(labelsize=self.tick_font_size)
@@ -247,8 +247,8 @@ class ReportGenerator(ReportConfig):
             if self.include_ap_graphs:
                 macro_pts: List[Tuple[float, float, str]] = [] 
                 micro_pts: List[Tuple[float, float, str]] = []
-                prM_all = st.get("pr_macro", {}) or {}
-                prm_all = st.get("pr_micro", {}) or {}
+                prM_all = st.get("pr_macro", {}) or {} if st is not None else {}
+                prm_all = st.get("pr_micro", {}) or {} if st is not None else {}
                 for thr in ious:
                     key = f"{float(thr):.2f}"
                     for pr_dict, store in [(prM_all, macro_pts), (prm_all, micro_pts)]:
@@ -289,8 +289,8 @@ class ReportGenerator(ReportConfig):
                     plt.grid(True, alpha=0.3)
                     plt.tick_params(labelsize=self.tick_font_size)
                     save("ap_pr_points_micro.svg", "ap_pr_points_micro")
-            per_ap = st.get("per_class_ap_avg") or st.get("per_class_ap") or []
-            cats = st.get("categories") or []
+            per_ap = (st.get("per_class_ap_avg") or st.get("per_class_ap") or []) if st is not None else []
+            cats = st.get("categories") or [] if st is not None else []
             if self.include_ap_graphs and cats and per_ap:
                 pairs = [(cats[i], float(per_ap[i])) for i in range(min(len(cats), len(per_ap)))]
                 pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)

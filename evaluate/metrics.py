@@ -1,6 +1,7 @@
 from __future__ import annotations
 import abc
 import numpy as np
+from collections import Counter
 from dataclasses import dataclass, asdict, field
 from typing import Dict, Any, List, Optional,Tuple
 from sklearn.metrics import classification_report, precision_recall_curve, average_precision_score, jaccard_score, f1_score
@@ -13,14 +14,17 @@ class Meta:
     doc: str = ""
     formula: Optional[str] = None
     def to_dict(self)->Dict[str,Any]:
-        d=asdict(self); return {k:v for k,v in d.items() if v not in (None,"",[])}
+        d=asdict(self)
+        return {k:v for k,v in d.items() if v not in (None,"",[])}
 
 @dataclass
 class Stats:
     data: Dict[str, Any]=field(default_factory=dict)
     meta: Meta=field(default_factory=Meta)
     def to_dict(self)->Dict[str,Any]:
-        out=dict(self.data); out.update(self.meta.to_dict()); return out
+        out=dict(self.data)
+        out.update(self.meta.to_dict())
+        return out
 
 @dataclass
 class MetricOutputModel:
@@ -52,7 +56,8 @@ class MeanAveragePrecision(Metric):
             bbox = ([float(x) if np.isfinite(float(x)) else 0.0 for x in annotation.bbox] if isinstance(annotation.bbox,(list,tuple)) and len(annotation.bbox)==4 else None)
             if annotation.file_name is None or bbox is None: 
                 continue
-            file_key = str(annotation.file_name); label_key = str(annotation.label)
+            file_key = str(annotation.file_name)
+            label_key = str(annotation.label)
             label_names.add(label_key)
 
             ground_truth_by.setdefault(label_key, {}).setdefault(file_key, []).append([
@@ -63,7 +68,8 @@ class MeanAveragePrecision(Metric):
             bbox = ([float(x) if np.isfinite(float(x)) else 0.0 for x in annotation.bbox] if isinstance(annotation.bbox,(list,tuple)) and len(annotation.bbox)==4 else None)
             if annotation.file_name is None or bbox is None: 
                 continue
-            file_key = str(annotation.file_name); label_key = str(annotation.label)
+            file_key = str(annotation.file_name)
+            label_key = str(annotation.label)
             label_names.add(label_key)
             score = annotation.score
             if score is None:
@@ -81,14 +87,16 @@ class MeanAveragePrecision(Metric):
 
         return ground_truth_by, predictions_by, sorted(label_names)
     def _match(self,predictions_for_label: List[Tuple[str, List[float], float]],ground_truth_by_file: dict[str, List[List[float]]],iou_threshold: float,):
-        used_indices = {fname: set() for fname in ground_truth_by_file}
+        used_indices: Dict[str, set[int]] = {fname: set() for fname in ground_truth_by_file}
         y_true: List[int] = []
         y_score: List[float] = []
 
         for file_name, pred_box, score in predictions_for_label:
             gt_boxes = ground_truth_by_file.get(file_name, [])
             if not gt_boxes:
-                y_true.append(0); y_score.append(float(score)); continue
+                y_true.append(0)
+                y_score.append(float(score))
+                continue
 
             candidates = [(i, _iou(pred_box, gt)) for i, gt in enumerate(gt_boxes) if i not in used_indices[file_name]]
             best_index, best_iou = max(candidates, key=lambda t: t[1], default=(-1, 0.0))
@@ -127,15 +135,15 @@ class MeanAveragePrecision(Metric):
         
         return float(ap_value), [float(x) for x in precision], [float(x) for x in recall]
 
-    def compute(self, ground_truth: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
-        gt_by, pr_by, label_names = self._group(ground_truth, prediction)
+    def compute(self, gt: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
+        gt_by, pr_by, label_names = self._group(gt, prediction)
         thresholds = [float(t) for t in self.iou_thresholds]
         num_labels, num_thresholds = len(label_names), len(thresholds)
 
         # AP/PR хранилища
         ap_per_label_per_thr = {lab: [0.0] * num_thresholds for lab in label_names}
-        pr_curves_per_thr = {thr: {} for thr in thresholds}
-        y_store = {thr: {} for thr in thresholds}
+        pr_curves_per_thr: Dict[float, Dict[str, Dict[str, List[float]]]] = {thr: {} for thr in thresholds}
+        y_store: Dict[float, Dict[str, Tuple[List[int], List[float]]]] = {thr: {} for thr in thresholds}
 
         # посчитаем per-label для каждого порога
         for threshold_index, thr in enumerate(thresholds):
@@ -182,7 +190,10 @@ class MeanAveragePrecision(Metric):
 
         # агрегаты
         map_overall = float(np.mean(ap_macro)) if ap_macro else 0.0
-        pick = lambda t: float(ap_macro[int(np.argmin([abs(x - t) for x in thresholds]))]) if ap_macro else 0.0
+        
+        def pick(t):
+            return float(ap_macro[int(np.argmin([abs(x - t) for x in thresholds]))]) if ap_macro else 0.0
+        
         map_50, map_75 = pick(0.5), pick(0.75)
         idx_05 = int(np.argmin([abs(x - 0.5) for x in thresholds])) if num_thresholds else 0
         per_class_ap_05 = [float(ap_per_label_per_thr[lab][idx_05]) for lab in label_names] if num_labels and num_thresholds else []
@@ -270,7 +281,6 @@ class DiceCoefficient(Metric):
     name="dice"
     def compute(self,gt:DatasetModel,prediction:List[CocoAnnotation],**kwargs)->MetricOutputModel:
 
-
         miou = MeanIntersectionOverUnion()
         gt_pts, pr_pts, files, labels, h, w = miou._space(gt, prediction)
 
@@ -304,19 +314,15 @@ class ClassificationReportMetric(Metric):
                 if a.file_name is not None and str(a.file_name) == fname and a.label is not None
             ]
 
-        # метка по списку значений
-        def majority(v: List[str]) -> str:
-            if not v:
-                return "none"
-            u, c = np.unique([str(x) for x in v], return_counts=True)
-            return str(u[int(np.argmax(c))])
-
         # собираем пары истинной/предсказанной меток на уровне файла
         y_true: List[str] = []
         y_pred: List[str] = []
         for fname in files:
-            g = majority(labels_for(gt_pts, fname))
-            p = majority(labels_for(pr_pts, fname))
+            gt_labels = labels_for(gt_pts, fname)
+            pr_labels = labels_for(pr_pts, fname)
+
+            g = Counter(gt_labels).most_common(1)[0][0] if gt_labels else "none"
+            p = Counter(pr_labels).most_common(1)[0][0] if pr_labels else "none"
             if g != "none" and p != "none":
                 y_true.append(g)
                 y_pred.append(p)

@@ -95,6 +95,10 @@ class Tracer:
     def emit(self, ctx: Context) -> TraceRecord:
         payload = self.serialize(ctx)
         payload_dictionary = asdict(payload)
+        if 'extra' in payload_dictionary and isinstance(payload_dictionary['extra'], dict):
+            payload_dictionary['extra'] = {
+                k: v for k, v in payload_dictionary['extra'].items() if k not in {"original_image"}
+            }
         if self.to_stdout:
             logger.info(json.dumps(payload_dictionary, ensure_ascii=False, default=str))
         for sink in self.sinks:

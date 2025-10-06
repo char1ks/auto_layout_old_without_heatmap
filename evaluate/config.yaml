@@ -15,3 +15,4 @@ metrics:
 run:
   positive_dir: ../examples/positive
   negative_dir: null
+  enable_profile: false

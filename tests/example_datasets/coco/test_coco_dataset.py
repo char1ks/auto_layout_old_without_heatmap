@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import numpy as np
-from evaluate.Example_datasets.coco_dataset import CocoDataset
+from evaluate.example_datasets.coco_dataset import CocoDataset
 
 
 def build_coco_like(minimal: bool = False) -> dict:

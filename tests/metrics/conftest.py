@@ -6,7 +6,7 @@ import pytest
 from evaluate.coco_annotation import CocoAnnotation
 from evaluate.dataset_model import DatasetModel
 from evaluate.dataset_meta import DatasetMeta
-from evaluate.Example_datasets.voc_dataset import voc_dataset
+from evaluate.example_datasets.voc_dataset import voc_dataset
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 RESULTS_DIR = STATIC_DIR / "results_fruit1"

@@ -1,7 +1,7 @@
 from pathlib import Path
 import numpy as np
 import pytest
-from evaluate.Example_datasets.voc_dataset import voc_dataset
+from evaluate.example_datasets.voc_dataset import voc_dataset
 
 STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
 

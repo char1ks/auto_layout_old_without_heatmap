@@ -79,7 +79,7 @@ class DinoV3EncoderGaz:
                     reshape=True, 
                     norm=True,
                 )[-1] # NOTE: (@gas) get a tuple of (patches, cls)
-        return DinoFeaturesPT(cls=feats[1].detach(), patches=feats[0].detach())
+        return DinoFeaturesPT(cls=feats[1].detach().float(), patches=feats[0].detach().float())
 
     def encode_mask(
         self, 
@@ -107,7 +107,7 @@ class DinoV3EncoderGaz:
             patches_selected.append(selected)
             patches_mean.append(mean)
         patches_mean = torch.stack(patches_mean)
-        return patches_mean.detach()
+        return patches_mean.detach().float()
 
 
 if __name__=="__main__":

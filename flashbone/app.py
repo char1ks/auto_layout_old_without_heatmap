@@ -1,3 +1,4 @@
+# NOTE: (@gas) this code if __almost fully__ ai-generated (except the detector init)
 import base64
 import io
 import json
@@ -15,13 +16,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.datastructures import UploadFile as StarletteUploadFile, FormData
 from PIL import Image
-import numpy as np
 from ultralytics import FastSAM
 
 from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
 from flashbone.core.segmentation import SegmenterConfig, SamSegmenter
 from flashbone.core.heatmap_generation import HeatmapGenerator
-from flashbone.core.classification import ClassifierKNN
+from flashbone.core.classification.mask_classifier_knn import MaskClassifierKNN
 from flashbone.core.detection.searchdet_detector import SearchDetDetector
 from flashbone.core.detection.base import DetectorBase
 from flashbone.core.image_resizing import ImageResizer
@@ -109,7 +109,7 @@ def init_detector() -> DetectorBase:
             mask_threshold=0.5,
         )
     )
-    classifier = ClassifierKNN(encoder=encoder, d=1024)
+    classifier = MaskClassifierKNN(encoder=encoder, d=1024)
     image_resizer = ImageResizer(max_side=1024)
     detector = SearchDetDetector(
         segmenter=sam, 

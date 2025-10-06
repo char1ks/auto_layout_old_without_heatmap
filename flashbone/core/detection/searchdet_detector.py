@@ -3,7 +3,9 @@ import numpy as np
 from PIL import Image
 
 from flashbone.core.segmentation import SamSegmenter
-from flashbone.core.classification import ClassifierKNN, ClassData
+from flashbone.core.classification.base import ClassData
+from flashbone.core.classification.mask_classifier_knn import MaskClassifierKNN
+from flashbone.core.classification.base import ClassifierPredictRequest
 from flashbone.core.heatmap_generation import HeatmapGenerator
 from flashbone.core.image_resizing import ImageResizer
 from flashbone.core.detection.base import DetectorBase, DetectionResult
@@ -13,7 +15,7 @@ class SearchDetDetector(DetectorBase):
     def __init__(
         self, 
         segmenter: SamSegmenter, 
-        classifier: ClassifierKNN, 
+        classifier: MaskClassifierKNN, 
         heatmap_generator: HeatmapGenerator,
         image_resizer: ImageResizer,
     ) -> None:
@@ -66,7 +68,7 @@ class SearchDetDetector(DetectorBase):
                 ClassData(
                     class_id=int(cl), 
                     images=imgs, 
-                    negative_examples=neg_imgs,
+                    negative_images=neg_imgs,
                 ),
             ])
             positives.extend(imgs)
@@ -93,9 +95,11 @@ class SearchDetDetector(DetectorBase):
         for mask in masks:
             bbox = self._bbox_from_mask(mask)
             cls_preds = self._classifier.predict(
-                images=[resized_img_pil],
-                masks=[Image.fromarray(mask)],
-                threshold=class_threshold,
+                ClassifierPredictRequest(
+                    images=[resized_img_pil],
+                    masks=[Image.fromarray(mask)],
+                    threshold=class_threshold,
+                )
             )
             if len(cls_preds):
                 # NOTE: (@gas) [0] bc a batch of 1 used to process a single input image
@@ -124,7 +128,7 @@ if __name__=="__main__":
     from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
     from flashbone.core.segmentation import SegmenterConfig
     from flashbone.core.heatmap_generation import HeatmapGenerator, crop_by_mask
-    from flashbone.core.classification import ClassifierKNN
+    from flashbone.core.classification.mask_classifier_knn import MaskClassifierKNN
     from flashbone.core.image_resizing import ImageResizer
 
     img_pil_ex = Image.open(".local/example.jpg").convert("RGB")
@@ -165,7 +169,7 @@ if __name__=="__main__":
             mask_threshold=0.5,
         )
     )
-    classifier = ClassifierKNN(encoder=encoder, d=1024)
+    classifier = MaskClassifierKNN(encoder=encoder, d=1024)
     image_resizer = ImageResizer(max_side=1024)
     detector = SearchDetDetector(
         segmenter=sam, 

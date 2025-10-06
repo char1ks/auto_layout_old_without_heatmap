@@ -24,14 +24,14 @@ class DinoV3VisionTextEncoderGaz:
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             with torch.no_grad():
                 image_features, patch_tokens, backbone_patch_tokens = self.model.encode_image_with_patch_tokens(image_tensor)
-        return DinoFeaturesPT(cls=image_features.detach(), patches=patch_tokens.detach())
+        return DinoFeaturesPT(cls=image_features.detach().float(), patches=patch_tokens.detach().float())
  
     def encode_texts(self, texts: list[str] = []) -> torch.Tensor:
         tokenized_texts_tensor = self.tokenizer.tokenize(texts).cuda() 
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             with torch.no_grad():
                 text_features = self.model.encode_text(tokenized_texts_tensor)
-        return text_features
+        return text_features.detach().float()
 
 
 if __name__=="__main__":

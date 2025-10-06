@@ -1,3 +1,4 @@
+# NOTE: (@gas) this code if FULLY ai-generated
 import gradio as gr
 import requests
 import io

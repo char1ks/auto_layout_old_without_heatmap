@@ -1,0 +1,71 @@
+import abc
+import cv2
+import numpy as np
+from pathlib import Path
+from typing import Dict, List, Optional, Union, Tuple, Any, Callable
+from PIL import Image
+from evaluate.context import Context
+from evaluate.coco_annotation import CocoAnnotation
+
+class DetectorBase(abc.ABC):
+    def __init__(self, name: Optional[str] = None):
+        self.detector_name = name or self.__class__.__name__
+    @classmethod
+    def read_input_img(cls, image_path: str | Path) -> np.ndarray:
+        img_bgr = cv2.imread(str(image_path))
+        if img_bgr is None:
+            raise ValueError(f"Could not read image from {image_path}")
+        image_np = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        return image_np
+
+    @abc.abstractmethod
+    def read_reference_images(
+        self,
+        positive_dir: Union[str, Path],
+        negative_dir: Optional[Union[str, Path]] = None,
+    ) -> Tuple[Dict[str, List[Image.Image]], List[Image.Image]]:
+        pass
+
+    @abc.abstractmethod
+    def set_references(
+        self,
+        pos_by_class: Dict[str, List[Image.Image]],
+        neg_imgs: List[Image.Image],
+    ) -> None:
+        pass
+
+    @abc.abstractmethod
+    def find_present_elements(self, image_np: np.ndarray, context: Context, *args, **kwargs) -> Dict[str, Any]:
+        pass
+    
+    def detect(self,image_np: np.ndarray, callback: Optional[Callable[[Context], None]] = None,*args, **kwargs) -> List[CocoAnnotation]:
+        context = Context(
+            detector_name=self.detector_name,
+            image_shape=image_np.shape if image_np is not None else None
+        )
+        context.extra['original_image'] = image_np
+        file_name = kwargs.get('file_name')
+        if file_name is not None:
+            context.extra['file_name'] = file_name
+        try:
+            context.extra['detector_doc'] = (self.__class__.__doc__ or '').strip()
+            context.extra['detector_cls'] = self.__class__.__name__
+            context.extra['detector_module'] = self.__class__.__module__
+        except Exception:
+            pass
+        try:
+            results = self.find_present_elements(image_np, context, *args, **kwargs)
+            annotations = self._convert_to_annotations(results, context)
+            context.finish(success=True)
+            context.metrics['num_detections'] = len(annotations)
+            return annotations
+        except Exception as e:
+            context.finish(success=False, error=str(e))
+            raise
+        finally:
+            if callback:
+                callback(context)
+    
+    @abc.abstractmethod
+    def _convert_to_annotations(self, results: Dict[str, Any], context: Context) -> List[CocoAnnotation]:
+        pass

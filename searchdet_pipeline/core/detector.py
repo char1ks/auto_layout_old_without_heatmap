@@ -7,7 +7,8 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from typing import Dict, List, Optional, Union, Any, Tuple
-sys.path.append('./searchdet-main')
+SEARCHDET_MAIN_PATH = Path(__file__).parent.parent.parent / "searchdet-main"
+sys.path.append(str(SEARCHDET_MAIN_PATH))
 from mask_withsearch import initialize_sam as init_searchdet
 from .mask_generation import MaskGenerator
 from .filtering import MaskFilter  
@@ -26,12 +27,15 @@ from ..utils.validation import ImageValidator, DirectoryValidator, ValidationErr
 import torch
 from .models import MaskBackend, BackboneType
 
-from searchdet_pipeline.detector_base import DetectorBase
+from evaluate.detector_base import DetectorBase
+from evaluate.context import Context
+from evaluate.coco_annotation import CocoAnnotation
 from searchdet_pipeline.core.binning_processor import bin_filter_heatmap
 
 
 class SearchDetDetector(DetectorBase):
     def __init__(self, config: Optional[DetectorConfig] = None, **kwargs: Any) -> None:
+        super().__init__(name=kwargs.get('name', 'SearchDetDetector'))
         if config is None:
             self.config = DetectorConfig.from_dict(kwargs)
         else:
@@ -66,9 +70,9 @@ class SearchDetDetector(DetectorBase):
         print(f"🔧 Выбран SAM энкодер: {self.sam_encoder}")
 
         self.searchdet_resnet, self.searchdet_layer, self.searchdet_transform, self.searchdet_sam = init_searchdet()
-        if not self .backbone .startswith ('dinov2'):
-            import torchvision .transforms as transforms
-            feat_short_side_env =os .getenv ('SEARCHDET_FEAT_SHORT_SIDE','384')
+        if not self.backbone.startswith('dinov2'):
+            import torchvision.transforms as transforms
+            feat_short_side_env =os.getenv('SEARCHDET_FEAT_SHORT_SIDE','384')
             if feat_short_side_env =='None'or feat_short_side_env =='none'or feat_short_side_env is None :
                 feat_short_side =384
             else :
@@ -142,7 +146,6 @@ class SearchDetDetector(DetectorBase):
 
         self.class_pos, self.q_neg = None, None
         self.neg_imgs, self.all_positive_images = None, None
-
         # NOTE: (@gas) only for cli usage
         self.result_saver = ResultSaver(self.config.overlay_alpha)
 
@@ -153,7 +156,7 @@ class SearchDetDetector(DetectorBase):
         pos_by_class = self._load_positive_by_class(positive_dir)
         if len(pos_by_class) == 0:
             print("   ❌ Нет положительных примеров — прекращаем.")
-            return {"found_elements": [], "masks": []}
+            return {}, []
         total_pos = sum(len(v) for v in pos_by_class.values())
         neg_imgs = self._load_example_images(negative_dir) if negative_dir else []
         timing_info['examples_loading'] = time.time() - t_examples
@@ -175,10 +178,14 @@ class SearchDetDetector(DetectorBase):
         self.class_pos, self.q_neg = self.embedding_extractor.build_queries_multiclass(pos_by_class, neg_imgs, pos_as_query_masks=False)
         timing_info['embedding_extraction'] = time.time() - t_embeddings 
 
-    def find_present_elements(self, image_np: np.ndarray) -> Dict[str, Any]:
+    def find_present_elements(self, image_np: np.ndarray, context: Optional[Context] = None, *args, **kwargs) -> Dict[str, Any]:
         if self.config.use_heatmap_sam_hybrid:
-            return self._find_present_elements_with_fastsam_integration(image_np)
-        return self._find_present_elements(image_np)
+            results = self._find_present_elements_with_fastsam_integration(image_np)
+        else:
+            results = self._find_present_elements(image_np)
+        if context is not None:
+            return results
+        return results
          
     def _find_present_elements(self, image_np: np.ndarray) -> Dict[str, Any]:
         print("🔄 ДЕТАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫПОЛНЕНИЯ МОДУЛЬНОГО PIPELINE:")
@@ -610,17 +617,6 @@ class SearchDetDetector(DetectorBase):
         return [x_min, y_min, width, height]
 
     def _load_example_images(self, dir_path: Optional[Union[str, Path]]) -> List[Image.Image]:
-        """Рекурсивно загружает все изображения из директории.
-        
-        Args:
-            dir_path: Путь к директории с изображениями
-            
-        Returns:
-            Список загруженных изображений PIL
-            
-        Raises:
-            ValidationError: При некорректном пути к директории
-        """
         from pathlib import Path
         from PIL import Image
 
@@ -662,14 +658,6 @@ class SearchDetDetector(DetectorBase):
         return images
 
     def _load_positive_by_class(self, dir_path: Optional[Union[str, Path]]) -> Dict[str, List[Image.Image]]:
-        """Загружает позитивные примеры, распределяя их по классам.
-        
-        Args:
-            dir_path: Путь к директории с положительными примерами
-            
-        Returns:
-            Словарь, где ключи - названия классов, значения - списки изображений
-        """
         from pathlib import Path
         result = {}
         if not dir_path:
@@ -707,12 +695,6 @@ class SearchDetDetector(DetectorBase):
         return result
     
     def switch_segmentation_backend(self, backend_type: str, **kwargs) -> None:
-        """Переключает бэкенд сегментации.
-        
-        Args:
-            backend_type: Тип бэкенда ('sam', 'fastsam', 'heatmap')
-            **kwargs: Дополнительные параметры для бэкенда
-        """
         print(f"🔄 Переключение бэкенда сегментации на: {backend_type}")
         
         if backend_type == 'sam':
@@ -737,19 +719,9 @@ class SearchDetDetector(DetectorBase):
         print(f"✅ Бэкенд сегментации переключен на: {backend_type}")
     
     def get_current_segmentation_backend(self) -> str:
-        """Возвращает текущий тип бэкенда сегментации.
-        
-        Returns:
-            Строка с типом текущего бэкенда
-        """
         return self.sam_predictor.get_backend_type()
     
     def set_heatmap_for_segmentation(self, heatmap: np.ndarray) -> None:
-        """Устанавливает heatmap для сегментации (только для heatmap бэкенда).
-        
-        Args:
-            heatmap: Тепловая карта для генерации масок
-        """
         if self.get_current_segmentation_backend() == 'heatmap':
             self.sam_predictor.set_heatmap(heatmap)
         else:
@@ -757,11 +729,6 @@ class SearchDetDetector(DetectorBase):
                   f"Текущий бэкенд: {self.get_current_segmentation_backend()}")
     
     def _print_timing_statistics(self, timing_info: Dict[str, float]) -> None:
-        """Выводит детальную статистику времени выполнения.
-        
-        Args:
-            timing_info: Словарь с временными метриками
-        """
         print("\n" + "="*60)
         print("⏱️ ДЕТАЛЬНАЯ СТАТИСТИКА ВРЕМЕНИ ВЫПОЛНЕНИЯ:")
         print("="*60)
@@ -803,3 +770,57 @@ class SearchDetDetector(DetectorBase):
             print("   • Проверьте размер feature map (SEARCHDET_FEAT_SHORT_SIDE)")
             print("   • Убедитесь что используется быстрый метод извлечения")
         print()
+
+    def _convert_to_annotations(self, results: Dict[str, Any], context: Context) -> List[CocoAnnotation]:
+        annotations = []
+        if 'masks' not in results:
+            return annotations
+        
+        # Get original image from context.extra (DetectorBase stores it there)
+        original_image = None
+        try:
+            if hasattr(context, 'extra') and isinstance(context.extra, dict):
+                original_image = context.extra.get('original_image')
+        except Exception:
+            original_image = None
+        
+        for mask_data in results['masks']:
+            if isinstance(mask_data, dict):
+                # Prefer 'segmentation' (how pipeline stores mask); fallback to 'mask'
+                mask = mask_data.get('segmentation', mask_data.get('mask'))
+                bbox = mask_data.get('bbox', [])
+                confidence = mask_data.get('confidence', 1.0)
+                area = mask_data.get('area', 0)
+                class_label = mask_data.get('class', 'unknown')
+                
+                # Get image dimensions
+                if original_image is not None:
+                    if hasattr(original_image, 'shape'):
+                        height, width = original_image.shape[:2]
+                    else:
+                        width, height = original_image.size
+                else:
+                    # Default fallback values
+                    width, height = 640, 480
+                
+                # Read file_name from context.extra (DetectorBase sets it there)
+                if hasattr(context, 'extra') and isinstance(context.extra, dict):
+                    file_name = context.extra.get('file_name', 'unknown.jpg')
+                else:
+                    file_name = 'unknown.jpg'
+                
+                annotation = CocoAnnotation(
+                    img=original_image if original_image is not None else np.zeros((height, width, 3), dtype=np.uint8),
+                    mask=mask if mask is not None else np.zeros((height, width), dtype=np.uint8),
+                    label=class_label,
+                    image_size=(width, height),
+                    width=width,
+                    height=height,
+                    area=area,
+                    file_name=file_name,
+                    bbox=bbox,
+                    confidence=confidence
+                )
+                annotations.append(annotation)
+        
+        return annotations

@@ -1,47 +1,17 @@
-# ML Segmentation Pipeline
+!pip install poetry
+!git clone https://github.com/facebookresearch/dinov3.git
+!poetry install
+!cp /content/drive/MyDrive/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth ~/.cache/torch/hub/checkpoints/
+!MPLBACKEND=Agg LOG_LEVEL=INFO poetry run python -m cli config.yaml
 
-## Set up
+РЕОМЕНДУЮ:ознакомьтесь с Makefile и запустите команды  make checks(для mypy и ruff),а также не забывайте
+менять config.yaml файл в папке evaluate для изменения параметров запуска тестирования
 
-Install deps:  
-```sh
-poetry config virtualenvs.in-project true --local
-poetry env use 3.11
-poetry install
-```  
 
-Or: 
-```sh
-pytnon3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r requirements.txt
-```  
-
-Install dinov3:
-```sh
-УСТАНОВИТЬ DINOV3 (gh pull --> pip install -e .)
-
-```  
-
-```sh
-export PYTHONPATH=$PYTHONPATH:${PWD}/vendor/dinov3
-```  
-
-Make examples directories:  
-```sh
-mkdir -p models input output examples/positive examples/negative
-```  
-
-Copy dinov3 weights:  
-```sh
-cp ~/dinov3-weights/dinov3/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth ~/.cache/torch/hub/checkpoints/
-```  
-
-## Run  
-
-```sh
-!python -m searchdet_pipeline.cli.detect detect foto00117.jpg.png \
-    --positive examples/positive/ \
-    --output output/ \
-    --dinov3-backbone vit7b16 \
-    --vit-pooling cls 
-```  
+# Методы + классы,которые требуют тестов
+ -`coco_annotation.py`:Создание сущностей ,тест валидации полей,тест сериализации `DONE`
+ -`DatasetModel.py`:Тест создания сущности,post_init(),работа с meta данными `DONE`
+ -`Context.py`:Тест методов finish(),тест расчета dutration,тест работы со spans `DONE`
+ -`metrics.py`:Намокать данные ,потестировать расчет метрик для всех 4-ех основных классов,тест edge cases `DONE`
+ -`example_datasets/voc_dataset.py`: Тест _parse_single_voc_xml() и from_path(): корректность bbox (VOC xyxy → xywh), генерации mask из bbox, обработка «swapped» размеров, наполнение meta (counts, categories, paths). `DONE`
+-`example_datasets/coco_dataset.py`: Тест _build_annotations(), from_json()/from_path(): генерация mask из bbox/segmentation (poly/RLE-заглушка), расчет area, корректность image_size/label и meta. `DONE`

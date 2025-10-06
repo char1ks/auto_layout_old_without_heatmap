@@ -1,0 +1,18 @@
+dataset:
+  cls: evaluate.example_datasets.voc_dataset.VocDataset
+  root: ../fruits
+  ann_dir: ../fruits/annotations
+  img_dir: ../fruits/images
+  kwargs: {}
+detector:
+  cls: searchdet_pipeline.core.detector.SearchDetDetector
+  kwargs: {}
+metrics:
+  - mAP
+  - mIoU
+  - dice
+  - clf_report
+run:
+  positive_dir: ../examples/positive
+  negative_dir: null
+  enable_profile: false

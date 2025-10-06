@@ -32,6 +32,7 @@ class DetectorBase(abc.ABC):
         pass
 
 
+# TODO: (@gas) use for tests
 class MockDetector(DetectorBase):
     """
     Mock implementation of DetectorBase.

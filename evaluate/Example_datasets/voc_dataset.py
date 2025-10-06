@@ -70,8 +70,8 @@ class VocDataset(Dataset):
         )
         return cls(dataset=DatasetModel(data_points=anns, meta=meta))
 
-    @staticmethod
-    def _build_annotations(obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
+    @classmethod
+    def _build_annotations(cls, obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
         images_by_id = {int(im["id"]): im for im in obj.get("images", []) if "id" in im}
         categories_by_id = {int(cat["id"]): cat for cat in obj.get("categories", []) if "id" in cat}
         anns = []

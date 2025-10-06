@@ -69,8 +69,8 @@ class CocoDataset(Dataset):
         )
         return cls(dataset=data)
 
-    @staticmethod
-    def _build_annotations(obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
+    @classmethod
+    def _build_annotations(cls, obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
         images_by_identifier: Dict[int, Dict[str, Any]] = {int(im.get('id')): im for im in obj.get('images', []) if 'id' in im}
         categories_by_identifier: Dict[int, Dict[str, Any]] = {int(cat.get('id')): cat for cat in obj.get('categories', []) if 'id' in cat}
         anns: List[CocoAnnotation] = []

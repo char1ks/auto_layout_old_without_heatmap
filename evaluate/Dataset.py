@@ -55,7 +55,7 @@ class Dataset(abc.ABC):
         data = DatasetModel(data_points=annotations, meta=meta)
         return cls(dataset=data)
 
-    @staticmethod
+    @classmethod
     @abc.abstractmethod
-    def _build_annotations(obj: dict[str, Any], base_dir: Path | None) -> list[CocoAnnotation]:
+    def _build_annotations(cls, obj: dict[str, Any], base_dir: Path | None) -> list[CocoAnnotation]:
         pass

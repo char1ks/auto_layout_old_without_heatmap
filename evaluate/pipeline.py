@@ -52,14 +52,14 @@ class Pipeline:
 
         for idx, fname in enumerate(file_names, start=1):
             logger.info(f"[{idx}/{total}] start {fname}")
-            image_np: Optional[np.ndarray] = None
+            image_array: Optional[np.ndarray] = None
 
             for ann in self.dataset_model.data_points:
                 if ann.file_name == fname and isinstance(ann.img, np.ndarray):
-                    image_np = ann.img
+                    image_array = ann.img
                     break
 
-            if image_np is None:
+            if image_array is None:
                 if image_root is None:
                     if progress:
                         progress(idx, total, fname)
@@ -71,7 +71,7 @@ class Pipeline:
                         progress(idx, total, fname)
                     logger.info(f"[{idx}/{total}] skipped (bad path) {fname}")
                     continue
-                image_np = self.detector.read_input_img(img_path)
+                image_array = self.detector.read_input_img(img_path)
 
             def _cb(ctx: Context) -> None:
                 self._contexts.append(ctx)
@@ -82,12 +82,12 @@ class Pipeline:
             _kwargs.pop("callback", None)
             _kwargs["callback"] = _cb
 
-            det_anns = self.detector.detect(image_np, file_name=fname, *args, **_kwargs)
-            predictions.extend(det_anns)
+            detection_annotations = self.detector.detect(image_array, file_name=fname, *args, **_kwargs)
+            predictions.extend(detection_annotations)
 
             if progress:
                 progress(idx, total, fname)
-            logger.info(f"[{idx}/{total}] done {fname} preds={len(det_anns)}")
+            logger.info(f"[{idx}/{total}] done {fname} preds={len(detection_annotations)}")
 
         self._predictions = predictions
         return predictions

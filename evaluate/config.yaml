@@ -1,5 +1,5 @@
 dataset:
-  cls: Example_datasets.voc_dataset.VocDataset
+  cls: example_datasets.voc_dataset.VocDataset
   root: ../fruits
   ann_dir: ../fruits/annotations
   img_dir: ../fruits/images

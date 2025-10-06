@@ -8,16 +8,18 @@ import inspect
 from dataclasses import asdict, is_dataclass
 import builtins
 from contextlib import contextmanager
+import contextlib
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
 _project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(_project_root))
 
 from evaluate.log_utils import setup_logging, get_logger
 setup_logging()
-from evaluate.Example_datasets.voc_dataset import VocDataset
+from evaluate.example_datasets.voc_dataset import VocDataset
 from evaluate.pipeline import Pipeline
 from evaluate.metrics import (
     MetricOutputModel,
@@ -123,6 +125,7 @@ class EvalCLI:
         self.run_name: Optional[str] = None
         self.save_predictions: bool = True
         self.save_metrics: bool = True
+        self.enable_profile: bool = True
 
     def _pretty_print(self, metrics: List[MetricOutputModel], out_dir: Path) -> None:
         console.print(Panel.fit(f"Results saved to: [bold green]{out_dir}[/]", title="Output"))
@@ -194,6 +197,7 @@ class EvalCLI:
         metrics_spec = cfg.get("metrics")
         self.positive_dir = run_spec.get("positive_dir", self.positive_dir)
         self.negative_dir = run_spec.get("negative_dir", self.negative_dir)
+        self.enable_profile = bool(run_spec.get("enable_profile", True))
         ds_root = ds_spec.get("root") or ds_spec.get("dataset_dir") or ds_spec.get("path")
         if not ds_root:
             raise ValueError("dataset.root is required in config")
@@ -214,22 +218,23 @@ class EvalCLI:
         out_dir = Path.cwd() / "results_cache"
         out_dir.mkdir(parents=True, exist_ok=True)
         dataset, detector, metrics_list = self._build_from_config()
-        reporter = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
+        tracer = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
         def _progress(idx: int, total: int, fname: Optional[str]) -> None:
             logger.info(f"[{idx}/{total}] {fname if fname else ''}")
         with suppress_print_from(["searchdet_pipeline"]):
-            with reporter.profile(
+            profile_ctx = tracer.profile(
                 sort="cumtime",
                 top_k=50,
                 dump_path=str(out_dir / "profiler.prof"),
                 flamegraph_path=str(out_dir / "flamegraph.svg"),
-            ):
+            ) if self.enable_profile else contextlib.nullcontext()
+            with profile_ctx:
                 image_root = (Path(dataset.root) if "root" in dir(dataset) and dataset.root is not None else None)
                 preds, metrics = Pipeline(
                     dataset=dataset,
                     detector=detector,
                     metrics=metrics_list,
-                    reporter=reporter,
+                    reporter=tracer,
                 ).run(
                     positive_dir=self.positive_dir,
                     negative_dir=self.negative_dir,
@@ -248,10 +253,5 @@ class EvalCLI:
 def eval_command(config: Path = typer.Argument(..., exists=True, readable=True, help="path_to_yaml_config")) -> int:
     return EvalCLI(config_path=config).run()
 
-
-def main() -> None:
-    App()
-
-
 if __name__ == "__main__":
-    main()
+    App()

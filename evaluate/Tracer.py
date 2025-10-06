@@ -58,17 +58,17 @@ class Tracer:
         def ser_dt(dt: Optional[datetime]):
             return dt.isoformat() + "Z" if isinstance(dt, datetime) else None
 
-        duration_val = (
+        duration_value = (
             (ctx.ended_at - ctx.started_at).total_seconds()
             if ctx.started_at and ctx.ended_at
             else None
         )
-        spans_out: List[TraceSpan] = []
+        spans_output: List[TraceSpan] = []
         for s in ctx.spans:
             st = s.get("started_at")
             en = s.get("ended_at")
             d = (en - st).total_seconds() if isinstance(st, datetime) and isinstance(en, datetime) else None
-            spans_out.append(
+            spans_output.append(
                 TraceSpan(
                     name=s.get("name"),
                     started_at=ser_dt(st),
@@ -84,26 +84,26 @@ class Tracer:
             image_shape=ctx.image_shape,
             started_at=ser_dt(ctx.started_at),
             ended_at=ser_dt(ctx.ended_at),
-            duration=duration_val,
+            duration=duration_value,
             success=ctx.success,
             error=ctx.error,
             metrics=ctx.metrics,
             extra=ctx.extra,
-            spans=spans_out,
+            spans=spans_output,
         )
 
     def emit(self, ctx: Context) -> TraceRecord:
         payload = self.serialize(ctx)
-        payload_dict = asdict(payload)
+        payload_dictionary = asdict(payload)
         if self.to_stdout:
-            logger.info(json.dumps(payload_dict, ensure_ascii=False, default=str))
+            logger.info(json.dumps(payload_dictionary, ensure_ascii=False, default=str))
         for sink in self.sinks:
-            sink(payload_dict)
+            sink(payload_dictionary)
         if self.trace_file:
             with open(self.trace_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload_dict, ensure_ascii=False, default=str) + "\n")
+                f.write(json.dumps(payload_dictionary, ensure_ascii=False, default=str) + "\n")
         return payload
-    def frame_graph(self, prof_path: str, svg_path: str, timeout: int = 30) -> None:
+    def flame_graph(self, prof_path: str, svg_path: str, timeout: int = 30) -> None:
         import importlib.util
         if importlib.util.find_spec("flameprof") is None:
             logger.warning("flameprof package not found – skipping flamegraph generation")
@@ -134,7 +134,7 @@ class Tracer:
     def profile(self, sort: str = "cumtime", top_k: int = 20, dump_path: Optional[str] = None, flamegraph_path: Optional[str] = None):
         profiler = cProfile.Profile()
         profiler.enable()
-        tmp_prof_path: Optional[str] = None
+        temporary_profile_path: Optional[str] = None
         try:
             yield
         finally:
@@ -144,13 +144,13 @@ class Tracer:
             if flamegraph_path:
                 if not dump_path:
                     tmp = tempfile.NamedTemporaryFile(prefix="ctx_", suffix=".prof", delete=False)
-                    tmp_prof_path = tmp.name
+                    temporary_profile_path = tmp.name
                     tmp.close()
-                    dump_path = tmp_prof_path
+                    dump_path = temporary_profile_path
                 if dump_path:
                     stats.dump_stats(dump_path)
-                    self.frame_graph(dump_path, flamegraph_path)
-                if tmp_prof_path:
-                    os.unlink(tmp_prof_path)
+                    self.flame_graph(dump_path, flamegraph_path)
+                if temporary_profile_path:
+                    os.unlink(temporary_profile_path)
             elif dump_path:
                 stats.dump_stats(dump_path)

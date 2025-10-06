@@ -71,31 +71,31 @@ class CocoDataset(Dataset):
 
     @staticmethod
     def _build_annotations(obj: dict[str, Any], base_dir: Path | None) -> List[CocoAnnotation]:
-        images_by_id: Dict[int, Dict[str, Any]] = {int(im.get('id')): im for im in obj.get('images', []) if 'id' in im}
-        categories_by_id: Dict[int, Dict[str, Any]] = {int(cat.get('id')): cat for cat in obj.get('categories', []) if 'id' in cat}
+        images_by_identifier: Dict[int, Dict[str, Any]] = {int(im.get('id')): im for im in obj.get('images', []) if 'id' in im}
+        categories_by_identifier: Dict[int, Dict[str, Any]] = {int(cat.get('id')): cat for cat in obj.get('categories', []) if 'id' in cat}
         anns: List[CocoAnnotation] = []
         for ann in obj.get('annotations', []) or []:
             try:
                 image_id = int(ann.get('image_id'))
-                image_info = images_by_id.get(image_id)
+                image_info = images_by_identifier.get(image_id)
                 if not image_info:
                     continue
                 file_name: str = image_info.get('file_name', '')
                 width: int = int(image_info.get('width', 0) or 0)
                 height: int = int(image_info.get('height', 0) or 0)
                 cat_id = ann.get('category_id')
-                cat = categories_by_id.get(int(cat_id)) if cat_id is not None else None
+                cat = categories_by_identifier.get(int(cat_id)) if cat_id is not None else None
                 label: int | str
                 if isinstance(cat, dict):
-                    name_val = cat.get('name')
-                    if isinstance(name_val, str):
-                        label = name_val
+                    name_value = cat.get('name')
+                    if isinstance(name_value, str):
+                        label = name_value
                     else:
                         label = int(cat_id) if cat_id is not None else -1
                 else:
                     label = int(cat_id) if cat_id is not None else -1
-                bbox_list = ann.get('bbox') or []
-                bbox: List[float] = [float(v) for v in bbox_list] if isinstance(bbox_list, (list, tuple)) else []
+                bounding_box_list = ann.get('bbox') or []
+                bbox: List[float] = [float(v) for v in bounding_box_list] if isinstance(bounding_box_list, (list, tuple)) else []
                 if len(bbox) == 4:
                     x, y, w, h = bbox
                 else:
@@ -103,12 +103,12 @@ class CocoDataset(Dataset):
                     w = float(width)
                     h = float(height)
                     bbox = [x, y, w, h]
-                area_val = ann.get('area')
-                if area_val is None:
+                area_value = ann.get('area')
+                if area_value is None:
                     area = float(w * h)
                 else:
                     try:
-                        area = float(area_val)
+                        area = float(area_value)
                     except Exception:
                         area = float(w * h)
                 mask_np = np.zeros((height, width), dtype=np.uint8)
@@ -139,14 +139,14 @@ class CocoDataset(Dataset):
                 if base_dir is not None and file_name:
                     img_path = (base_dir / file_name)
                     try:
-                        img_arr = np.array(Image.open(img_path).convert('RGB'))
+                        image_array = np.array(Image.open(img_path).convert('RGB'))
                     except Exception:
-                        img_arr = np.zeros((height, width, 3), dtype=np.uint8)
+                        image_array = np.zeros((height, width, 3), dtype=np.uint8)
                 else:
-                    img_arr = np.zeros((height, width, 3), dtype=np.uint8)
+                    image_array = np.zeros((height, width, 3), dtype=np.uint8)
                 anns.append(
                     CocoAnnotation(
-                        img=img_arr,
+                        img=image_array,
                         mask=mask_np,
                         label=label,
                         image_size=(int(width), int(height)),

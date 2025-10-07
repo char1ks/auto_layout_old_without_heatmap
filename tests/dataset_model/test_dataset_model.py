@@ -1,8 +1,8 @@
 from typing import List, Dict
 
-from evaluate.dataset_model import DatasetModel
-from evaluate.dataset_meta import DatasetMeta
-from evaluate.coco_annotation import CocoAnnotation
+from evaluation.dataset_model import DatasetModel
+from evaluation.dataset_meta import DatasetMeta
+from evaluation.coco_annotation import CocoAnnotation
 
 
 def test_meta_fields_valid(dataset_model_from_meta_obj):

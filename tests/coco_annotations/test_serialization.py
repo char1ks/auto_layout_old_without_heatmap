@@ -1,6 +1,6 @@
 import json
 import numpy as np
-from evaluate.coco_annotation import CocoAnnotation
+from evaluation.coco_annotation import CocoAnnotation
 
 
 def to_serializable_dict(ann: CocoAnnotation) -> dict:

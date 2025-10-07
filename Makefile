@@ -13,15 +13,13 @@ help:
 install:
 	poetry config virtualenvs.in-project true --local
 	poetry env use 3.12
-	poetry install --with dev,test
-	poetry run pre-commit install
+	poetry install --with dev
 
 .PHONY: install-all
-install-all:
+install-all: ## Create poetry environment and install all dependencies.
 	poetry config virtualenvs.in-project true --local
-	poetry env use 3.12
-	poetry install --with dev,test
-	poetry run pre-commit install
+	poetry env use 3.12.3
+	poetry install --all-extras
 
 .PHONY: lock
 lock: 
@@ -31,32 +29,27 @@ lock:
 checks: style-check static-check
 
 .PHONY: style-check
-style-check: 
-	poetry run ruff check evaluate tests
+style-check: ## Run style checks.
+	printf "Style Checking with Ruff\n"
+	poetry run ruff check
 
 .PHONY: static-check
-static-check: 
-	poetry run mypy evaluate tests
+static-check: ## Run strict typing checks.
+	printf "Static Checking with Mypy\n"
+	poetry run mypy .
 
 .PHONY: restyle
-restyle: 
+restyle: ## Reformat code with ruff.
 	poetry run ruff format .
 	poetry run ruff check --fix .
 
-fix-style:
-	poetry run ruff check --fix
-
 .PHONY: requirements
 requirements: 
-	poetry export -f requirements.txt --output requirements.txt --without-hashes --without dev,test
+	poetry export -f requirements.txt --output requirements.txt --without-hashes --without dev
 
 .PHONY: tests
 tests: 
 	PYTHONPATH=. poetry run pytest -s tests
-
-.PHONY: run
-run: 
-PYTHONPATH=. poetry run python -m evaluate.cli
 
 .PHONY: build
 build: 

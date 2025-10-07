@@ -1,5 +1,5 @@
 import numpy as np
-from evaluate.coco_annotation import CocoAnnotation
+from evaluation.coco_annotation import CocoAnnotation
 
 
 def test_image_and_mask_shapes_must_match(sample_image, sample_mask):

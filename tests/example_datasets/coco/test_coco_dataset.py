@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import numpy as np
-from evaluate.example_datasets.coco_dataset import CocoDataset
+from evaluation.example_datasets.coco_dataset import CocoDataset
 
 
 def build_coco_like(minimal: bool = False) -> dict:
@@ -27,7 +27,7 @@ def build_coco_like(minimal: bool = False) -> dict:
 
 def test_build_annotations_bbox_and_poly_mask():
     obj = build_coco_like(minimal=False)
-    anns = CocoDataset._build_annotations(obj, base_dir=None)
+    anns = CocoDataset.build_annotations(obj, base_dir=None)
     assert len(anns) == 2
     a0 = next(a for a in anns if a.file_name == "img1.jpg")
     assert a0.bbox == [10.0, 5.0, 20.0, 10.0]

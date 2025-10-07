@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from evaluate.coco_annotation import CocoAnnotation
+from evaluation.coco_annotation import CocoAnnotation
 @pytest.fixture
 def sample_image() -> np.ndarray:
     return (np.random.rand(50, 30, 3) * 255).astype(np.uint8)

@@ -3,9 +3,9 @@ import numpy as np
 from typing import List
 from pathlib import Path
 from PIL import Image
-from evaluate.coco_annotation import CocoAnnotation
-from evaluate.dataset_model import DatasetModel
-from evaluate.dataset_meta import DatasetMeta
+from evaluation.coco_annotation import CocoAnnotation
+from evaluation.dataset_model import DatasetModel
+from evaluation.dataset_meta import DatasetMeta
 
 @pytest.fixture
 def coco_annotations_list() -> List[CocoAnnotation]:

@@ -3,10 +3,10 @@ from pathlib import Path
 from typing import List
 import numpy as np
 import pytest
-from evaluate.coco_annotation import CocoAnnotation
-from evaluate.dataset_model import DatasetModel
-from evaluate.dataset_meta import DatasetMeta
-from evaluate.example_datasets.voc_dataset import VocDataset
+from evaluation.coco_annotation import CocoAnnotation
+from evaluation.dataset_model import DatasetModel
+from evaluation.dataset_meta import DatasetMeta
+from evaluation.example_datasets.voc_dataset import VocDataset
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 RESULTS_DIR = STATIC_DIR / "results_fruit1"

@@ -2,11 +2,11 @@
 name = "flashbone"
 version = "0.1.0"
 description = ""
-authors = ["aodnoral@synetra"]
+authors = ["aodnoral@synetra", "gas@synetra"]
 readme = "README.md"
 packages = [
-    { include = "evaluate" },
-    { include = "searchdet_pipeline" }
+    { include = "evaluation" },
+    { include = "flashbone" }
 ]
 
 [build-system]
@@ -39,7 +39,6 @@ gradio = ">=3.35.0"
 gradio_client = ">=0.2.9"
 markdown2 = { version = ">=2.4.10", extras = ["all"] }
 huggingface-hub = ">=0.16.4"
-
 gdown = ">=4.7.1"
 kagglehub = ">=0.2.0"
 seaborn = ">=0.12.0"
@@ -72,9 +71,6 @@ shapely = ">=2.0.0"
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.10.0"
 ruff = "^0.5.0"
-pre-commit = "^3.5.0"
-
-[tool.poetry.group.test.dependencies]
 pytest = "^7.4.0"
 pytest-cov = "^4.1.0"
 
@@ -86,14 +82,15 @@ filterwarnings = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 warn_unused_ignores = true
 show_error_codes = true
 pretty = true
-exclude = "vendor/|gradio_client/|searchdet_pipeline/"
+exclude = "vendor/|gradio_client/"
+
 [[tool.mypy.overrides]]
-module = ["searchdet_pipeline.*"]
+module = ["flashbone.*"]
 follow_imports = "skip"
 ignore_errors = true
 
@@ -130,7 +127,7 @@ exclude = [
 ]
 line-length = 120
 indent-width = 2
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

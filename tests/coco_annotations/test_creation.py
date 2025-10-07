@@ -1,5 +1,5 @@
 import numpy as np
-from evaluate.coco_annotation import CocoAnnotation
+from evaluation.coco_annotation import CocoAnnotation
 
 
 def test_basic_creation(sample_image, sample_mask):

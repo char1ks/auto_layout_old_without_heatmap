@@ -1,5 +1,5 @@
 from datetime import datetime
-from evaluate.context import Context
+from evaluation.context import Context
 
 
 def test_finish_sets_flags_and_times(context_now):

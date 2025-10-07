@@ -1,4 +1,4 @@
-from evaluate.metrics import MeanIntersectionOverUnion, DiceCoefficient, ClassificationReportMetric, MeanAveragePrecision
+from evaluation.metrics import MeanIntersectionOverUnion, DiceCoefficient, ClassificationReportMetric, MeanAveragePrecision
 
 def test_map_perfect_predictions(build_gt_dataset, build_perfect_predictions_from_gt):
     gt = build_gt_dataset

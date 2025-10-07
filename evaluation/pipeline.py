@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple, Union, Callable
+from typing import List, Optional, Tuple, Union, Callable, Any, Dict
 import numpy as np
 from PIL import Image, ImageDraw
 _project_root = Path(__file__).parent.parent
@@ -66,62 +66,53 @@ class Pipeline:
         except Exception:
             return np.zeros((1, 1, 3), dtype=np.uint8)
 
-    def _dets_to_coco(self, dets: List[DetectionResult], image_np: np.ndarray, file_name: str) -> List[CocoAnnotation]:
+    def _dets_to_coco(self, dets: Union[List[DetectionResult], List[Dict[str, Any]], Dict[str, Any], DetectionResult], image_np: np.ndarray, file_name: str) -> List[CocoAnnotation]:
         H, W = image_np.shape[:2]
+        if not isinstance(dets, list):
+            dets = [dets]  
+
+        def as_dict(d: Union[DetectionResult, Dict[str, Any]]) -> Dict[str, Any]:
+            if isinstance(d, dict):
+                return d
+            keys = ("polygons", "bbox", "score", "area", "class_id")
+            return {k: getattr(d, k, None) for k in keys}
+
+        def to_float(x: Any, default: Optional[float] = None) -> Optional[float]:
+            try:
+                return float(x)
+            except Exception:
+                return default
+
         anns: List[CocoAnnotation] = []
-        for d in dets:
+        for d in dets:  
+            dd = as_dict(d)
+            polygons = dd.get("polygons") or []
+            bbox = dd.get("bbox")
+            bbox = [float(v) for v in bbox] if isinstance(bbox, list) and len(bbox) == 4 else [0.0, 0.0, float(W), float(H)]
 
-            mask_np = np.zeros((H, W), dtype=np.uint8)
-            if isinstance(d.polygons, list) and len(d.polygons) > 0:
-                pil_mask = Image.fromarray(mask_np, mode='L')
-                draw = ImageDraw.Draw(pil_mask)
-                try:
-                    for poly in d.polygons:
-                        if isinstance(poly, list) and len(poly) >= 3:
-                            xy = [(int(pt[0]), int(pt[1])) for pt in poly if isinstance(pt, (list, tuple)) and len(pt) >= 2]
-                            if len(xy) >= 3:
-                                draw.polygon(xy, outline=1, fill=1)
-                    mask_np = np.array(pil_mask, dtype=np.uint8)
-                except Exception:
-
-                    x, y, w, h = d.bbox if isinstance(d.bbox, list) and len(d.bbox) == 4 else [0, 0, 0, 0]
-                    x1, y1 = int(max(0, np.floor(x))), int(max(0, np.floor(y)))
-                    x2 = int(min(W, np.ceil(x + w)))
-                    y2 = int(min(H, np.ceil(y + h)))
-                    if x2 > x1 and y2 > y1:
-                        mask_np[y1:y2, x1:x2] = 1
-            else:
-                
-                x, y, w, h = d.bbox if isinstance(d.bbox, list) and len(d.bbox) == 4 else [0, 0, 0, 0]
+            mask_np = np.zeros((H, W), np.uint8)
+            if polygons:
+                pil = Image.fromarray(mask_np, "L")
+                draw = ImageDraw.Draw(pil)
+                for poly in (p for p in polygons if isinstance(p, list) and len(p) >= 3):
+                    xy = [(int(pt[0]), int(pt[1])) for pt in poly if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+                    if len(xy) >= 3:
+                        draw.polygon(xy, outline=1, fill=1)
+                mask_np = np.array(pil, np.uint8)
+            if not mask_np.any():
+                x, y, w, h = bbox
                 x1, y1 = int(max(0, np.floor(x))), int(max(0, np.floor(y)))
                 x2 = int(min(W, np.ceil(x + w)))
                 y2 = int(min(H, np.ceil(y + h)))
                 if x2 > x1 and y2 > y1:
                     mask_np[y1:y2, x1:x2] = 1
 
-            bbox = [float(v) for v in d.bbox] if isinstance(d.bbox, list) and len(d.bbox) == 4 else [0.0, 0.0, float(W), float(H)]
-            area = float(d.area) if d.area is not None else float(bbox[2] * bbox[3])
-            try:
-                label_val = d.class_id if hasattr(d, "class_id") else None
-            except Exception:
-                label_val = None
-            if label_val is None and isinstance(d, dict):
-                label_val = d.get("class_id")
-            label = str(int(label_val)) if isinstance(label_val, (int, np.integer, float)) else str(label_val)
-            anns.append(
-                CocoAnnotation(
-                    img=image_np,
-                    mask=mask_np,
-                    label=label,
-                    image_size=(int(W), int(H)),
-                    width=int(W),
-                    height=int(H),
-                    area=area,
-                    file_name=file_name,
-                    bbox=bbox,
-                    score=float(d.score) if d.score is not None else None,
-                )
-            )
+            area = to_float(dd.get("area"), None) or float(bbox[2] * bbox[3])
+            class_val = dd.get("class_id")
+            label = str(int(class_val)) if isinstance(class_val, (int, float, np.integer)) else str(class_val)
+            score = to_float(dd.get("score"), None)
+
+            anns.append(CocoAnnotation(img=image_np, mask=mask_np, label=label, image_size=(int(W), int(H)), width=int(W), height=int(H), area=area, file_name=file_name, bbox=bbox, score=score))
         return anns
 
     def set_references(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,) -> None:

@@ -101,7 +101,13 @@ class Pipeline:
 
             bbox = [float(v) for v in d.bbox] if isinstance(d.bbox, list) and len(d.bbox) == 4 else [0.0, 0.0, float(W), float(H)]
             area = float(d.area) if d.area is not None else float(bbox[2] * bbox[3])
-            label = int(d.class_id)
+            try:
+                label_val = d.class_id if hasattr(d, "class_id") else None
+            except Exception:
+                label_val = None
+            if label_val is None and isinstance(d, dict):
+                label_val = d.get("class_id")
+            label = str(int(label_val)) if isinstance(label_val, (int, np.integer, float)) else str(label_val)
             anns.append(
                 CocoAnnotation(
                     img=image_np,

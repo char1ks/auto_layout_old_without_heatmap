@@ -5,7 +5,7 @@ dataset:
   img_dir: ../fruits/images
   kwargs: {}
 detector:
-  cls: searchdet_pipeline.core.detector.SearchDetDetector
+  cls: flashbone.core.detection.searchdet_detector.SearchDetDetector
   kwargs: {}
 metrics:
   - mAP

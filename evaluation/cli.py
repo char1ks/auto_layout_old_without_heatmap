@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 import yaml 
+import numpy as np
 _project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(_project_root))
 
@@ -30,8 +31,14 @@ from evaluation.metrics import (
 )
 from evaluation.tracer import Tracer
 
-from searchdet_pipeline.core.detector import SearchDetDetector
-from searchdet_pipeline.core.config import get_preset_config
+from flashbone.core.detection.searchdet_detector import SearchDetDetector
+from ultralytics import FastSAM
+from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
+from flashbone.core.segmentation import SamSegmenter, SegmenterConfig
+from flashbone.core.heatmap_generation import HeatmapGenerator
+from flashbone.core.classification.mask_classifier_knn import MaskClassifierKNN
+from flashbone.core.image_resizing import ImageResizer, ResizeContext
+from PIL import Image, ImageDraw
 
 App = typer.Typer()
 console = Console()
@@ -185,7 +192,6 @@ class EvalCLI:
                     stats_ser = str(stats_obj)
                 serializable.append({"metric_name": m.metric_name, "score": m.score, "stats": stats_ser})
             metrics_path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
-
     def _build_from_config(self) -> tuple[Any, Any, List[Any]]:
         cfg = _read_config_file(self.config_path)
         ds_spec = (cfg.get("dataset") or {})
@@ -206,8 +212,46 @@ class EvalCLI:
             img_dir=Path(ds_spec["img_dir"]) if ds_spec.get("img_dir") else None,
             **(ds_spec.get("kwargs") or {}),
         )
-        config = get_preset_config("balanced")
-        detector = DetectorClass(config=config, **(det_spec.get("kwargs") or {}))
+        def _create_flashbone_detector(**kwargs) -> SearchDetDetector:
+            encoder = kwargs.get("encoder") or DinoV3EncoderGaz()
+            heatmap_generator = kwargs.get("heatmap_generator") or HeatmapGenerator(
+                dino_fe=encoder,
+                use_cosine_similarity_for_heatmap=True,
+                threshold_cosine=0.3,
+            )
+            sam_model = kwargs.get("sam_model") or FastSAM("FastSAM-x.pt")
+            seg_cfg = kwargs.get("segmenter_config") or SegmenterConfig(
+                min_mask_area=200,
+                confidence_threshold=0.5,
+                iou_threshold=0.8,
+                mask_threshold=0.5,
+            )
+            segmenter = kwargs.get("segmenter") or SamSegmenter(sam_model=sam_model, config=seg_cfg)
+            classifier = kwargs.get("classifier") or MaskClassifierKNN(encoder=encoder, d=1024)
+            image_resizer = kwargs.get("image_resizer") or ImageResizer(max_side=1024)
+            try:
+                _orig_resize = image_resizer.resize
+                def _resize_and_coerce(img):
+                    out_img, ctx = _orig_resize(img)
+                    if isinstance(ctx, dict):
+                        scale = float(ctx.get("scale", 1.0))
+                        orig_shape = tuple(ctx.get("orig_shape", out_img.shape[:2]))
+                        ctx = ResizeContext(scale=scale, orig_shape=orig_shape)
+                    return out_img, ctx
+                image_resizer.resize = _resize_and_coerce
+            except Exception:
+                pass
+            return SearchDetDetector(
+                segmenter=segmenter,
+                classifier=classifier,
+                heatmap_generator=heatmap_generator,
+                image_resizer=image_resizer,
+            )
+
+        if DetectorClass is SearchDetDetector:
+            detector = _create_flashbone_detector(**(det_spec.get("kwargs") or {}))
+        else:
+            detector = DetectorClass(**(det_spec.get("kwargs") or {}))
         metrics_list = _resolve_metrics(metrics_spec)
         return dataset, detector, metrics_list
 

@@ -70,7 +70,7 @@ class Pipeline:
         H, W = image_np.shape[:2]
         anns: List[CocoAnnotation] = []
         for d in dets:
-            # rasterize polygons to mask
+
             mask_np = np.zeros((H, W), dtype=np.uint8)
             if isinstance(d.polygons, list) and len(d.polygons) > 0:
                 pil_mask = Image.fromarray(mask_np, mode='L')
@@ -83,7 +83,7 @@ class Pipeline:
                                 draw.polygon(xy, outline=1, fill=1)
                     mask_np = np.array(pil_mask, dtype=np.uint8)
                 except Exception:
-                    # fallback: use bbox if polygons fail
+
                     x, y, w, h = d.bbox if isinstance(d.bbox, list) and len(d.bbox) == 4 else [0, 0, 0, 0]
                     x1, y1 = int(max(0, np.floor(x))), int(max(0, np.floor(y)))
                     x2 = int(min(W, np.ceil(x + w)))
@@ -91,7 +91,7 @@ class Pipeline:
                     if x2 > x1 and y2 > y1:
                         mask_np[y1:y2, x1:x2] = 1
             else:
-                # no polygons provided — fallback to bbox
+                
                 x, y, w, h = d.bbox if isinstance(d.bbox, list) and len(d.bbox) == 4 else [0, 0, 0, 0]
                 x1, y1 = int(max(0, np.floor(x))), int(max(0, np.floor(y)))
                 x2 = int(min(W, np.ceil(x + w)))

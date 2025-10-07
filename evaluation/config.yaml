@@ -1,8 +1,8 @@
 dataset:
-  cls: evaluate.example_datasets.voc_dataset.VocDataset
-  root: ../fruits
-  ann_dir: ../fruits/annotations
-  img_dir: ../fruits/images
+  cls: evaluation.example_datasets.voc_dataset.VocDataset
+  root: fruits
+  ann_dir: fruits/annotations
+  img_dir: fruits/images
   kwargs: {}
 detector:
   cls: flashbone.core.detection.searchdet_detector.SearchDetDetector
@@ -13,6 +13,6 @@ metrics:
   - dice
   - clf_report
 run:
-  positive_dir: ../examples/positive
+  positive_dir: examples/positive
   negative_dir: null
   enable_profile: false

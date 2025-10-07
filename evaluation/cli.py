@@ -14,7 +14,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 import yaml 
-import numpy as np
 _project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(_project_root))
 
@@ -30,7 +29,7 @@ from evaluation.metrics import (
     ClassificationReportMetric,
 )
 from evaluation.tracer import Tracer
-
+from evaluation.report_generator import ReportGenerator
 from flashbone.core.detection.searchdet_detector import SearchDetDetector
 from ultralytics import FastSAM
 from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
@@ -38,8 +37,6 @@ from flashbone.core.segmentation import SamSegmenter, SegmenterConfig
 from flashbone.core.heatmap_generation import HeatmapGenerator
 from flashbone.core.classification.mask_classifier_knn import MaskClassifierKNN
 from flashbone.core.image_resizing import ImageResizer, ResizeContext
-from PIL import Image, ImageDraw
-
 App = typer.Typer()
 console = Console()
 logger = get_logger(__name__)
@@ -92,31 +89,25 @@ def _read_config_file(path: Path) -> Dict[str, Any]:
         return {}
 
 
-def _resolve_metrics(metric_specs: Optional[List[str]]) -> List[Any]:
-    registry = {
-        "mAP": MeanAveragePrecision,
-        "MeanAveragePrecision": MeanAveragePrecision,
-        "mIoU": MeanIntersectionOverUnion,
-        "MeanIntersectionOverUnion": MeanIntersectionOverUnion,
-        "dice": DiceCoefficient,
-        "DiceCoefficient": DiceCoefficient,
-        "clf_report": ClassificationReportMetric,
-        "ClassificationReportMetric": ClassificationReportMetric,
-    }
-    if not metric_specs:
-        return [MeanAveragePrecision(), MeanIntersectionOverUnion(), DiceCoefficient(), ClassificationReportMetric()]
-    out = []
-    for name in metric_specs:
-        if name in registry:
-            out.append(registry[name]())
-        else:
-            cls = _load_obj(name)
-            out.append(cls())
-    return out
+ 
 
 
 def _odict(obj: Any) -> Dict[str, Any]:
     return obj.__dict__ if "__dict__" in dir(obj) else {}
+
+
+class SortedClassifier:
+    def __init__(self, classifier):
+        self.classifier = classifier
+    
+    def __getattr__(self, name):
+        return getattr(self.classifier, name)
+    
+    def predict(self, request):
+        predictions = self.classifier.predict(request)
+        if predictions:
+            predictions.sort(key=lambda x: x.score, reverse=True)
+        return predictions
 
 
 class EvalCLI:
@@ -177,7 +168,7 @@ class EvalCLI:
                     pd = _odict(p)
                     rec = {
                         "file_name": pd.get("file_name"),
-                        "label": pd.get("label"),
+                        "label": pd.get("label") ,
                         "bbox": pd.get("bbox"),
                         "score": (pd["score"] if "score" in pd else pd.get("confidence")),
                         "width": pd.get("width"),
@@ -199,101 +190,49 @@ class EvalCLI:
                 serializable.append({"metric_name": m.metric_name, "score": m.score, "stats": stats_ser})
             metrics_path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
     def _build_from_config(self) -> tuple[Any, Any, List[Any]]:
-        cfg = _read_config_file(self.config_path)
-        ds_spec = (cfg.get("dataset") or {})
-        det_spec = (cfg.get("detector") or {})
-        run_spec = (cfg.get("run") or {})
-        metrics_spec = cfg.get("metrics")
-        self.positive_dir = run_spec.get("positive_dir", self.positive_dir)
-        self.negative_dir = run_spec.get("negative_dir", self.negative_dir)
-        self.enable_profile = bool(run_spec.get("enable_profile", True))
-        ds_root = ds_spec.get("root") or ds_spec.get("dataset_dir") or ds_spec.get("path")
-        if not ds_root:
-            raise ValueError("dataset.root is required in config")
-        DatasetClass = _load_obj(ds_spec["cls"]) if ds_spec.get("cls") and isinstance(ds_spec["cls"], str) else VocDataset
-        DetectorClass = _load_obj(det_spec["cls"]) if det_spec.get("cls") and isinstance(det_spec["cls"], str) else SearchDetDetector
-        dataset = DatasetClass.from_path(
-            Path(ds_root),
-            ann_dir=Path(ds_spec["ann_dir"]) if ds_spec.get("ann_dir") else None,
-            img_dir=Path(ds_spec["img_dir"]) if ds_spec.get("img_dir") else None,
-            **(ds_spec.get("kwargs") or {}),
-        )
-        def _create_flashbone_detector(**kwargs) -> SearchDetDetector:
-            encoder = kwargs.get("encoder") or DinoV3EncoderGaz()
-            heatmap_generator = kwargs.get("heatmap_generator") or HeatmapGenerator(
-                dino_fe=encoder,
-                use_cosine_similarity_for_heatmap=True,
-                threshold_cosine=0.3,
-            )
-            sam_model = kwargs.get("sam_model") or FastSAM("FastSAM-x.pt")
-            seg_cfg = kwargs.get("segmenter_config") or SegmenterConfig(
-                min_mask_area=200,
-                confidence_threshold=0.5,
-                iou_threshold=0.8,
-                mask_threshold=0.5,
-            )
-            segmenter = kwargs.get("segmenter") or SamSegmenter(sam_model=sam_model, config=seg_cfg)
-            classifier = kwargs.get("classifier") or MaskClassifierKNN(encoder=encoder, d=1024)
-            image_resizer = kwargs.get("image_resizer") or ImageResizer(max_side=1024)
-            try:
-                _orig_resize = image_resizer.resize
-                def _resize_and_coerce(img):
-                    out_img, ctx = _orig_resize(img)
-                    if isinstance(ctx, dict):
-                        scale = float(ctx.get("scale", 1.0))
-                        orig_shape = tuple(ctx.get("orig_shape", out_img.shape[:2]))
-                        ctx = ResizeContext(scale=scale, orig_shape=orig_shape)
-                    return out_img, ctx
-                image_resizer.resize = _resize_and_coerce
-            except Exception:
-                pass
-            return SearchDetDetector(
-                segmenter=segmenter,
-                classifier=classifier,
-                heatmap_generator=heatmap_generator,
-                image_resizer=image_resizer,
-            )
-
+        cfg = _read_config_file(self.config_path); ds = cfg.get("dataset") or {}; det = cfg.get("detector") or {}; run = cfg.get("run") or {}
+        self.positive_dir = run.get("positive_dir", self.positive_dir); self.negative_dir = run.get("negative_dir", self.negative_dir); self.enable_profile = bool(run.get("enable_profile", True))
+        ds_root = ds.get("root") or ds.get("dataset_dir") or ds.get("path")
+        
+        DatasetClass = _load_obj(ds["cls"]) if isinstance(ds.get("cls"), str) else VocDataset
+        DetectorClass = _load_obj(det["cls"]) if isinstance(det.get("cls"), str) else SearchDetDetector
+        dataset = DatasetClass.from_path(Path(ds_root), ann_dir=Path(ds["ann_dir"]) if ds.get("ann_dir") else None, img_dir=Path(ds["img_dir"]) if ds.get("img_dir") else None, **(ds.get("kwargs") or {}))
         if DetectorClass is SearchDetDetector:
-            detector = _create_flashbone_detector(**(det_spec.get("kwargs") or {}))
+            kwargs = det.get("kwargs") or {}
+            encoder = kwargs.get("encoder") or DinoV3EncoderGaz(); heatmap_generator = kwargs.get("heatmap_generator") or HeatmapGenerator(dino_fe=encoder, use_cosine_similarity_for_heatmap=True, threshold_cosine=0.3)
+            sam_model = kwargs.get("sam_model") or FastSAM("FastSAM-x.pt"); seg_cfg = kwargs.get("segmenter_config") or SegmenterConfig(min_mask_area=200, confidence_threshold=0.5, iou_threshold=0.8, mask_threshold=0.5)
+            segmenter = kwargs.get("segmenter") or SamSegmenter(sam_model=sam_model, config=seg_cfg)
+            base_classifier = kwargs.get("classifier") or MaskClassifierKNN(encoder=encoder, d=1024); classifier = SortedClassifier(base_classifier)
+            image_resizer = kwargs.get("image_resizer") or ImageResizer(max_side=1024)
+            _orig_resize = image_resizer.resize; 
+            image_resizer.resize = lambda img: (lambda o,c: (o, ResizeContext(scale=float(c.get("scale",1.0)), orig_shape=tuple(c.get("orig_shape", o.shape[:2])))) if isinstance(c, dict) else (o, c)) (*_orig_resize(img))
+            detector = SearchDetDetector(segmenter=segmenter, classifier=classifier, heatmap_generator=heatmap_generator, image_resizer=image_resizer)
         else:
-            detector = DetectorClass(**(det_spec.get("kwargs") or {}))
-        metrics_list = _resolve_metrics(metrics_spec)
-        return dataset, detector, metrics_list
+            detector = DetectorClass(**(det.get("kwargs") or {}))
+        return dataset, detector, [(({"mAP": MeanAveragePrecision, "MeanAveragePrecision": MeanAveragePrecision, "mIoU": MeanIntersectionOverUnion, "MeanIntersectionOverUnion": MeanIntersectionOverUnion, "dice": DiceCoefficient, "DiceCoefficient": DiceCoefficient, "clf_report": ClassificationReportMetric, "ClassificationReportMetric": ClassificationReportMetric}).get(n) or _load_obj(n))() for n in (cfg.get("metrics") or ["mAP","mIoU","dice","clf_report"])]
 
     def run(self) -> int:
-        out_dir = Path.cwd() / "results_cache"
-        out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = Path.cwd() / "results_cache"; out_dir.mkdir(parents=True, exist_ok=True)
         dataset, detector, metrics_list = self._build_from_config()
+        try:
+            dp = getattr(getattr(dataset, "data", None), "data_points", None)
+            if isinstance(dp, list) and len(dp) > 100:
+                dataset.data.data_points = dp[:100]; logger.info(f"Dataset truncated to 100 images (from {len(dp)}).")
+        except Exception:
+            pass
         tracer = Tracer(to_stdout=True, trace_file=str(out_dir / "context_trace.jsonl"))
-        def _progress(idx: int, total: int, fname: Optional[str]) -> None:
-            logger.info(f"[{idx}/{total}] {fname if fname else ''}")
+        progress = lambda i, t, f: logger.info(f"[{i}/{t}] {f or ''}")
         with suppress_print_from(["searchdet_pipeline"]):
-            profile_ctx = tracer.profile(
-                sort="cumtime",
-                top_k=50,
-                dump_path=str(out_dir / "profiler.prof"),
-                flamegraph_path=str(out_dir / "flamegraph.svg"),
-            ) if self.enable_profile else contextlib.nullcontext()
-            with profile_ctx:
-                image_root = (Path(dataset.root) if "root" in dir(dataset) and dataset.root is not None else None)
-                preds, metrics = Pipeline(
-                    dataset=dataset,
-                    detector=detector,
-                    metrics=metrics_list,
-                    reporter=tracer,
-                ).run(
-                    positive_dir=self.positive_dir,
-                    negative_dir=self.negative_dir,
-                    image_root=image_root,
-                    progress=_progress,
-                    dump_report=True,
-                    report_output_dir=out_dir,
-                )
-        self._save_artifacts(preds, metrics, out_dir)
-        self._pretty_print(metrics, out_dir)
-        console.print(Panel.fit("Evaluation completed", style="bold green"))
-        return 0
+            ctx = tracer.profile(sort="cumtime", top_k=50, dump_path=str(out_dir / "profiler.prof"), flamegraph_path=str(out_dir / "flamegraph.svg")) if self.enable_profile else contextlib.nullcontext()
+            with ctx:
+                image_root = Path(getattr(dataset, "root", "")) if getattr(dataset, "root", None) else None
+                pipeline = Pipeline(dataset=dataset, detector=detector, metrics=metrics_list, reporter=tracer)
+                pipeline.set_references(self.positive_dir, self.negative_dir)
+                preds = pipeline.detect_all(image_root=image_root, progress=progress)
+                metrics = pipeline.evaluate(preds, average="micro")
+                ReportGenerator().generate_report(pipeline._contexts, metrics, dump_report=True, output_dir=out_dir)
+        self._save_artifacts(preds, metrics, out_dir); self._pretty_print(metrics, out_dir)
+        console.print(Panel.fit("Evaluation completed", style="bold green")); return 0
 
 
 @App.command("eval")

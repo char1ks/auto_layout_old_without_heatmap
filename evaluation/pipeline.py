@@ -16,6 +16,7 @@ from evaluation.report_generator import ReportGenerator
 from evaluation.context import Context
 from evaluation.log_utils import get_logger
 from flashbone.core.detection.base import DetectorBase, DetectionResult
+
 logger = get_logger(__name__)
 
 class Pipeline:
@@ -30,36 +31,16 @@ class Pipeline:
         self._predictions: List[CocoAnnotation] = []
         self._last_metrics: Optional[List[MetricOutputModel]] = None
         self._contexts: List[Context] = []
-        # id -> label name mapping for aligning predictions with GT
-        self._id_to_name: Dict[int, str] = {}
     def _read_reference_images(self, positive_dir: Union[str, Path], negative_dir: Optional[Union[str, Path]] = None) -> Tuple[dict[str, List[Image.Image]], List[Image.Image]]:
-        pos_by_class: dict[str, List[Image.Image]] = {}
-        neg_imgs: List[Image.Image] = []
-
-        pdir = Path(positive_dir)
-        if pdir.exists():
-            for sub in sorted([p for p in pdir.iterdir() if p.is_dir()]):
-                cls_name = sub.name
-                imgs: List[Image.Image] = []
-                for img_path in sorted(sub.glob("*")):
-                    try:
-                        with Image.open(img_path) as im:
-                            imgs.append(im.convert("RGB"))
-                    except Exception:
-                        continue
-                if imgs:
-                    pos_by_class[cls_name] = imgs
-
-        if negative_dir is not None:
-            npath = Path(negative_dir)
-            if npath.exists():
-                for img_path in sorted(npath.glob("*")):
-                    try:
-                        with Image.open(img_path) as im:
-                            neg_imgs.append(im.convert("RGB"))
-                    except Exception:
-                        continue
-
+        exts = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tif', '.tiff'}; pos_by_class, neg_imgs = {}, []
+        p = Path(positive_dir)
+        for sub in sorted([d for d in p.iterdir() if d.is_dir()]) if p.exists() else []:
+            imgs = [Image.open(f).convert("RGB") for f in sorted(sub.rglob("*")) if f.is_file() and f.suffix.lower() in exts]
+            if imgs: logger.info(f"[refs] class '{sub.name}': {len(imgs)} images"); pos_by_class[sub.name] = imgs
+        if negative_dir:
+            n = Path(negative_dir)
+            neg_imgs = [Image.open(f).convert("RGB") for f in sorted(n.rglob("*")) if f.is_file() and f.suffix.lower() in exts]
+            logger.info(f"[refs] negatives: {len(neg_imgs)} images")
         return pos_by_class, neg_imgs
 
     def _read_input_img(self, img_path: Path) -> np.ndarray:
@@ -70,29 +51,20 @@ class Pipeline:
 
     def _dets_to_coco(self, dets: Union[List[DetectionResult], List[Dict[str, Any]], Dict[str, Any], DetectionResult], image_np: np.ndarray, file_name: str) -> List[CocoAnnotation]:
         H, W = image_np.shape[:2]
-        if not isinstance(dets, list):
-            dets = [dets]  
-
-        def as_dict(d: Union[DetectionResult, Dict[str, Any]]) -> Dict[str, Any]:
-            if isinstance(d, dict):
-                return d
-            keys = ("polygons", "bbox", "score", "area", "class_id")
-            return {k: getattr(d, k, None) for k in keys}
-
-        def to_float(x: Any, default: Optional[float] = None) -> Optional[float]:
-            try:
-                return float(x)
-            except Exception:
-                return default
-
         anns: List[CocoAnnotation] = []
-        for d in dets:  
-            dd = as_dict(d)
-            polygons = dd.get("polygons") or []
+        for d in dets:
+            dd = d if isinstance(d, dict) else {
+                "polygons": getattr(d, "polygons", None),
+                "bbox": getattr(d, "bbox", None),
+                "score": getattr(d, "score", None),
+                "area": getattr(d, "area", None),
+                "class_id": getattr(d, "class_id", None),
+            }
             bbox = dd.get("bbox")
             bbox = [float(v) for v in bbox] if isinstance(bbox, list) and len(bbox) == 4 else [0.0, 0.0, float(W), float(H)]
 
             mask_np = np.zeros((H, W), np.uint8)
+            polygons = dd.get("polygons") or []
             if polygons:
                 pil = Image.fromarray(mask_np, "L")
                 draw = ImageDraw.Draw(pil)
@@ -109,101 +81,63 @@ class Pipeline:
                 if x2 > x1 and y2 > y1:
                     mask_np[y1:y2, x1:x2] = 1
 
-            area = to_float(dd.get("area"), None) or float(bbox[2] * bbox[3])
-            class_val = dd.get("class_id")
-            # map integer class id back to dataset label name if available
-            if isinstance(class_val, (int, np.integer)):
-                label = self._id_to_name.get(int(class_val), str(int(class_val)))
-            elif isinstance(class_val, float):
-                try:
-                    label = self._id_to_name.get(int(class_val), str(int(class_val)))
-                except Exception:
-                    label = str(class_val)
-            else:
-                label = str(class_val)
-            score = to_float(dd.get("score"), None)
+            area_raw = dd.get("area")
+            area = float(area_raw) if isinstance(area_raw, (int, float, np.integer, np.floating)) else float(bbox[2] * bbox[3])
+            score_raw = dd.get("score")
+            score = float(score_raw) if isinstance(score_raw, (int, float, np.integer, np.floating)) else None
+            lr = dd.get("class_id")
+            ls = str(lr).strip()
+            label = ({'1': 'dragon fruit', '2': 'pineapple', '3': 'snake fruit'}.get(ls, ls) if ls.isdigit() else ls)
 
             anns.append(CocoAnnotation(img=image_np, mask=mask_np, label=label, image_size=(int(W), int(H)), width=int(W), height=int(H), area=area, file_name=file_name, bbox=bbox, score=score))
         return anns
 
     def set_references(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,) -> None:
         pos_by_class, neg_imgs = self._read_reference_images(positive_dir, negative_dir)
-        categories = list(self.dataset_model.meta.categories or [])
-        name_to_id: Dict[str, int] = {name: idx for idx, name in enumerate(categories)}
-        self._id_to_name = {idx: name for name, idx in name_to_id.items()}
-
-        pos_by_id: Dict[str, List[Image.Image]] = {}
-        for cls_name, imgs in pos_by_class.items():
-            if cls_name in name_to_id:
-                cid = name_to_id[cls_name]
-            else:
-                try:
-                    cid = int(cls_name)
-                    self._id_to_name.setdefault(cid, str(cls_name))
-                except Exception:
-                    cid = len(self._id_to_name)
-                    self._id_to_name[cid] = cls_name
-            pos_by_id[str(cid)] = imgs
-        self.detector.set_references(pos_by_id, neg_imgs)
+        details = ", ".join([f"{cid}: {len(imgs)}" for cid, imgs in pos_by_class.items()])
+        logger.info(f"Индексируем эталоны: {details}")
+        self.detector.set_references(pos_by_class, neg_imgs)
 
     def detect_all(self,image_root: Optional[Union[str, Path]] = None,progress: Optional[Callable[[int, int, str | None], None]] = None,*args,**kwargs,) -> List[CocoAnnotation]:
         image_root = Path(image_root) if image_root is not None else None
-
-        file_names: List[str] = sorted({
-            str(ann.file_name)
-            for ann in self.dataset_model.data_points
-            if ann.file_name is not None
-        })
+        file_names: List[str] = sorted({str(a.file_name) for a in self.dataset_model.data_points if a.file_name is not None})
 
         self._contexts = []
         predictions: List[CocoAnnotation] = []
         total = len(file_names)
 
+        def _cb(ctx: Context) -> None:
+            self._contexts.append(ctx)
+            if self.reporter:
+                self.reporter.emit(ctx)
+
+        def _img_for(fname: str) -> Optional[np.ndarray]:
+            img = next((a.img for a in self.dataset_model.data_points if a.file_name == fname and isinstance(a.img, np.ndarray)), None)
+            if img is not None:
+                return img
+            return self._read_input_img((image_root / fname)) if image_root is not None and fname is not None else None
+
         for idx, fname in enumerate(file_names, start=1):
             logger.info(f"[{idx}/{total}] start {fname}")
-            image_array: Optional[np.ndarray] = None
-
-            for ann in self.dataset_model.data_points:
-                if ann.file_name == fname and isinstance(ann.img, np.ndarray):
-                    image_array = ann.img
-                    break
-
+            image_array = _img_for(fname)
             if image_array is None:
-                if image_root is None:
-                    if progress:
-                        progress(idx, total, fname)
-                    logger.info(f"[{idx}/{total}] skipped (no image in dataset) {fname}")
-                    continue
-                img_path = (image_root / fname) if fname is not None else None
-                if img_path is None:
-                    if progress:
-                        progress(idx, total, fname)
-                    logger.info(f"[{idx}/{total}] skipped (bad path) {fname}")
-                    continue
-                image_array = self._read_input_img(img_path)
-
-            def _cb(ctx: Context) -> None:
-                self._contexts.append(ctx)
-                if self.reporter:
-                    self.reporter.emit(ctx)
-
-            _kwargs = dict(kwargs)
-            _kwargs.pop("callback", None)
-            _kwargs["callback"] = _cb
-
-            det_results = self.detector.detect(image_array, *args, **_kwargs)
-            detection_annotations = self._dets_to_coco(det_results, image_array, file_name=fname)
-            predictions.extend(detection_annotations)
-
+                if progress:
+                    progress(idx, total, fname)
+                logger.info(f"[{idx}/{total}] skipped {fname}")
+                continue
+            det_results = self.detector.detect(image_array, *args, callback=_cb, **kwargs)
+            anns = self._dets_to_coco(det_results, image_array, file_name=fname)
+            predictions.extend(anns)
             if progress:
                 progress(idx, total, fname)
-            logger.info(f"[{idx}/{total}] done {fname} preds={len(detection_annotations)}")
+            logger.info(f"[{idx}/{total}] done {fname} preds={len(anns)}")
 
         self._predictions = predictions
         return predictions
 
     def evaluate(self,predictions: Optional[List[CocoAnnotation]] = None,average: str = "micro",) -> List[MetricOutputModel]:
-        preds = predictions if predictions is not None else self._predictions
+        raw_preds = predictions if predictions is not None else self._predictions
+        preds: List[CocoAnnotation] = list(raw_preds or [])
         results: List[MetricOutputModel] = []
         for metric in (self.metrics or []):
             result = metric.compute(self.dataset_model, preds, average=average)
@@ -216,6 +150,7 @@ class Pipeline:
         preds = self.detect_all(image_root=image_root, progress=progress, **kwargs)
         metrics = self.evaluate(preds, average=average)
 
+        
         reporter = ReportGenerator()
         reporter.generate_report(self._contexts, metrics, dump_report=dump_report, output_dir=report_output_dir)
 

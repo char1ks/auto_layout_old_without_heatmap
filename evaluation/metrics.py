@@ -144,6 +144,12 @@ class MeanAveragePrecision(Metric):
         thresholds = [float(t) for t in self.iou_thresholds]
         num_labels, num_thresholds = len(label_names), len(thresholds)
 
+        # Сократим вычисления PR-кривых: считаем их только для IoU 0.50 и 0.75
+        pr_curve_thresholds = set()
+        for t in thresholds:
+            if abs(t - 0.50) < 1e-8 or abs(t - 0.75) < 1e-8:
+                pr_curve_thresholds.add(t)
+
         # AP/PR хранилища
         ap_per_label_per_thr = {lab: [0.0] * num_thresholds for lab in label_names}
         pr_curves_per_thr: Dict[float, Dict[str, Dict[str, List[float]]]] = {thr: {} for thr in thresholds}
@@ -156,9 +162,13 @@ class MeanAveragePrecision(Metric):
                 gts_lab = gt_by.get(lab, {})
                 y_true, y_score = self._match(preds_lab, gts_lab, thr)
                 y_store[thr][lab] = (y_true, y_score)
-                ap_val, prec, rec = self._ap_pr(y_true, y_score)
+                if thr in pr_curve_thresholds:
+                    ap_val, prec, rec = self._ap_pr(y_true, y_score)
+                    pr_curves_per_thr[thr][lab] = {"precision": prec, "recall": rec}
+                else:
+                    # Быстрый путь: считаем AP без построения PR-кривой
+                    ap_val = float(average_precision_score(y_true, y_score)) if y_true else 0.0
                 ap_per_label_per_thr[lab][threshold_index] = ap_val
-                pr_curves_per_thr[thr][lab] = {"precision": prec, "recall": rec}
 
         # micro / macro
         recall_grid = np.linspace(0, 1, 101)
@@ -172,22 +182,26 @@ class MeanAveragePrecision(Metric):
             # micro: объединяем все метки
             y_true_all = [y for lab in label_names for y in y_store[thr][lab][0]]
             y_score_all = [s for lab in label_names for s in y_store[thr][lab][1]]
-            ap_mi, p_mi, r_mi = self._ap_pr(y_true_all, y_score_all) if y_true_all else (0.0, [1.0], [0.0])
+            if thr in pr_curve_thresholds:
+                ap_mi, p_mi, r_mi = self._ap_pr(y_true_all, y_score_all) if y_true_all else (0.0, [1.0], [0.0])
+                pr_micro[key] = {"precision": [float(x) for x in p_mi], "recall": [float(x) for x in r_mi]}
+            else:
+                ap_mi = float(average_precision_score(y_true_all, y_score_all)) if y_true_all else 0.0
             ap_micro.append(ap_mi)
-            pr_micro[key] = {"precision": [float(x) for x in p_mi], "recall": [float(x) for x in r_mi]}
 
-            # macro: усредняем интерполированные PR по меткам
-            stack = []
-            for lab in label_names:
-                rr = np.asarray(pr_curves_per_thr[thr][lab]["recall"], float)
-                pp = np.asarray(pr_curves_per_thr[thr][lab]["precision"], float)
-                if rr.size > 1 and pp.size > 1:
-                    o = np.argsort(rr)
-                    pi = np.interp(recall_grid, rr[o], pp[o], left=pp[o][0], right=pp[o][-1])
-                    pi = np.maximum.accumulate(pi[::-1])[::-1]
-                    stack.append(pi)
-            pm = np.mean(np.stack(stack, 0), 0) if stack else np.zeros_like(recall_grid)
-            pr_macro[key] = {"precision": [float(x) for x in pm], "recall": [float(x) for x in recall_grid]}
+            # macro PR-кривая только для нужных порогов (0.50/0.75)
+            if thr in pr_curve_thresholds:
+                stack = []
+                for lab in label_names:
+                    rr = np.asarray(pr_curves_per_thr[thr].get(lab, {}).get("recall", []), float)
+                    pp = np.asarray(pr_curves_per_thr[thr].get(lab, {}).get("precision", []), float)
+                    if rr.size > 1 and pp.size > 1:
+                        o = np.argsort(rr)
+                        pi = np.interp(recall_grid, rr[o], pp[o], left=pp[o][0], right=pp[o][-1])
+                        pi = np.maximum.accumulate(pi[::-1])[::-1]
+                        stack.append(pi)
+                pm = np.mean(np.stack(stack, 0), 0) if stack else np.zeros_like(recall_grid)
+                pr_macro[key] = {"precision": [float(x) for x in pm], "recall": [float(x) for x in recall_grid]}
 
             # macro-AP как среднее AP по меткам для данного порога
             ap_macro.append(float(np.mean([ap_per_label_per_thr[lab][ti] for lab in label_names])) if num_labels else 0.0)
@@ -207,30 +221,23 @@ class MeanAveragePrecision(Metric):
         map_micro_50, map_micro_75 = pick_micro(0.5), pick_micro(0.75)
         idx_05 = int(np.argmin([abs(x - 0.5) for x in thresholds])) if num_thresholds else 0
         per_class_ap_05 = [float(ap_per_label_per_thr[lab][idx_05]) for lab in label_names] if num_labels and num_thresholds else []
-
-        # counts
         gt_counts = [sum(len(v) for v in (gt_by.get(lab, {}) or {}).values()) for lab in label_names]
         pred_counts = [len(pr_by.get(lab, []) or []) for lab in label_names]
-
-        # подготовим полный словарь статистики
         data = {
             "categories": label_names,
             "gt_counts": gt_counts,
             "pred_counts": pred_counts,
             "per_class_ap": per_class_ap_05,
             "per_class_ap_avg": [float(np.mean(ap_per_label_per_thr[lab])) if num_thresholds else 0.0 for lab in label_names],
-            # итоговые значения для обоих режимов
             "map_macro": map_macro,
             "map_micro": map_micro,
             "mAP_macro@0.5": map_macro_50,
             "mAP_macro@0.75": map_macro_75,
             "mAP_micro@0.5": map_micro_50,
             "mAP_micro@0.75": map_micro_75,
-            # массивы по IoU-порогам
             "ap_iou_macro": [float(x) for x in ap_macro],
             "ap_iou_micro": [float(x) for x in ap_micro],
             "iou_thresholds": [float(x) for x in thresholds],
-            # PR-кривые
             "pr_macro": pr_macro,
             "pr_micro": pr_micro,
             "pr_curves_per_threshold": {f"{thr:.2f}": pr_curves_per_thr[thr] for thr in thresholds},

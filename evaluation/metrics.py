@@ -48,7 +48,7 @@ class MeanAveragePrecision(Metric):
     def __init__(self, iou_thresholds: Optional[List[float]] = None) -> None:
         self.iou_thresholds = iou_thresholds or np.arange(0.5, 0.95 + 1e-9, 0.05).tolist()
 
-    # _group нормализует bbox в xyxy, группирует GT/предсказания по метке и файлу,сортирует предсказания по score. Подготавливает данные для матчинга и расчёта AP.
+    # group data
     def _group(self, ground_truth: DatasetModel, predictions: List[CocoAnnotation]):
         ground_truth_by: dict[str, dict[str, List[List[float]]]] = {}
         predictions_by: dict[str, List[Tuple[str, List[float], float]]] = {}
@@ -89,7 +89,7 @@ class MeanAveragePrecision(Metric):
 
         return ground_truth_by, predictions_by, sorted(label_names)
         
-    # формирует y_true/y_score для построения PR-кривых и расчёта AP.
+    # match data
     def _match(self,predictions_for_label: List[Tuple[str, List[float], float]],ground_truth_by_file: dict[str, List[List[float]]],iou_threshold: float,):
         used_indices: Dict[str, set[int]] = {fname: set() for fname in ground_truth_by_file}
         y_true: List[int] = []
@@ -113,28 +113,28 @@ class MeanAveragePrecision(Metric):
         return y_true, y_score
 
     def _ap_pr(self, y_true: List[int], y_score: List[float]):
-        # вернём нулевой AP и базовую PR-кривую,если вход пустой
+        # empty input
         if not y_true:
             return 0.0, [1.0], [0.0]
-        # если нет положительного класса, избегаем предупреждения и возвращаем тривиальную кривую
+        # no positives
         if int(np.sum(np.asarray(y_true))) == 0:
             return 0.0, [1.0], [0.0]
 
-        # AP по меткам и скору
+        # AP score
         ap_value = float(average_precision_score(y_true, y_score))
-        # Строим PR-кривую
+        # PR curve
         precision, recall, _ = precision_recall_curve(y_true, y_score)
         
-        # Приводим к float-массивам
+        # to float
         recall = np.asarray(recall, float)
         precision = np.asarray(precision, float)
-        # Сортируем по recall
+        # sort recall
         order = np.argsort(recall)
         recall, precision = recall[order], precision[order]
-        # Удаляем дубликаты по recall
+        # drop duplicates
         recall, uniq_idx = np.unique(recall, return_index=True)
         precision = precision[uniq_idx]
-        # Монотонное сглаживание precision (не возрастает с ростом recall)
+        # smooth precision
         precision = np.maximum.accumulate(precision[::-1])[::-1]
         
         return float(ap_value), [float(x) for x in precision], [float(x) for x in recall]
@@ -144,33 +144,25 @@ class MeanAveragePrecision(Metric):
         thresholds = [float(t) for t in self.iou_thresholds]
         num_labels, num_thresholds = len(label_names), len(thresholds)
 
-        # Сократим вычисления PR-кривых: считаем их только для IoU 0.50 и 0.75
-        pr_curve_thresholds = set()
-        for t in thresholds:
-            if abs(t - 0.50) < 1e-8 or abs(t - 0.75) < 1e-8:
-                pr_curve_thresholds.add(t)
+        # PR/AP for all IoU
 
-        # AP/PR хранилища
+        # storage
         ap_per_label_per_thr = {lab: [0.0] * num_thresholds for lab in label_names}
         pr_curves_per_thr: Dict[float, Dict[str, Dict[str, List[float]]]] = {thr: {} for thr in thresholds}
         y_store: Dict[float, Dict[str, Tuple[List[int], List[float]]]] = {thr: {} for thr in thresholds}
 
-        # посчитаем per-label для каждого порога
+        # per-label loop
         for threshold_index, thr in enumerate(thresholds):
             for lab in label_names:
                 preds_lab = pr_by.get(lab, [])
                 gts_lab = gt_by.get(lab, {})
                 y_true, y_score = self._match(preds_lab, gts_lab, thr)
                 y_store[thr][lab] = (y_true, y_score)
-                if thr in pr_curve_thresholds:
-                    ap_val, prec, rec = self._ap_pr(y_true, y_score)
-                    pr_curves_per_thr[thr][lab] = {"precision": prec, "recall": rec}
-                else:
-                    # Быстрый путь: считаем AP без построения PR-кривой
-                    ap_val = float(average_precision_score(y_true, y_score)) if y_true else 0.0
+                ap_val, prec, rec = self._ap_pr(y_true, y_score)
+                pr_curves_per_thr[thr][lab] = {"precision": prec, "recall": rec}
                 ap_per_label_per_thr[lab][threshold_index] = ap_val
 
-        # micro / macro
+        # micro/macro
         recall_grid = np.linspace(0, 1, 101)
         pr_micro = {}
         pr_macro = {}
@@ -179,34 +171,30 @@ class MeanAveragePrecision(Metric):
         for ti, thr in enumerate(thresholds):
             key = f"{thr:.2f}"
 
-            # micro: объединяем все метки
+            # micro merge
             y_true_all = [y for lab in label_names for y in y_store[thr][lab][0]]
             y_score_all = [s for lab in label_names for s in y_store[thr][lab][1]]
-            if thr in pr_curve_thresholds:
-                ap_mi, p_mi, r_mi = self._ap_pr(y_true_all, y_score_all) if y_true_all else (0.0, [1.0], [0.0])
-                pr_micro[key] = {"precision": [float(x) for x in p_mi], "recall": [float(x) for x in r_mi]}
-            else:
-                ap_mi = float(average_precision_score(y_true_all, y_score_all)) if y_true_all else 0.0
+            ap_mi, p_mi, r_mi = self._ap_pr(y_true_all, y_score_all) if y_true_all else (0.0, [1.0], [0.0])
+            pr_micro[key] = {"precision": [float(x) for x in p_mi], "recall": [float(x) for x in r_mi]}
             ap_micro.append(ap_mi)
 
-            # macro PR-кривая только для нужных порогов (0.50/0.75)
-            if thr in pr_curve_thresholds:
-                stack = []
-                for lab in label_names:
-                    rr = np.asarray(pr_curves_per_thr[thr].get(lab, {}).get("recall", []), float)
-                    pp = np.asarray(pr_curves_per_thr[thr].get(lab, {}).get("precision", []), float)
-                    if rr.size > 1 and pp.size > 1:
-                        o = np.argsort(rr)
-                        pi = np.interp(recall_grid, rr[o], pp[o], left=pp[o][0], right=pp[o][-1])
-                        pi = np.maximum.accumulate(pi[::-1])[::-1]
-                        stack.append(pi)
-                pm = np.mean(np.stack(stack, 0), 0) if stack else np.zeros_like(recall_grid)
-                pr_macro[key] = {"precision": [float(x) for x in pm], "recall": [float(x) for x in recall_grid]}
+            # macro avg curve
+            stack = []
+            for lab in label_names:
+                rr = np.asarray(pr_curves_per_thr[thr].get(lab, {}).get("recall", []), float)
+                pp = np.asarray(pr_curves_per_thr[thr].get(lab, {}).get("precision", []), float)
+                if rr.size > 1 and pp.size > 1:
+                    o = np.argsort(rr)
+                    pi = np.interp(recall_grid, rr[o], pp[o], left=pp[o][0], right=pp[o][-1])
+                    pi = np.maximum.accumulate(pi[::-1])[::-1]
+                    stack.append(pi)
+            pm = np.mean(np.stack(stack, 0), 0) if stack else np.zeros_like(recall_grid)
+            pr_macro[key] = {"precision": [float(x) for x in pm], "recall": [float(x) for x in recall_grid]}
 
-            # macro-AP как среднее AP по меткам для данного порога
+            # macro AP avg
             ap_macro.append(float(np.mean([ap_per_label_per_thr[lab][ti] for lab in label_names])) if num_labels else 0.0)
 
-        # агрегаты: считаем отдельно macro и micro и уважаем параметр average
+        # aggregates
         avg_mode = str(kwargs.get("average", "macro")).lower()
         map_macro = float(np.mean(ap_macro)) if ap_macro else 0.0
         map_micro = float(np.mean(ap_micro)) if ap_micro else 0.0
@@ -243,7 +231,7 @@ class MeanAveragePrecision(Metric):
             "pr_curves_per_threshold": {f"{thr:.2f}": pr_curves_per_thr[thr] for thr in thresholds},
         }
 
-        # совместимость: generic ключи отражают выбранный режим усреднения
+        # compatibility
         if avg_mode == "micro":
             data.update({
                 "map": map_micro,
@@ -267,7 +255,7 @@ class MeanAveragePrecision(Metric):
 class MeanIntersectionOverUnion(Metric):
     name = "mIoU"
 
-    # плоская бинарная маска файла
+    # flat mask
     def _flat_mask(self, points: List[CocoAnnotation], file_key: str, h: int, w: int, label_key: Optional[str] = None) -> np.ndarray:
         acc = np.zeros((h, w), np.uint8)
         for ann in points:
@@ -280,7 +268,7 @@ class MeanIntersectionOverUnion(Metric):
                 acc |= (m > 0).astype(np.uint8)
         return acc.reshape(-1)
 
-    # подготовка всякой ерунды,по типу имен файлов и классов 
+    # gather space
     def _space(self, gt: DatasetModel, pr: List[CocoAnnotation]) -> Tuple[List[CocoAnnotation], List[CocoAnnotation], List[str], List[str], int, int]:
         gt_pts = gt.data_points or []
         pr_pts = pr or []
@@ -340,15 +328,15 @@ class DiceCoefficient(Metric):
 class ClassificationReportMetric(Metric):
     name="classification_report"
     def compute(self, gt: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
-    # входные точки
+    # inputs
         gt_pts = gt.data_points or []
         pr_pts = prediction or []
 
-        # список файлов (уникальные имена из GT и предсказаний)
+        # files list
         gt_files = [str(a.file_name) for a in gt_pts if a.file_name is not None]
         pr_files = [str(a.file_name) for a in pr_pts if a.file_name is not None]
         files = sorted(set(gt_files) | set(pr_files))
-        # вытаскиваем все метки по файлу 
+        # file labels
         def labels_for(points: List[CocoAnnotation], fname: str) -> List[str]:
             return [
                 str(a.label)
@@ -356,7 +344,7 @@ class ClassificationReportMetric(Metric):
                 if a.file_name is not None and str(a.file_name) == fname and a.label is not None
             ]
 
-        # собираем пары истинной/предсказанной меток на уровне файла
+        # build pairs
         y_true: List[str] = []
         y_pred: List[str] = []
         for fname in files:

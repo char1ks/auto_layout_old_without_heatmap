@@ -136,7 +136,13 @@ class EvalCLI:
         if "mAP" in by_name:
             m = by_name["mAP"]
             stats_obj = m.stats
-            stats: Dict[str, Any] = stats_obj if isinstance(stats_obj, dict) else {}
+            stats: Dict[str, Any]
+            if isinstance(stats_obj, dict):
+                stats = stats_obj
+            elif is_dataclass(stats_obj):
+                stats = asdict(stats_obj).get("data", {})
+            else:
+                stats = {}
             t = Table(title="Mean Average Precision (mAP)")
             t.add_column("Metric")
             t.add_column("Value", justify="right")

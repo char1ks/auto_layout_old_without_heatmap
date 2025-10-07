@@ -192,13 +192,19 @@ class MeanAveragePrecision(Metric):
             # macro-AP как среднее AP по меткам для данного порога
             ap_macro.append(float(np.mean([ap_per_label_per_thr[lab][ti] for lab in label_names])) if num_labels else 0.0)
 
-        # агрегаты
-        map_overall = float(np.mean(ap_macro)) if ap_macro else 0.0
-        
-        def pick(t):
+        # агрегаты: считаем отдельно macro и micro и уважаем параметр average
+        avg_mode = str(kwargs.get("average", "macro")).lower()
+        map_macro = float(np.mean(ap_macro)) if ap_macro else 0.0
+        map_micro = float(np.mean(ap_micro)) if ap_micro else 0.0
+
+        def pick_macro(t: float) -> float:
             return float(ap_macro[int(np.argmin([abs(x - t) for x in thresholds]))]) if ap_macro else 0.0
-        
-        map_50, map_75 = pick(0.5), pick(0.75)
+
+        def pick_micro(t: float) -> float:
+            return float(ap_micro[int(np.argmin([abs(x - t) for x in thresholds]))]) if ap_micro else 0.0
+
+        map_macro_50, map_macro_75 = pick_macro(0.5), pick_macro(0.75)
+        map_micro_50, map_micro_75 = pick_micro(0.5), pick_micro(0.75)
         idx_05 = int(np.argmin([abs(x - 0.5) for x in thresholds])) if num_thresholds else 0
         per_class_ap_05 = [float(ap_per_label_per_thr[lab][idx_05]) for lab in label_names] if num_labels and num_thresholds else []
 
@@ -206,26 +212,51 @@ class MeanAveragePrecision(Metric):
         gt_counts = [sum(len(v) for v in (gt_by.get(lab, {}) or {}).values()) for lab in label_names]
         pred_counts = [len(pr_by.get(lab, []) or []) for lab in label_names]
 
+        # подготовим полный словарь статистики
         data = {
             "categories": label_names,
             "gt_counts": gt_counts,
             "pred_counts": pred_counts,
             "per_class_ap": per_class_ap_05,
             "per_class_ap_avg": [float(np.mean(ap_per_label_per_thr[lab])) if num_thresholds else 0.0 for lab in label_names],
-            "map": map_overall,
-            "map_50": map_50,
-            "map_75": map_75,
-            "mAP@0.5": map_50,
-            "mAP@0.75": map_75,
+            # итоговые значения для обоих режимов
+            "map_macro": map_macro,
+            "map_micro": map_micro,
+            "mAP_macro@0.5": map_macro_50,
+            "mAP_macro@0.75": map_macro_75,
+            "mAP_micro@0.5": map_micro_50,
+            "mAP_micro@0.75": map_micro_75,
+            # массивы по IoU-порогам
             "ap_iou_macro": [float(x) for x in ap_macro],
             "ap_iou_micro": [float(x) for x in ap_micro],
             "iou_thresholds": [float(x) for x in thresholds],
+            # PR-кривые
             "pr_macro": pr_macro,
             "pr_micro": pr_micro,
             "pr_curves_per_threshold": {f"{thr:.2f}": pr_curves_per_thr[thr] for thr in thresholds},
         }
 
-        return MetricOutputModel(self.name, map_overall, Stats(data=data, meta=Meta(doc=(self.__class__.__doc__ or '').strip())))
+        # совместимость: generic ключи отражают выбранный режим усреднения
+        if avg_mode == "micro":
+            data.update({
+                "map": map_micro,
+                "map_50": map_micro_50,
+                "map_75": map_micro_75,
+                "mAP@0.5": map_micro_50,
+                "mAP@0.75": map_micro_75,
+            })
+            final_score = map_micro
+        else:
+            data.update({
+                "map": map_macro,
+                "map_50": map_macro_50,
+                "map_75": map_macro_75,
+                "mAP@0.5": map_macro_50,
+                "mAP@0.75": map_macro_75,
+            })
+            final_score = map_macro
+
+        return MetricOutputModel(self.name, final_score, Stats(data=data, meta=Meta(doc=(self.__class__.__doc__ or '').strip())))
 class MeanIntersectionOverUnion(Metric):
     name = "mIoU"
 

@@ -30,6 +30,8 @@ class Pipeline:
         self._predictions: List[CocoAnnotation] = []
         self._last_metrics: Optional[List[MetricOutputModel]] = None
         self._contexts: List[Context] = []
+        # id -> label name mapping for aligning predictions with GT
+        self._id_to_name: Dict[int, str] = {}
     def _read_reference_images(self, positive_dir: Union[str, Path], negative_dir: Optional[Union[str, Path]] = None) -> Tuple[dict[str, List[Image.Image]], List[Image.Image]]:
         pos_by_class: dict[str, List[Image.Image]] = {}
         neg_imgs: List[Image.Image] = []
@@ -109,7 +111,16 @@ class Pipeline:
 
             area = to_float(dd.get("area"), None) or float(bbox[2] * bbox[3])
             class_val = dd.get("class_id")
-            label = str(int(class_val)) if isinstance(class_val, (int, float, np.integer)) else str(class_val)
+            # map integer class id back to dataset label name if available
+            if isinstance(class_val, (int, np.integer)):
+                label = self._id_to_name.get(int(class_val), str(int(class_val)))
+            elif isinstance(class_val, float):
+                try:
+                    label = self._id_to_name.get(int(class_val), str(int(class_val)))
+                except Exception:
+                    label = str(class_val)
+            else:
+                label = str(class_val)
             score = to_float(dd.get("score"), None)
 
             anns.append(CocoAnnotation(img=image_np, mask=mask_np, label=label, image_size=(int(W), int(H)), width=int(W), height=int(H), area=area, file_name=file_name, bbox=bbox, score=score))
@@ -117,7 +128,23 @@ class Pipeline:
 
     def set_references(self,positive_dir: Union[str, Path],negative_dir: Optional[Union[str, Path]] = None,) -> None:
         pos_by_class, neg_imgs = self._read_reference_images(positive_dir, negative_dir)
-        self.detector.set_references(pos_by_class, neg_imgs)
+        categories = list(self.dataset_model.meta.categories or [])
+        name_to_id: Dict[str, int] = {name: idx for idx, name in enumerate(categories)}
+        self._id_to_name = {idx: name for name, idx in name_to_id.items()}
+
+        pos_by_id: Dict[str, List[Image.Image]] = {}
+        for cls_name, imgs in pos_by_class.items():
+            if cls_name in name_to_id:
+                cid = name_to_id[cls_name]
+            else:
+                try:
+                    cid = int(cls_name)
+                    self._id_to_name.setdefault(cid, str(cls_name))
+                except Exception:
+                    cid = len(self._id_to_name)
+                    self._id_to_name[cid] = cls_name
+            pos_by_id[str(cid)] = imgs
+        self.detector.set_references(pos_by_id, neg_imgs)
 
     def detect_all(self,image_root: Optional[Union[str, Path]] = None,progress: Optional[Callable[[int, int, str | None], None]] = None,*args,**kwargs,) -> List[CocoAnnotation]:
         image_root = Path(image_root) if image_root is not None else None

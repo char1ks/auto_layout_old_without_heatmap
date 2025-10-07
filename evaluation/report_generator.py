@@ -213,6 +213,12 @@ class ReportGenerator(ReportConfig):
                     plt.legend(fontsize=self.tick_font_size)
                     plt.grid(True, alpha=0.3)
                     plt.tick_params(labelsize=self.tick_font_size)
+                    try:
+                        x_min, x_max = float(min(ious)), float(max(ious))
+                        plt.xlim(x_min, x_max)
+                    except Exception:
+                        pass
+                    plt.ylim(0.0, 1.0)
                     save("ap_vs_iou.svg", "ap_vs_iou")
                 else:
                     plt.close()

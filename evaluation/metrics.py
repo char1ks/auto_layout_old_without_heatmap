@@ -296,6 +296,30 @@ class MeanIntersectionOverUnion(Metric):
                     (0, 0))
         return gt_pts, pr_pts, files, labels, h, w
 
+    def compute(self, gt: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
+        gt_pts, pr_pts, files, labels, h, w = self._space(gt, prediction)
+        # MICRO IoU across all files
+        y_true_micro = np.concatenate([self._flat_mask(gt_pts, f, h, w, None) for f in files], 0) if files else np.array([], dtype=np.uint8)
+        y_pred_micro = np.concatenate([self._flat_mask(pr_pts, f, h, w, None) for f in files], 0) if files else np.array([], dtype=np.uint8)
+        micro_iou = float(jaccard_score(y_true_micro, y_pred_micro, average="binary", zero_division=0)) if y_true_micro.size and y_pred_micro.size else 0.0
+
+        # Per-class IoU and macro average
+        per_class_list: List[Dict[str, float]] = []
+        for lab in labels:
+            y_true_lab = np.concatenate([self._flat_mask(gt_pts, f, h, w, lab) for f in files], 0) if files else np.array([], dtype=np.uint8)
+            y_pred_lab = np.concatenate([self._flat_mask(pr_pts, f, h, w, lab) for f in files], 0) if files else np.array([], dtype=np.uint8)
+            iou_lab = float(jaccard_score(y_true_lab, y_pred_lab, average="binary", zero_division=0)) if y_true_lab.size and y_pred_lab.size else 0.0
+            per_class_list.append({"label": lab, "iou": iou_lab})
+        macro_iou = float(np.mean([c["iou"] for c in per_class_list])) if per_class_list else micro_iou
+
+        stats = IoUStats(
+            micro_iou=micro_iou,
+            macro_iou=macro_iou,
+            per_class=[PerClassIoU(label=str(c["label"]), iou=float(c["iou"])) for c in per_class_list],
+            labels=labels,
+        )
+        return MetricOutputModel(self.name, micro_iou, stats)
+
 @dataclass
 class PerClassIoU:
     label: str
@@ -310,30 +334,6 @@ class IoUStats:
 
     def __repr__(self) -> str:
         return f"IoUStats(micro_iou={self.micro_iou:.4f}, macro_iou={self.macro_iou:.4f}, classes={len(self.per_class)})"
-
-    def compute(self, gt: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
-        gt_pts, pr_pts, files, labels, h, w = self._space(gt, prediction)
-        # MICRO
-        y_true_micro = np.concatenate([self._flat_mask(gt_pts, f, h, w, None) for f in files], 0)
-        y_pred_micro = np.concatenate([self._flat_mask(pr_pts, f, h, w, None) for f in files], 0)
-        micro_iou = float(jaccard_score(y_true_micro, y_pred_micro, average="binary", zero_division=0))
-
-        # MACRO
-        per_class = []
-        for lab in labels:
-            y_true_lab = np.concatenate([self._flat_mask(gt_pts, f, h, w, lab) for f in files], 0)
-            y_pred_lab = np.concatenate([self._flat_mask(pr_pts, f, h, w, lab) for f in files], 0)
-            iou_lab = float(jaccard_score(y_true_lab, y_pred_lab, average="binary", zero_division=0))
-            per_class.append({"label": lab, "iou": iou_lab})
-        macro_iou = float(np.mean([c["iou"] for c in per_class])) if per_class else micro_iou
-
-        stats = IoUStats(
-            micro_iou=micro_iou,
-            macro_iou=macro_iou,
-            per_class=[PerClassIoU(label=str(c["label"]), iou=float(c["iou"])) for c in per_class],
-            labels=labels,
-        )
-        return MetricOutputModel(self.name, micro_iou, stats)
 class DiceCoefficient(Metric):
     name="dice"
     def compute(self,gt:DatasetModel,prediction:List[CocoAnnotation],**kwargs)->MetricOutputModel:

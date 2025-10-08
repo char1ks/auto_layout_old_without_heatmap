@@ -180,8 +180,7 @@ class EvalCLI:
             encoder = kwargs.get("encoder") or DinoV3EncoderGaz(); heatmap_generator = kwargs.get("heatmap_generator") or HeatmapGenerator(dino_fe=encoder, use_cosine_similarity_for_heatmap=True, threshold_cosine=0.3)
             sam_model = kwargs.get("sam_model") or FastSAM("FastSAM-x.pt"); seg_cfg = kwargs.get("segmenter_config") or SegmenterConfig(min_mask_area=200, confidence_threshold=0.5, iou_threshold=0.8, mask_threshold=0.5)
             segmenter = kwargs.get("segmenter") or SamSegmenter(sam_model=sam_model, config=seg_cfg)
-            base_classifier = kwargs.get("classifier") or MaskClassifierKNN(encoder=encoder, d=1024)
-            classifier = SortedClassifier(base_classifier)
+            classifier = kwargs.get("classifier") or MaskClassifierKNN(encoder=encoder, d=1024)
             image_resizer = kwargs.get("image_resizer") or ImageResizer(max_side=1024)
             _orig_resize = image_resizer.resize; 
             image_resizer.resize = lambda img: (lambda o,c: (o, ResizeContext(scale=float(c.get("scale",1.0)), orig_shape=tuple(c.get("orig_shape", o.shape[:2])))) if isinstance(c, dict) else (o, c)) (*_orig_resize(img))

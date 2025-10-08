@@ -336,14 +336,6 @@ class ReportGenerator(ReportConfig):
                             add("\n### Низшие по AP классы\n\n| class | AP | support |\n|---|---:|---:|\n")
                             for name, ap, sup in low:
                                 add(f"| {name} | {ap:.4f} | {sup} |\n")
-        if self.include_contexts_table and contexts:
-            add("\n## Contexts\n\n")
-            add("| # | file | duration | error |\n|---:|---|---:|---|\n")
-            for i, c in enumerate(contexts, 1):
-                dur_val = getattr(c, 'duration', None)
-                dur = float(dur_val) if dur_val is not None else 0.0
-                add(f"| {i} | {getattr(c, 'file_name', '-') or '-'} | {dur:.4f} | {str(getattr(c, 'error', '') or '')} |\n")
-
         (out / "report.md").write_text("".join(lines), encoding="utf-8")
 
     def _write_json(self, out: Path, metrics: List[Any], timing: Dict[str, Any]) -> None:

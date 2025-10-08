@@ -27,8 +27,19 @@ class Context:
         self.ended_at = datetime.utcnow()
         self.success = success
         self.error = error
-        try:
-            if self.started_at and self.ended_at:
-                self.duration = (self.ended_at - self.started_at).total_seconds()
-        except Exception:
-            pass
+        if self.started_at and self.ended_at:
+            self.duration = (self.ended_at - self.started_at).total_seconds()
+
+
+    def span(self, name: str, fn):
+        start = datetime.utcnow()
+        out = fn()
+        end = datetime.utcnow()
+        self.spans.append({
+            "name": name,
+            "started_at": start,
+            "ended_at": end,
+            "duration": (end - start).total_seconds(),
+            "attributes": {},
+        })
+        return out

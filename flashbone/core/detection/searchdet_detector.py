@@ -10,7 +10,6 @@ from flashbone.core.heatmap_generation import HeatmapGenerator
 from flashbone.core.image_resizing import ImageResizer
 from flashbone.core.detection.base import DetectorBase, DetectionResult
 from evaluation.context import Context
-from datetime import datetime
 
 
 class SearchDetDetector(DetectorBase):
@@ -77,42 +76,15 @@ class SearchDetDetector(DetectorBase):
         self._heatmap_generator.init_pooled_features_train(
             positive_images=positives, negative_images=neg_imgs)
 
-    def detect(self, image: Image.Image, heatmap_threshold: float | None = None, class_threshold: float = 0.5, *args, **kwargs) -> list[DetectionResult]:
+    def detect(self, image: Image.Image, heatmap_threshold: float | None = None, class_threshold: float = 0.5, ctx: Context | None = None, *args, **kwargs) -> list[DetectionResult]:
         callback = kwargs.get("callback")
-        ctx_obj = Context(
-            detector_name=self.__class__.__name__,
-            image_shape=tuple(np.array(image).shape) if hasattr(image, "shape") else None,
-        )
-        # spans helper
-        def span(name: str, fn):
-            start = datetime.utcnow()
-            out = fn()
-            end = datetime.utcnow()
-            try:
-                ctx_obj.spans.append({
-                    "name": name,
-                    "started_at": start,
-                    "ended_at": end,
-                    "duration": (end - start).total_seconds(),
-                    "attributes": {},
-                })
-            except Exception:
-                pass
-            return out
-
+        span = (lambda name, fn: ctx.span(name, fn)) if ctx is not None else (lambda name, fn: fn())
         resized_img, resize_ctx = span("resize", lambda: self._image_resizer.resize(np.array(image)))
         resized_img_pil = Image.fromarray(resized_img)
         _, heatmap_resized = span("heatmap", lambda: self._heatmap_generator.generate_heatmap(resized_img_pil))
 
-        # # DEBUG
-        # cv2.imwrite(".local/detector_debug_heatmap.png", (heatmap_resized.cpu().numpy()*255).astype(np.uint8))
-
         heatmap_resized = span("threshold", lambda: self._heatmap_generator.apply_threshold(heatmap_resized, heatmap_threshold))
         heatmap_np = heatmap_resized.cpu().numpy()
-
-        # # DEBUG
-        # cv2.imwrite(".local/detector_debug_heatmap_thresh.png", (heatmap_np*255).astype(np.uint8))
-
         masks = span("segment", lambda: self._segmenter.segment(resized_img_pil, heatmap=heatmap_np))
 
         dets = []
@@ -140,19 +112,14 @@ class SearchDetDetector(DetectorBase):
                 dets.append(det)
         
         restored_dets = span("restore_dets", lambda: self._image_resizer.restore_dets(dets, resize_ctx))
-        try:
-            ctx_obj.metrics = {
+        if ctx is not None:
+            ctx.metrics = {
                 "num_masks": int(len(masks)),
                 "num_dets": int(len(restored_dets)),
             }
-        except Exception:
-            pass
-        ctx_obj.finish(success=True)
-        if callable(callback):
-            try:
-                callback(ctx_obj)
-            except Exception:
-                pass
+            ctx.finish(success=True)
+            if callable(callback):
+                callback(ctx)
         return restored_dets
 
 
@@ -220,8 +187,10 @@ if __name__=="__main__":
         pos_by_class={0: [train_image_pos]}, neg_imgs=[train_image_neg_1, train_image_neg_2])
 
     start = time.perf_counter()
+    from evaluation.context import Context
+    ctx = Context(detector_name=detector.__class__.__name__, image_shape=tuple(np.array(img_pil_right).shape))
     results = detector.detect(
-        img_pil_right, heatmap_threshold=0.3, class_threshold=0.4)
+        img_pil_right, heatmap_threshold=0.3, class_threshold=0.4, ctx=ctx)
     end = time.perf_counter()
     print(f"{int((end-start)*1000)} ms.") 
 

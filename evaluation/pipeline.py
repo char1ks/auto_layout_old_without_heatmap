@@ -125,7 +125,11 @@ class Pipeline:
                     progress(idx, total, fname)
                 logger.info(f"[{idx}/{total}] skipped {fname}")
                 continue
-            det_results = self.detector.detect(image_array, *args, callback=_cb, **kwargs)
+            ctx = Context(
+                detector_name=self.detector.__class__.__name__,
+                image_shape=tuple(image_array.shape) if hasattr(image_array, "shape") else None,
+            )
+            det_results = self.detector.detect(image_array, *args, ctx=ctx, callback=_cb, **kwargs)
             anns = self._dets_to_coco(det_results, image_array, file_name=fname)
             predictions.extend(anns)
             if progress:

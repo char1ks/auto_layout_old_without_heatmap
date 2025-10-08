@@ -2,40 +2,64 @@ from __future__ import annotations
 import abc
 import numpy as np
 from collections import Counter
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional,Tuple
 from sklearn.metrics import classification_report, precision_recall_curve, average_precision_score, jaccard_score, f1_score
 from evaluation.dataset_model import DatasetModel
 from evaluation.coco_annotation import CocoAnnotation
 from shapely.geometry import box as _box_poly
 
-@dataclass
-class Meta:
-    doc: str = ""
-    formula: Optional[str] = None
-    def to_dict(self)->Dict[str,Any]:
-        d=asdict(self)
-        return {k:v for k,v in d.items() if v not in (None,"",[])}
-
-@dataclass
-class Stats:
-    data: Dict[str, Any]=field(default_factory=dict)
-    meta: Meta=field(default_factory=Meta)
-    def to_dict(self)->Dict[str,Any]:
-        out=dict(self.data)
-        out.update(self.meta.to_dict())
-        return out
-
-@dataclass
-class MetricOutputModel:
-    metric_name:str
-    score:float
-    stats:Stats
-
 class Metric(abc.ABC):
     name:str="metric"
     @abc.abstractmethod
     def compute(self, gt:DatasetModel, prediction:List[CocoAnnotation], **kwargs)->MetricOutputModel: ...
+@dataclass
+class MetricOutputModel:
+    metric_name:str
+    score:float
+    stats:Any
+
+@dataclass
+class DiceStats:
+    dice: float
+@dataclass
+class PRCurveEntry:
+    iou_threshold: float
+    precision: List[float]
+    recall: List[float]
+@dataclass
+class ClfReportStats:
+    num_files: int
+    labels: List[str]
+    text: str
+    accuracy: float
+@dataclass
+class ClassAP:
+    label: str
+    ap: float
+    support: int
+@dataclass
+class MAPStats:
+    categories: List[str]
+    gt_class_counts: List[int]
+    pred_class_counts: List[int]
+    per_class_ap: List[float]
+    per_class_ap_avg: List[float]
+    map_macro: float
+    map_micro: float
+    map_macro_50: float
+    map_macro_75: float
+    map_micro_50: float
+    map_micro_75: float
+    ap_iou_macro: List[float]
+    ap_iou_micro: List[float]
+    iou_thresholds: List[float]
+    pr_macro_curves: List[PRCurveEntry]
+    pr_micro_curves: List[PRCurveEntry]
+    per_class: List[ClassAP]
+    map: float
+    map_50: float
+    map_75: float
 
 def _iou(a: List[float], b: List[float]) -> float:
     pa, pb = _box_poly(a[0], a[1], a[2], a[3]), _box_poly(b[0], b[1], b[2], b[3])
@@ -47,8 +71,6 @@ class MeanAveragePrecision(Metric):
 
     def __init__(self, iou_thresholds: Optional[List[float]] = None) -> None:
         self.iou_thresholds = iou_thresholds or np.arange(0.5, 0.95 + 1e-9, 0.05).tolist()
-
-    # group data
     def _group(self, ground_truth: DatasetModel, predictions: List[CocoAnnotation]):
         ground_truth_by: dict[str, dict[str, List[List[float]]]] = {}
         predictions_by: dict[str, List[Tuple[str, List[float], float]]] = {}
@@ -211,47 +233,41 @@ class MeanAveragePrecision(Metric):
         per_class_ap_05 = [float(ap_per_label_per_thr[lab][idx_05]) for lab in label_names] if num_labels and num_thresholds else []
         gt_counts = [sum(len(v) for v in (gt_by.get(lab, {}) or {}).values()) for lab in label_names]
         pred_counts = [len(pr_by.get(lab, []) or []) for lab in label_names]
-        data = {
-            "categories": label_names,
-            "gt_counts": gt_counts,
-            "pred_counts": pred_counts,
-            "per_class_ap": per_class_ap_05,
-            "per_class_ap_avg": [float(np.mean(ap_per_label_per_thr[lab])) if num_thresholds else 0.0 for lab in label_names],
-            "map_macro": map_macro,
-            "map_micro": map_micro,
-            "mAP_macro@0.5": map_macro_50,
-            "mAP_macro@0.75": map_macro_75,
-            "mAP_micro@0.5": map_micro_50,
-            "mAP_micro@0.75": map_micro_75,
-            "ap_iou_macro": [float(x) for x in ap_macro],
-            "ap_iou_micro": [float(x) for x in ap_micro],
-            "iou_thresholds": [float(x) for x in thresholds],
-            "pr_macro": pr_macro,
-            "pr_micro": pr_micro,
-            "pr_curves_per_threshold": {f"{thr:.2f}": pr_curves_per_thr[thr] for thr in thresholds},
-        }
+        pr_macro_curves = [PRCurveEntry(iou_threshold=float(thr), precision=pr_macro.get(f"{thr:.2f}", {}).get("precision", []), recall=pr_macro.get(f"{thr:.2f}", {}).get("recall", [])) for thr in thresholds]
+        pr_micro_curves = [PRCurveEntry(iou_threshold=float(thr), precision=pr_micro.get(f"{thr:.2f}", {}).get("precision", []), recall=pr_micro.get(f"{thr:.2f}", {}).get("recall", [])) for thr in thresholds]
+        per_class = [ClassAP(label=str(lab), ap=float(np.mean(ap_per_label_per_thr[lab])) if num_thresholds else 0.0, support=int(gt_counts[i])) for i, lab in enumerate(label_names)]
 
-        # compatibility
         if avg_mode == "micro":
-            data.update({
-                "map": map_micro,
-                "map_50": map_micro_50,
-                "map_75": map_micro_75,
-                "mAP@0.5": map_micro_50,
-                "mAP@0.75": map_micro_75,
-            })
             final_score = map_micro
+            map_val, map_50_val, map_75_val = map_micro, map_micro_50, map_micro_75
         else:
-            data.update({
-                "map": map_macro,
-                "map_50": map_macro_50,
-                "map_75": map_macro_75,
-                "mAP@0.5": map_macro_50,
-                "mAP@0.75": map_macro_75,
-            })
             final_score = map_macro
+            map_val, map_50_val, map_75_val = map_macro, map_macro_50, map_macro_75
 
-        return MetricOutputModel(self.name, final_score, Stats(data=data, meta=Meta(doc=(self.__class__.__doc__ or '').strip())))
+        stats = MAPStats(
+            categories=list(label_names),
+            gt_class_counts=gt_counts,
+            pred_class_counts=pred_counts,
+            per_class_ap=per_class_ap_05,
+            per_class_ap_avg=[float(np.mean(ap_per_label_per_thr[lab])) if num_thresholds else 0.0 for lab in label_names],
+            map_macro=map_macro,
+            map_micro=map_micro,
+            map_macro_50=map_macro_50,
+            map_macro_75=map_macro_75,
+            map_micro_50=map_micro_50,
+            map_micro_75=map_micro_75,
+            ap_iou_macro=[float(x) for x in ap_macro],
+            ap_iou_micro=[float(x) for x in ap_micro],
+            iou_thresholds=[float(x) for x in thresholds],
+            pr_macro_curves=pr_macro_curves,
+            pr_micro_curves=pr_micro_curves,
+            per_class=per_class,
+            map=map_val,
+            map_50=map_50_val,
+            map_75=map_75_val,
+        )
+
+        return MetricOutputModel(self.name, final_score, stats)
 class MeanIntersectionOverUnion(Metric):
     name = "mIoU"
 
@@ -280,6 +296,21 @@ class MeanIntersectionOverUnion(Metric):
                     (0, 0))
         return gt_pts, pr_pts, files, labels, h, w
 
+@dataclass
+class PerClassIoU:
+    label: str
+    iou: float
+
+@dataclass
+class IoUStats:
+    micro_iou: float
+    macro_iou: float
+    per_class: List[PerClassIoU]
+    labels: List[str]
+
+    def __repr__(self) -> str:
+        return f"IoUStats(micro_iou={self.micro_iou:.4f}, macro_iou={self.macro_iou:.4f}, classes={len(self.per_class)})"
+
     def compute(self, gt: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
         gt_pts, pr_pts, files, labels, h, w = self._space(gt, prediction)
         # MICRO
@@ -296,81 +327,49 @@ class MeanIntersectionOverUnion(Metric):
             per_class.append({"label": lab, "iou": iou_lab})
         macro_iou = float(np.mean([c["iou"] for c in per_class])) if per_class else micro_iou
 
-        data = {
-            "micro_iou": micro_iou,
-            "macro_iou": macro_iou,
-            "per_class": per_class,
-            "labels": labels
-        }
-        return MetricOutputModel(
-            self.name,
-            micro_iou,
-            Stats(data=data, meta=Meta(doc=(self.__class__.__doc__ or "").strip(), formula="IoU = |X∩Y| / |X∪Y|"))
+        stats = IoUStats(
+            micro_iou=micro_iou,
+            macro_iou=macro_iou,
+            per_class=[PerClassIoU(label=str(c["label"]), iou=float(c["iou"])) for c in per_class],
+            labels=labels,
         )
+        return MetricOutputModel(self.name, micro_iou, stats)
 class DiceCoefficient(Metric):
     name="dice"
     def compute(self,gt:DatasetModel,prediction:List[CocoAnnotation],**kwargs)->MetricOutputModel:
-
         miou = MeanIntersectionOverUnion()
         gt_pts, pr_pts, files, labels, h, w = miou._space(gt, prediction)
-
-
-        y_true = np.concatenate([miou._flat_mask(gt_pts, f, h, w, None) for f in files], 0) if files else np.array([], dtype=np.uint8)
-        y_pred = np.concatenate([miou._flat_mask(pr_pts, f, h, w, None) for f in files], 0) if files else np.array([], dtype=np.uint8)
+        m_true = [miou._flat_mask(gt_pts, f, h, w, None) for f in files]
+        y_true = np.concatenate(m_true, 0) 
+        m_pred = [miou._flat_mask(pr_pts, f, h, w, None) for f in files]
+        y_pred = np.concatenate(m_pred, 0) 
         
-        s = float(f1_score(y_true, y_pred, average="binary", zero_division=0)) if y_true.size and y_pred.size else 0.0
-        return MetricOutputModel(
-            self.name,
-            s,
-            Stats(meta=Meta(doc=(self.__class__.__doc__ or '').strip(), formula='Dice = 2PR/(P+R)'))
-        )
+        s = float(f1_score(y_true, y_pred, average="binary", zero_division=0))
+        
+        return MetricOutputModel(self.name, s, DiceStats(dice=s))
 
 class ClassificationReportMetric(Metric):
     name="classification_report"
     def compute(self, gt: DatasetModel, prediction: List[CocoAnnotation], **kwargs) -> MetricOutputModel:
-    # inputs
-        gt_pts = gt.data_points or []
-        pr_pts = prediction or []
+        gt_pts = gt.data_points
+        pr_pts = prediction
 
-        # files list
-        gt_files = [str(a.file_name) for a in gt_pts if a.file_name is not None]
-        pr_files = [str(a.file_name) for a in pr_pts if a.file_name is not None]
-        files = sorted(set(gt_files) | set(pr_files))
-        # file labels
-        def labels_for(points: List[CocoAnnotation], fname: str) -> List[str]:
-            return [
-                str(a.label)
-                for a in points
-                if a.file_name is not None and str(a.file_name) == fname and a.label is not None
-            ]
+        files = sorted({str(a.file_name) for a in gt_pts + pr_pts if a.file_name is not None})
 
-        # build pairs
-        y_true: List[str] = []
-        y_pred: List[str] = []
-        for fname in files:
-            gt_labels = labels_for(gt_pts, fname)
-            pr_labels = labels_for(pr_pts, fname)
+        def labels_for(pts: List[CocoAnnotation], file_key: str) -> List[str]:
+            return [str(a.label) for a in pts if a.file_name is not None and str(a.file_name) == file_key and a.label is not None]
 
-            g = Counter(gt_labels).most_common(1)[0][0] if gt_labels else "none"
-            p = Counter(pr_labels).most_common(1)[0][0] if pr_labels else "none"
-            if g != "none" and p != "none":
-                y_true.append(g)
-                y_pred.append(p)
-        
+        pairs: List[Tuple[str, str]] = []
+        for f in files:
+            gt_labels = labels_for(gt_pts, f)
+            pr_labels = labels_for(pr_pts, f)
+            gt_major = Counter(gt_labels).most_common(1)[0][0]
+            pr_major = Counter(pr_labels).most_common(1)[0][0]
+            pairs.append((gt_major, pr_major))
+
+        y_true = [a for a, _ in pairs]
+        y_pred = [b for _, b in pairs]
         report_text = classification_report(y_true, y_pred, output_dict=False, zero_division=0)
-        report_dict = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
         accuracy = float(np.mean([a == b for a, b in zip(y_true, y_pred)]))
-
-        all_labels = sorted(set(y_true) | set(y_pred))
-        data = {
-            "num_files": len(files),
-            "labels": all_labels,
-            "text": report_text,
-            "dict": report_dict,
-            "accuracy": accuracy,
-        }
-        return MetricOutputModel(
-            self.name,
-            accuracy,
-            Stats(data=data, meta=Meta(doc=(self.__class__.__doc__ or "").strip())),
-        )
+        stats = ClfReportStats(num_files=len(files), labels=sorted(set(y_true) | set(y_pred)), text=report_text, accuracy=accuracy)
+        return MetricOutputModel(self.name, accuracy, stats)

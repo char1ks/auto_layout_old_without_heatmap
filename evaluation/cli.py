@@ -73,42 +73,20 @@ def _load_obj(dotted: str) -> Any:
 
 
 def _read_config_file(path: Path) -> Dict[str, Any]:
-    try:
-        text = Path(path).read_text(encoding="utf-8")
-        suffix = Path(path).suffix.lower()
-        
-        if suffix in {".yml", ".yaml"}:
-            data = yaml.safe_load(text)
-            return data if isinstance(data, dict) else {}
-        elif suffix == ".json":
-            data = json.loads(text)
-            return data if isinstance(data, dict) else {}
-        else:
-            return {}
-    except Exception:
+    text = Path(path).read_text(encoding="utf-8")
+    suffix = Path(path).suffix.lower()
+    
+    if suffix in {".yml", ".yaml"}:
+        data = yaml.safe_load(text)
+        return data if isinstance(data, dict) else {}
+    elif suffix == ".json":
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    else:
         return {}
-
-
- 
-
 
 def _odict(obj: Any) -> Dict[str, Any]:
     return obj.__dict__ if "__dict__" in dir(obj) else {}
-
-
-class SortedClassifier:
-    def __init__(self, classifier):
-        self.classifier = classifier
-    
-    def __getattr__(self, name):
-        return getattr(self.classifier, name)
-    
-    def predict(self, request):
-        predictions = self.classifier.predict(request)
-        if predictions:
-            predictions.sort(key=lambda x: x.score, reverse=True)
-        return predictions
-
 
 class EvalCLI:
     def __init__(self, config_path: Path) -> None:
@@ -202,7 +180,8 @@ class EvalCLI:
             encoder = kwargs.get("encoder") or DinoV3EncoderGaz(); heatmap_generator = kwargs.get("heatmap_generator") or HeatmapGenerator(dino_fe=encoder, use_cosine_similarity_for_heatmap=True, threshold_cosine=0.3)
             sam_model = kwargs.get("sam_model") or FastSAM("FastSAM-x.pt"); seg_cfg = kwargs.get("segmenter_config") or SegmenterConfig(min_mask_area=200, confidence_threshold=0.5, iou_threshold=0.8, mask_threshold=0.5)
             segmenter = kwargs.get("segmenter") or SamSegmenter(sam_model=sam_model, config=seg_cfg)
-            base_classifier = kwargs.get("classifier") or MaskClassifierKNN(encoder=encoder, d=1024); classifier = SortedClassifier(base_classifier)
+            base_classifier = kwargs.get("classifier") or MaskClassifierKNN(encoder=encoder, d=1024)
+            classifier = SortedClassifier(base_classifier)
             image_resizer = kwargs.get("image_resizer") or ImageResizer(max_side=1024)
             _orig_resize = image_resizer.resize; 
             image_resizer.resize = lambda img: (lambda o,c: (o, ResizeContext(scale=float(c.get("scale",1.0)), orig_shape=tuple(c.get("orig_shape", o.shape[:2])))) if isinstance(c, dict) else (o, c)) (*_orig_resize(img))

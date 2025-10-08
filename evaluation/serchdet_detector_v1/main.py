@@ -35,7 +35,7 @@ def build_detector() -> SearchDetDetector:
     segmenter = SamSegmenter(sam_model=sam_model, config=seg_cfg)
     classifier = MaskClassifierKNN(encoder=encoder, d=1024)
     image_resizer = ImageResizer(max_side=1024)
-    # ensure ResizeContext compatibility
+    
     _orig_resize = image_resizer.resize
     image_resizer.resize = lambda img: (
         (lambda o, c: (o, ResizeContext(scale=float(c.get("scale", 1.0)), orig_shape=tuple(c.get("orig_shape", o.shape[:2])))) if isinstance(c, dict) else (o, c))
@@ -62,7 +62,7 @@ def main():
     preds, metrics, out_dir = eva.run(
         positive_dir=Path("examples/positive"),
         negative_dir=None,
-        image_root=dataset.root,
+        image_root=Path("fruits/images"),
         average="micro",
         output_dir=Path("results_cache"),
         dump_report=True,

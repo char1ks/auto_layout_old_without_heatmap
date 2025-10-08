@@ -46,7 +46,18 @@ class Eval:
             metrics = ["mAP", "mIoU", "dice", "clf_report"]
         result: List[Metric] = []
         for m in metrics:
-            result.append(m)
+            if isinstance(m, Metric):
+                result.append(m)
+                continue
+            if isinstance(m, str):
+                cls = _METRIC_BY_NAME.get(m)
+                if cls:
+                    result.append(cls())
+            if isinstance(m, type) and issubclass(m, Metric):
+                result.append(m())
+                continue
+
+            logger.warning(f"Unsupported metric spec '{m}'; skipping.")
         return result
 
     def run(
@@ -70,7 +81,7 @@ class Eval:
         pipeline.set_references(positive_dir, negative_dir)
 
         progress_cb = progress or (lambda i, t, f: logger.info(f"[{i}/{t}] {f or ''}"))
-        image_root = Path(image_root)
+        image_root = Path(image_root) if image_root is not None else None
 
         if enable_profile:
             with tracer.profile(

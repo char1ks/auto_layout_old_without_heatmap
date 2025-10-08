@@ -51,17 +51,13 @@ class ClassifierBase(ABC):
             normalized_similarities = np.squeeze((similarities + 1) / 2, 0)
             # Apply a threshold to filter matches
             filtered_indices = np.where(normalized_similarities > threshold)[0]
-            if not len(filtered_indices):
-                pred = ClassifierPrediction(
-                    class_id=-1,
-                    score=0,
-                )
-            else:
+            if len(filtered_indices):
                 pred = ClassifierPrediction(
                     class_id=class_id,
                     score=normalized_similarities[filtered_indices][0],
                 )
-            preds.append(pred)
+                preds.append(pred)
+        preds.sort(key=lambda x: float(x.score), reverse=True)
         return preds
 
     def index(self, dataset: list[ClassData]) -> None:

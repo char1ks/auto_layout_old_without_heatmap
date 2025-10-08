@@ -54,11 +54,11 @@ class Pipeline:
         anns: List[CocoAnnotation] = []
         for d in dets:
             dd = d if isinstance(d, dict) else {
-                "polygons": getattr(d, "polygons", None),
-                "bbox": getattr(d, "bbox", None),
-                "score": getattr(d, "score", None),
-                "area": getattr(d, "area", None),
-                "class_id": getattr(d, "class_id", None),
+                "polygons": d.polygons,
+                "bbox": d.bbox,
+                "score": d.score,
+                "area": d.area,
+                "class_id": d.class_id,
             }
             bbox = dd.get("bbox")
             bbox = [float(v) for v in bbox] if isinstance(bbox, list) and len(bbox) == 4 else [0.0, 0.0, float(W), float(H)]

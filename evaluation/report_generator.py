@@ -55,8 +55,8 @@ class ReportGenerator(ReportConfig):
         return report_dir if dump_report else None
 
     def _collect_timing_stats(self, contexts: List[Any]) -> Dict[str, Any]:
-        durations: List[float] = [float(getattr(c, "duration")) for c in (contexts or [])]
-        errors: List[Any] = [getattr(c, "error", None) for c in (contexts or []) if getattr(c, "error", None)]
+        durations: List[float] = [float(c.duration) for c in (contexts or [])]
+        errors: List[Any] = [c.error for c in (contexts or []) if c.error]
         return {
             "total_runs": len(contexts or []),
             "success": len(durations),
@@ -95,19 +95,19 @@ class ReportGenerator(ReportConfig):
             mtab = Table(box=box.SIMPLE)
             mtab.add_column("Metric"); mtab.add_column("Score", justify="right")
             for m in metrics or []:
-                name = getattr(m, "metric_name", getattr(m, "name", "metric"))
-                score = float(getattr(m, "score", 0.0))
+                name = m.metric_name
+                score = float(m.score)
                 mtab.add_row(str(name), f"{score:.4f}")
             self.console.print(mtab)
 
         if self.include_errors:
-            errs = [(getattr(c, "error", None), getattr(c, "file_name", None)) for c in (contexts or []) if getattr(c, "error", None)]
+            errs = [c.error for c in (contexts or []) if c.error]
             if errs:
                 self.console.rule("[bold]Ошибки[/bold]")
                 et = Table(box=box.SIMPLE)
-                et.add_column("Файл"); et.add_column("Ошибка")
-                for err, fn in errs[: int(self.top_k_errors)]:
-                    et.add_row(str(fn or "-"), str(err))
+                et.add_column("Ошибка")
+                for err in errs[: int(self.top_k_errors)]:
+                    et.add_row(str(err))
                 self.console.print(et)
 
     def _save_graphs(self, out: Path, metrics: List[Any], timing: Dict[str, Any], contexts: List[Any]) -> Dict[str, Path]:
@@ -127,14 +127,11 @@ class ReportGenerator(ReportConfig):
         if self.include_spans:
             spans: Dict[str, List[float]] = {}
             for c in contexts or []:
-                sd = getattr(c, "spans", []) or []
+                sd = c.spans or []
                 for s in sd:
-                    if isinstance(s, dict):
-                        name = str(s.get("name", "-"))
-                        dur = s.get("duration", None)
-                    else:
-                        name = str(getattr(s, "name", "-"))
-                        dur = getattr(s, "duration", None)
+                    # s ожидается как dict из Context.span
+                    name = str(s.get("name", "-"))
+                    dur = s.get("duration", None)
                     if dur is None:
                         continue
                     try:
@@ -152,12 +149,11 @@ class ReportGenerator(ReportConfig):
 
         mm = _find_map_metric(metrics)
         if mm:
-            st_obj = getattr(mm, "stats", None)
-            cats_val = getattr(st_obj, "categories", None)
-            cats = cats_val if cats_val is not None else []
+            st_obj = mm.stats
+            cats = st_obj.categories
             for title, counts, stem in [
-                ("GT class distribution", (getattr(st_obj, "gt_class_counts", None) ), "gt_class_distribution"),
-                ("Predicted class distribution", (getattr(st_obj, "pred_class_counts", None) ), "pred_class_distribution"),
+                ("GT class distribution", (st_obj.gt_class_counts), "gt_class_distribution"),
+                ("Predicted class distribution", (st_obj.pred_class_counts), "pred_class_distribution"),
             ]:
                 counts = counts if counts is not None else []
                 if cats and counts and len(cats) == len(counts):
@@ -173,25 +169,20 @@ class ReportGenerator(ReportConfig):
             if self.include_ap_graphs:
                 for iou_target, tag in [(0.50, "050"), (0.75, "075")]:
                     for curves_attr, stem in [("pr_macro_curves", "pr_macro"), ("pr_micro_curves", "pr_micro")]:
-                        curves = getattr(st_obj, curves_attr, []) or []
+                        curves = (st_obj.pr_macro_curves if curves_attr == "pr_macro_curves" else st_obj.pr_micro_curves) or []
                         if curves:
-                            c = min(curves, key=lambda x: abs(float(getattr(x, "iou_threshold", 0.0)) - float(iou_target)))
-                            rec_val = getattr(c, "recall", None)
-                            prec_val = getattr(c, "precision", None)
-                            rec = rec_val 
-                            prec = prec_val
+                            c = min(curves, key=lambda x: abs(float(x.iou_threshold) - float(iou_target)))
+                            rec = c.recall
+                            prec = c.precision
                             if rec and prec and len(rec) > 1:
                                 plt.figure(figsize=(self.figure_width, self.figure_height))
                                 plt.plot(rec, prec)
                                 plt.xlabel("Recall"); plt.ylabel("Precision"); plt.title(f"PR Curve ({'Macro' if curves_attr=='pr_macro_curves' else 'Micro'}) @IoU={iou_target:.2f}")
                                 images[f"{stem}_{tag}"] = _savefig(out / f"{stem}_{tag}.svg")
 
-                ious_val = getattr(st_obj, "iou_thresholds", None)
-                apM_val = getattr(st_obj, "ap_iou_macro", None)
-                apm_val = getattr(st_obj, "ap_iou_micro", None)
-                ious = ious_val 
-                apM = apM_val
-                apm = apm_val 
+                ious = st_obj.iou_thresholds
+                apM = st_obj.ap_iou_macro
+                apm = st_obj.ap_iou_micro 
                 if ious and (apM or apm):
                     plt.figure(figsize=(self.figure_width, self.figure_height))
                     if apM: plt.plot(ious, apM, label="Macro")
@@ -202,8 +193,8 @@ class ReportGenerator(ReportConfig):
                 def _best_f1_points(curves_list: List[Any]) -> List[tuple]:
                     pts: List[tuple] = []
                     for c in curves_list or []:
-                        rec = getattr(c, "recall", []) or []
-                        prec = getattr(c, "precision", []) or []
+                        rec = c.recall or []
+                        prec = c.precision or []
                         if not rec or not prec or len(rec) != len(prec):
                             continue
                         best_i = 0; best_f1 = -1.0
@@ -212,11 +203,11 @@ class ReportGenerator(ReportConfig):
                             f1 = (2 * p * r / (p + r)) if (p + r) > 0 else 0.0
                             if f1 > best_f1:
                                 best_f1 = f1; best_i = i
-                        pts.append((float(rec[best_i]), float(prec[best_i]), float(getattr(c, "iou_threshold", 0.0))))
+                        pts.append((float(rec[best_i]), float(prec[best_i]), float(c.iou_threshold)))
                     return pts
 
-                macro_points = _best_f1_points(getattr(st_obj, "pr_macro_curves", []) or [])
-                micro_points = _best_f1_points(getattr(st_obj, "pr_micro_curves", []) or [])
+                macro_points = _best_f1_points(st_obj.pr_macro_curves or [])
+                micro_points = _best_f1_points(st_obj.pr_micro_curves or [])
                 if macro_points:
                     plt.figure(figsize=(self.figure_width, self.figure_height))
                     plt.scatter([r for r, p, _ in macro_points], [p for r, p, _ in macro_points], s=20)
@@ -228,25 +219,17 @@ class ReportGenerator(ReportConfig):
                     plt.xlabel("Recall"); plt.ylabel("Precision"); plt.title("Best F1 points (Micro)")
                     images["ap_pr_points_micro"] = _savefig(out / "ap_pr_points_micro.svg")
 
-                per_class = getattr(st_obj, "per_class", []) or []
-                per_class_ap_dict = getattr(st_obj, "per_class_ap", None)
+                per_class = st_obj.per_class or []
                 cats_map = {str(c): i for i, c in enumerate(cats)} if cats else {}
-                gt_counts = getattr(st_obj, "gt_class_counts", []) or []
+                gt_counts = st_obj.gt_class_counts or []
 
                 items: List[tuple] = []  
                 if per_class:
                     for pc in per_class:
-                        label = str(getattr(pc, "label", "-"))
-                        ap = float(getattr(pc, "ap", 0.0))
-                        support = int(getattr(pc, "support", 0))
+                        label = str(pc.label)
+                        ap = float(pc.ap)
+                        support = int(pc.support)
                         items.append((label, ap, support))
-                elif isinstance(per_class_ap_dict, dict) and per_class_ap_dict:
-                    for label, ap in per_class_ap_dict.items():
-                        label_s = str(label)
-                        ap_f = float(ap)
-                        idx = cats_map.get(label_s, None)
-                        support = int(gt_counts[idx]) if (idx is not None and idx < len(gt_counts)) else 0
-                        items.append((label_s, ap_f, support))
 
                 if items:
                     items_desc = sorted(items, key=lambda x: x[1], reverse=True)
@@ -276,12 +259,12 @@ class ReportGenerator(ReportConfig):
 
                         csv_lines_low = ["class,ap,support"] + [f"{items_asc[i][0]},{items_asc[i][1]:.6f},{items_asc[i][2]}" for i in range(len(items_asc))]
                         (out / "per_class_ap_lowest.csv").write_text("\n".join(csv_lines_low), encoding="utf-8")
-        miou_metric = next((m for m in (metrics or []) if str(getattr(m, "metric_name", getattr(m, "name", ""))) == "mIoU"), None)
+        miou_metric = next((m for m in (metrics or []) if str(m.metric_name) == "mIoU"), None)
         if miou_metric is not None:
-            st_obj = getattr(miou_metric, "stats", None)
-            per_class_iou = getattr(st_obj, "per_class", []) or []
+            st_obj = miou_metric.stats
+            per_class_iou = st_obj.per_class or []
             if per_class_iou:
-                items_iou = [(str(getattr(pc, "label", "-")), float(getattr(pc, "iou", 0.0))) for pc in per_class_iou]
+                items_iou = [(str(pc.label), float(pc.iou)) for pc in per_class_iou]
                 items_iou_desc = sorted(items_iou, key=lambda x: x[1], reverse=True)
                 labels_iou = [i[0] for i in items_iou_desc]
                 vals_iou = [i[1] for i in items_iou_desc]
@@ -318,18 +301,18 @@ class ReportGenerator(ReportConfig):
             add("\n## Metrics\n\n")
             add("| Metric | Score |\n|---|---:|\n")
             for m in metrics or []:
-                add(f"| {getattr(m, 'metric_name', getattr(m, 'name', 'metric'))} | {float(getattr(m, 'score', 0.0)):.4f} |\n")
+                add(f"| {m.metric_name} | {float(m.score):.4f} |\n")
 
             if self.include_detector_breakdown:
                 mm = _find_map_metric(metrics)
                 if mm:
-                    st_obj = getattr(mm, "stats", None)
-                    per_class = getattr(st_obj, "per_class", []) or []
+                    st_obj = mm.stats
+                    per_class = st_obj.per_class or []
                     if per_class:
                         items = sorted(((
-                            getattr(pc, "label", "-"),
-                            float(getattr(pc, "ap", 0.0)),
-                            int(getattr(pc, "support", 0)),
+                            pc.label,
+                            float(pc.ap),
+                            int(pc.support),
                         ) for pc in per_class), key=lambda x: x[1])
                         low = items[: int(self.top_k_lowest_map)]
                         if low:
@@ -342,9 +325,9 @@ class ReportGenerator(ReportConfig):
         payload = {
             "metrics": [
                 {
-                    "metric_name": getattr(m, "metric_name", getattr(m, "name", "metric")),
-                    "score": float(getattr(m, "score", 0.0)),
-                    "stats": (asdict(getattr(m, "stats")) if is_dataclass(getattr(m, "stats", None)) else (getattr(m, "stats") if isinstance(getattr(m, "stats", {}), dict) else {"value": getattr(m, "stats", {})})),
+                    "metric_name": m.metric_name,
+                    "score": float(m.score),
+                    "stats": (asdict(m.stats) if is_dataclass(m.stats) else (m.stats if isinstance(m.stats, dict) else {"value": m.stats})),
                 }
                 for m in (metrics or [])
             ],
@@ -355,7 +338,10 @@ class ReportGenerator(ReportConfig):
 
 def _find_map_metric(metrics: Iterable[Any]) -> Optional[Any]:
     for m in metrics or []:
-        name = str(getattr(m, "metric_name", getattr(m, "name", ""))).lower()
+        try:
+            name = str(m.metric_name).lower()
+        except Exception:
+            continue
         if name in {"map", "meanaverageprecision", "mean_average_precision", "mean-average-precision"}:
             return m
     return None

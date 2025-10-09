@@ -10,6 +10,7 @@ def test_searchdet_pipeline(detector, image_right):
     print(f"{int((end-start)*1000)} ms.") 
     assert isinstance(results, list)
     assert ctx is not None
+    assert results, "Empty from serchdet"
     if results:
         det = results[0]
         assert hasattr(det, "class_id")

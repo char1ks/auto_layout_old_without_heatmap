@@ -1,44 +1,33 @@
 import pytest
-import os
+from pathlib import Path
 from PIL import Image
-from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
 from flashbone.core.heatmap_generation import HeatmapGenerator, crop_by_mask
 
 
 @pytest.fixture(scope="session")
 def test_data_dir():
-    return os.path.join(os.path.dirname(__file__), "..", "data")
+    return Path(__file__).parent.parent / "data"
 
 
 @pytest.fixture(scope="session")
 def sample_image(test_data_dir):
-    image_path = os.path.join(test_data_dir, "example.jpg")
-    return Image.open(image_path).convert("RGB")
+    return Image.open(test_data_dir / "example.jpg").convert("RGB")
 
 
 @pytest.fixture(scope="session")
 def image_left(test_data_dir):
-    image_path = os.path.join(test_data_dir, "image_left.jpg")
-    return Image.open(image_path).convert("RGB")
+    return Image.open(test_data_dir / "image_left.jpg").convert("RGB")
 
 
 @pytest.fixture(scope="session")
 def image_right(test_data_dir):
-    image_path = os.path.join(test_data_dir, "image_right.jpg")
-    return Image.open(image_path).convert("RGB")
+    return Image.open(test_data_dir / "image_right.jpg").convert("RGB")
 
 
 @pytest.fixture(scope="session")
 def mask_left(test_data_dir):
-    mask_path = os.path.join(test_data_dir, "image_left_fg.png")
-    mask = Image.open(mask_path)
+    mask = Image.open(test_data_dir / "image_left_fg.png")
     return mask.split()[-1]  
-
-
-@pytest.fixture(scope="session")
-def dino_encoder():
-    return DinoV3EncoderGaz()
-
 
 @pytest.fixture(scope="session")
 def heatmap_generator(dino_encoder):

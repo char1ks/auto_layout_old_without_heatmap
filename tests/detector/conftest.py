@@ -1,61 +1,40 @@
-import os
 import pytest
+from pathlib import Path
 from PIL import Image
-
-from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
 from flashbone.core.segmentation import SegmenterConfig, SamSegmenter
 from flashbone.core.heatmap_generation import HeatmapGenerator, crop_by_mask
 from flashbone.core.classification.mask_classifier_knn import MaskClassifierKNN
 from flashbone.core.image_resizing import ImageResizer
 from flashbone.core.detection.searchdet_detector import SearchDetDetector
-
+from ultralytics import FastSAM
 
 @pytest.fixture(scope="session")
 def test_data_dir():
-    return os.path.join(os.path.dirname(__file__), "..", "data")
+    return Path(__file__).parent.parent / "data"
 
 
 @pytest.fixture(scope="session")
 def example_image(test_data_dir):
-    return Image.open(os.path.join(test_data_dir, "example.jpg")).convert("RGB")
+    return Image.open(test_data_dir / "example.jpg").convert("RGB")
 
 
 @pytest.fixture(scope="session")
 def image_left(test_data_dir):
-    return Image.open(os.path.join(test_data_dir, "image_left.jpg")).convert("RGB")
+    return Image.open(test_data_dir / "image_left.jpg").convert("RGB")
 
 
 @pytest.fixture(scope="session")
 def image_right(test_data_dir):
-    return Image.open(os.path.join(test_data_dir, "image_right.jpg")).convert("RGB")
+    return Image.open(test_data_dir / "image_right.jpg").convert("RGB")
 
 
 @pytest.fixture(scope="session")
 def mask_left(test_data_dir):
-    return Image.open(os.path.join(test_data_dir, "image_left_fg.png")).split()[-1] # alpha channel
-
-
-@pytest.fixture(scope="session")
-def fastsam_weights_path():
-    path = os.environ.get("FASTSAM_WEIGHTS", "FastSAM-x.pt")
-    if not os.path.exists(path):
-        pytest.skip(f"FastSAM weights not found: {path}")
-    return path
-
+    return Image.open(test_data_dir / "image_left_fg.png").split()[-1] # alpha channel
 
 @pytest.fixture(scope="session")
-def sam_model(fastsam_weights_path):
-    pytest.importorskip("ultralytics")
-    from ultralytics import FastSAM
-    return FastSAM(fastsam_weights_path)
-
-
-@pytest.fixture(scope="session")
-def dino_encoder(example_image):
-    encoder = DinoV3EncoderGaz()
-    
-    _ = encoder.encode([example_image])
-    return encoder
+def sam_model():
+    return FastSAM("FastSAM-x.pt")
 
 
 @pytest.fixture(scope="session")
@@ -68,8 +47,8 @@ def heatmap_generator(dino_encoder):
 
 
 @pytest.fixture(scope="session")
-def sam_segmenter(sam_model):
-    return SamSegmenter(
+def sam_segmenter(sam_model, example_image):
+    seg = SamSegmenter(
         sam_model=sam_model,
         config=SegmenterConfig(
             min_mask_area=200,
@@ -78,6 +57,8 @@ def sam_segmenter(sam_model):
             mask_threshold=0.5,
         ),
     )
+    _ = seg.segment(example_image)
+    return seg
 
 
 @pytest.fixture(scope="session")

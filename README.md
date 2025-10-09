@@ -5,9 +5,16 @@ Install dependencies:
 make install
 ```  
 
-Copy dinov3 weights:  
+## Tests
+
+Требуется GPU (CUDA). Copy dinov3 weights:  
 ```sh
 cp ~/dinov3-weights/dinov3/* ~/.cache/torch/hub/checkpoints/
+```  
+
+Запуск тестов локально:
+```sh
+make tests
 ```  
 
 ## Run  
@@ -22,5 +29,5 @@ TODO
 TODO
 
 ```sh
-!MPLBACKEND=Agg LOG_LEVEL=INFO poetry run python -m cli config.yaml
-```  
+poetry run python -m 'evaluation.serchdet_detector_v1.main'
+```

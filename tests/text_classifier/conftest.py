@@ -23,13 +23,22 @@ def image_right(test_data_dir):
 
 
 @pytest.fixture(scope="session")
+def image_example(test_data_dir):
+    return Image.open(test_data_dir / "example.jpg").convert("RGB")
+
+
+@pytest.fixture(scope="session")
 def vt_encoder():
     return DinoV3VisionTextEncoderGaz()
 
 
 @pytest.fixture(scope="session")
 def vt_classifier(vt_encoder):
-    # В __main__ d=2048
+    return VisionTextClassifierKNN(encoder=vt_encoder, d=2048)
+
+
+@pytest.fixture(scope="function")
+def fresh_vt_classifier(vt_encoder):
     return VisionTextClassifierKNN(encoder=vt_encoder, d=2048)
 
 

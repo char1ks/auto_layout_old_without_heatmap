@@ -50,7 +50,9 @@ def test_from_json_meta_counts():
     assert model.meta.total_images == 2
     assert model.meta.total_annotations == 1
     cat_names = model.meta.categories
-    assert set(cat_names) == {"{'id': 10, 'name': 'cat'}", "{'id': 20, 'name': 'dog'}"}
+    expected_categories = [{"id": 10, "name": "cat"}, {"id": 20, "name": "dog"}]
+    assert len(cat_names) == len(expected_categories)
+    assert all(cat in expected_categories for cat in cat_names)
 
 
 def test_from_path_reads_and_sets_meta(tmp_path: Path):
@@ -65,7 +67,9 @@ def test_from_path_reads_and_sets_meta(tmp_path: Path):
     assert model.meta.total_images == 2
     assert model.meta.total_annotations == 2
     cat_names = model.meta.categories
-    assert set(cat_names) == {"{'id': 10, 'name': 'cat'}", "{'id': 20, 'name': 'dog'}"}
+    expected_categories = [{"id": 10, "name": "cat"}, {"id": 20, "name": "dog"}]
+    assert len(cat_names) == len(expected_categories)
+    assert all(cat in expected_categories for cat in cat_names)
     anns = model.data_points
     assert len(anns) == 2
     assert set(a.file_name for a in anns) == {"img1.jpg", "img2.jpg"}

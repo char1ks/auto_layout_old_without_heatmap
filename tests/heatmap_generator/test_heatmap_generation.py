@@ -6,11 +6,17 @@ from flashbone.core.heatmap_generation import (
     HeatmapGenerator,
     crop_by_mask,
 )
-def test_model_creation_and_warmup(self, dino_encoder, sample_image):
+def test_model_creation_and_warmup(dino_encoder, sample_image):
     feats_ex = dino_encoder.encode([sample_image])
     assert feats_ex is not None
-    assert isinstance(feats_ex, torch.Tensor)
-def test_heatmap_generator_creation(self, dino_encoder):
+
+    assert hasattr(feats_ex, "cls") and isinstance(feats_ex.cls, torch.Tensor)
+    assert hasattr(feats_ex, "patches") and isinstance(feats_ex.patches, torch.Tensor)
+    assert feats_ex.patches.ndim == 4
+    patch0 = feats_ex.patches[0]
+    assert isinstance(patch0, torch.Tensor) and patch0.ndim == 3
+    
+def test_heatmap_generator_creation(dino_encoder):
     heatmap_generator = HeatmapGenerator(
         dino_fe=dino_encoder, 
         use_cosine_similarity_for_heatmap=False,
@@ -20,7 +26,7 @@ def test_heatmap_generator_creation(self, dino_encoder):
     assert heatmap_generator.dino_fe is dino_encoder
     assert not heatmap_generator.use_cosine_similarity_for_heatmap
     assert heatmap_generator.threshold_dotp == 10
-def test_training_data_preparation(self, image_left, mask_left):
+def test_training_data_preparation(image_left, mask_left):
     train_image_pos = crop_by_mask(image_left, mask_left)
 
     train_image_neg_1 = image_left.crop((0, 0, 150, 150)) 
@@ -35,7 +41,7 @@ def test_training_data_preparation(self, image_left, mask_left):
     assert isinstance(train_image_neg_2, Image.Image)
     assert train_image_neg_1.size == (150, 150)
     assert train_image_neg_2.size == (150, 150)
-def test_pooled_features_training(self, heatmap_generator, image_left, mask_left):
+def test_pooled_features_training(heatmap_generator, image_left, mask_left):
     train_image_pos = crop_by_mask(image_left, mask_left)
     train_image_neg_1 = image_left.crop((0, 0, 150, 150))
     train_image_neg_2 = image_left.crop((
@@ -48,8 +54,10 @@ def test_pooled_features_training(self, heatmap_generator, image_left, mask_left
         positive_images=[train_image_pos], 
         negative_images=[train_image_neg_1, train_image_neg_2]
     )
-    assert heatmap_generator.pooled_features_train is not None
-def test_heatmap_generation(self, trained_heatmap_generator, image_right):
+    # Проверяем корректную инициализацию внутренних пулов признаков
+    assert heatmap_generator.pooled_patch_features_pos is not None
+    assert heatmap_generator.pooled_patch_features_neg is not None
+def test_heatmap_generation(trained_heatmap_generator, image_right):
     heatmap, heatmap_resized = trained_heatmap_generator.generate_heatmap(image_right)
     
     assert heatmap is not None
@@ -57,7 +65,8 @@ def test_heatmap_generation(self, trained_heatmap_generator, image_right):
     assert isinstance(heatmap, torch.Tensor)
     assert isinstance(heatmap_resized, torch.Tensor)
     print(heatmap_resized.shape, heatmap_resized.min(), heatmap_resized.max())
-def test_threshold_application(self, trained_heatmap_generator, image_right):
+    
+def test_threshold_application(trained_heatmap_generator, image_right):
     heatmap, heatmap_resized = trained_heatmap_generator.generate_heatmap(image_right)
     heatmap_resized = trained_heatmap_generator.apply_threshold(heatmap_resized)
     
@@ -65,6 +74,7 @@ def test_threshold_application(self, trained_heatmap_generator, image_right):
     
     heatmap_np = heatmap_resized.cpu().numpy()
     assert isinstance(heatmap_np, np.ndarray)
+
 def test_image_saving_preparation(trained_heatmap_generator, image_left, mask_left, image_right):
     train_image_pos = crop_by_mask(image_left, mask_left)
     heatmap, heatmap_resized = trained_heatmap_generator.generate_heatmap(image_right)

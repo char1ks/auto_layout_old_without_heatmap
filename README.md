@@ -11,6 +11,10 @@ make install
 ```sh
 cp ~/dinov3-weights/dinov3/* ~/.cache/torch/hub/checkpoints/
 ```  
+Запуск локально тестов:
+```sh
+make tests
+```
 
 Запуск тестов локально:
 ```sh

@@ -152,3 +152,5 @@ vendor/dinov3/.git/
 vendor/dinov3/.github/
 
 !tests/*
+
+.DS_Store

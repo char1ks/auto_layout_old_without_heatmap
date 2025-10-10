@@ -24,7 +24,7 @@ class ImageResizer:
         h, w = img.shape[:2]
         m = max(h, w)
         if m <= self.max_side:
-            return img, {"scale": 1.0, "orig_shape": (h, w)}
+            return img, ResizeContext(scale=1.0, orig_shape=(h, w))
         s = self.max_side / m
         new_h = int(np.floor(h * s + 0.5))
         new_w = int(np.floor(w * s + 0.5))

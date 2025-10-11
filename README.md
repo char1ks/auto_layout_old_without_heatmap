@@ -8,8 +8,7 @@ poetry install
 
 ## Tests
 
-Требуется GPU (CUDA).А также скокировать веса:
-Copy dinov3 weights:  
+Требуется GPU (CUDA). Copy dinov3 weights:  
 ```sh
 cp ~/dinov3-weights/dinov3/* ~/.cache/torch/hub/checkpoints/
 ```  
@@ -17,6 +16,11 @@ cp ~/dinov3-weights/dinov3/* ~/.cache/torch/hub/checkpoints/
 ```sh
 make tests
 ```
+
+Запуск тестов локально:
+```sh
+make tests
+```  
 
 ## Run  
 
@@ -30,5 +34,5 @@ TODO
 TODO
 
 ```sh
-!poetry run python -m 'evaluation.serchdet_detector_v1.main'
+poetry run python -m 'evaluation.serchdet_detector_v1.main'
 ```

@@ -60,6 +60,7 @@ class DinoV3EncoderGaz:
             resized = TF.pad(resized, [0, 0, pad_w, 0], fill=0)
         return TF.to_tensor(resized)
 
+    # NOTE: (aod) Batching 
     def encode(self, images: list[Image.Image]) -> DinoFeaturesPT:
         """
         rgb image --> tuple(patch features, cls feature vector)
@@ -81,33 +82,38 @@ class DinoV3EncoderGaz:
                 )[-1] # NOTE: (@gas) get a tuple of (patches, cls)
         return DinoFeaturesPT(cls=feats[1].detach().float(), patches=feats[0].detach().float())
 
+
+    # NOTE: (aod)  Мы раньше приводил тензор изначально к CUDA(переменная mask_quantized),
+    # а потом насильно к CPU,если не ошибаюсь,то происходила передача данных по PCIe,что жестко замедляло процесс (~40 mS)
     def encode_mask(
-        self, 
-        masks: list[Image.Image], 
-        features: DinoFeaturesPT | None = None, 
-        images: list[Image.Image] = [], 
+        self,
+        masks: list[Image.Image],
+        features: DinoFeaturesPT | None = None,
+        images: list[Image.Image] | None = None,
         mask_threshold: float = 0.5,
     ) -> torch.Tensor:
         if features is None and not images:
-            raise ValueError("either of features or img_pil should be passed, got none of them")
+            raise ValueError("either features or images must be provided")
+
+        #NOTE: (aod) Тут приводим все маски к единому размеру, преобразуя их в патч-маску под
+        #разрешение энкодера и бинаризуем по порогу, получая батч из карт foreground/background патчей.
         target_size = self._compute_target_size(masks)
-        resized = torch.stack([self.resize_transform(mask, target_size) for mask in masks])
-        mask_quantized = self.patch_quant_filter(resized).detach().cpu()
-        if features is None and images:
+        resized = torch.stack([self.resize_transform(m, target_size) for m in masks])  # (B, 1, H, W)
+        mask_quantized = self.patch_quant_filter(resized)  # (B, 1, P_H, P_W)
+        mask_sel = (mask_quantized > mask_threshold).float()
+
+        if features is None:
             features = self.encode(images)
-        B = len(masks)
-        patches_fg_selection = mask_quantized > mask_threshold # (1, 1, P_H, P_W); bool
-        patches_fg_selection = patches_fg_selection.view(B, -1)  # [B, N_points]
-        patches_selected = []
-        patches_mean = []
-        for b in range(B):
-            indices = patches_fg_selection[b].nonzero(as_tuple=False).squeeze(-1)  # [N_points_b]
-            selected = features.patches[b, :, indices // mask_quantized.shape[3], indices % mask_quantized.shape[3]]  # [D, N_points_b]
-            mean = selected.mean(dim=1)  # [D]
-            patches_selected.append(selected)
-            patches_mean.append(mean)
-        patches_mean = torch.stack(patches_mean)
-        return patches_mean.detach().float()
+
+        #NOTE: (aod) блокк ода вычисляет средний эмбеддинг объекта в каждомм изображении, используя векторизированные тензорные операции
+        #(это операции ,которые включают в себя умножение, суммирование, деление и выполняются над целым массивом)
+        patches = features.patches.float()  # (B, D, P_H, P_W)
+        weighted_sum = (patches * mask_sel).sum(dim=(2, 3))  # (B, D),тут получили взвешенную сумму фичей в выделенной области 
+        weights = mask_sel.sum(dim=(2, 3)).clamp_min(1e-6)  # (B, 1),считаем, сколько патчей попало в маску
+        mean_vec = weighted_sum / weights  # (B, D) ,делим взвешенную сумму на количество активных патчей=>получаем средний вектор признаков объекта для каждого изображения
+
+        return mean_vec.detach().float()
+
 
 
 if __name__=="__main__":

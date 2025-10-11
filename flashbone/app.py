@@ -15,13 +15,17 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.datastructures import UploadFile as StarletteUploadFile, FormData
+from pydantic import BaseModel, Field
 from PIL import Image
 from ultralytics import FastSAM
 
 from flashbone.core.encoding.dinov3.image import DinoV3EncoderGaz
+from flashbone.core.encoding.dinov3.multimodal import DinoV3VisionTextEncoderGaz
 from flashbone.core.segmentation import SegmenterConfig, SamSegmenter
 from flashbone.core.heatmap_generation import HeatmapGenerator
 from flashbone.core.classification.mask_classifier_knn import MaskClassifierKNN
+from flashbone.core.classification.vision_text_classifier_knn import VisionTextClassifierKNN
+from flashbone.core.classification.base import ClassData, ClassifierPredictRequest, ClassifierBase
 from flashbone.core.detection.searchdet_detector import SearchDetDetector
 from flashbone.core.detection.base import DetectorBase
 from flashbone.core.image_resizing import ImageResizer
@@ -35,7 +39,7 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         # Merge selected extras
-        for key in ("method", "path", "status", "duration_ms", "client", "request_id", "detail", "inference"):
+        for key in ("method", "path", "status", "duration_ms", "client", "request_id", "detail", "inference_ms"):
             if hasattr(record, key):
                 payload[key] = getattr(record, key)
         return json.dumps(payload, ensure_ascii=False)
@@ -96,7 +100,7 @@ def init_detector() -> DetectorBase:
     sam_model = FastSAM('FastSAM-x.pt')
     encoder = DinoV3EncoderGaz()
     heatmap_generator = HeatmapGenerator(
-        dino_fe=encoder, 
+        dino_fe=encoder,
         use_cosine_similarity_for_heatmap=True,
         threshold_cosine=0.4,
     )
@@ -112,12 +116,18 @@ def init_detector() -> DetectorBase:
     classifier = MaskClassifierKNN(encoder=encoder, d=1024)
     image_resizer = ImageResizer(max_side=1024)
     detector = SearchDetDetector(
-        segmenter=sam, 
-        classifier=classifier, 
+        segmenter=sam,
+        classifier=classifier,
         heatmap_generator=heatmap_generator,
         image_resizer=image_resizer,
     )
     return detector
+
+
+def init_vision_text_classifier() -> ClassifierBase:
+    encoder = DinoV3VisionTextEncoderGaz()
+    classifier = VisionTextClassifierKNN(encoder=encoder, d=2048)
+    return classifier
 
 
 async def parse_infer_form(request: Request) -> Tuple[List[Image.Image], float, float]:
@@ -218,7 +228,8 @@ async def parse_pos_neg_from_form(request: Request) -> Tuple[Dict[str, List[Imag
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.detector = init_detector()
-    logger.info("Detector initialized")
+    app.state.vision_text_classifier = init_vision_text_classifier()
+    logger.info("Detector and classifier initialized")
     yield
 
 
@@ -235,28 +246,27 @@ def get_detector(request: Request) -> DetectorBase:
     return request.app.state.detector
 
 
+def get_vision_text_classifier(request: Request) -> ClassifierBase:
+    return request.app.state.vision_text_classifier
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
 
-@app.post("/api/v1/set", status_code=204)
-async def set_examples(
+@app.post("/api/v1/detection/train", status_code=204)
+async def detection_train(
     request: Request,
     detector: DetectorBase = Depends(get_detector),
 ):
-    """
-    Multipart form with:
-      positive[<class_id>]: <file...>  (repeat for each class and file)
-      negative: <file...>              (optional, can repeat)
-    """
     pos_by_class, neg_imgs = await parse_pos_neg_from_form(request)
     detector.set_references(pos_by_class=pos_by_class, neg_imgs=neg_imgs or [])
     return Response(status_code=204)
 
 
-@app.post("/api/v1/infer")
-async def infer(
+@app.post("/api/v1/detection/infer")
+async def detection_infer(
     request: Request,
     detector: DetectorBase = Depends(get_detector),
 ):
@@ -273,11 +283,101 @@ async def infer(
         mean_latency_ms += dt / len(pil_imgs)
         batch_results.append(res_dict)
 
-    logger.info("Inference completed", extra={"inference": round(mean_latency_ms, 2)})
+    logger.info("Inference completed", extra={"inference_ms": round(mean_latency_ms, 2)})
 
     return JSONResponse(content=jsonable_encoder(batch_results))
 
-# TODO: (@gas) add method for text/image based classification
+
+class ClassificationTrainRequest(BaseModel):
+    classes: List[Dict[str, Any]] = Field(description="List of class data")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "classes": [
+                    {
+                        "class_id": 0,
+                        "images": ["base64_image_1", "base64_image_2"],
+                        "texts": ["donkey"],
+                        "negative_images": ["base64_neg_image"],
+                        "negative_texts": ["green grass", "blue sky"]
+                    }
+                ]
+            }
+        }
+
+
+class ClassificationInferRequest(BaseModel):
+    images: List[str] = Field(default_factory=list, description="Base64 encoded images")
+    texts: List[str] = Field(default_factory=list, description="Text queries")
+    threshold: float = Field(default=0.474, description="Classification threshold")
+    topk: int = Field(default=1, description="Top K results")
+
+
+@app.post("/api/v1/classification/train", status_code=204)
+async def classification_train(
+    request: Request,
+    body: ClassificationTrainRequest,
+    classifier: ClassifierBase = Depends(get_vision_text_classifier),
+):
+    dataset: List[ClassData] = []
+    for cls_data in body.classes:
+        images = []
+        for img_b64 in cls_data.get("images", []):
+            try:
+                img_bytes = base64.b64decode(img_b64)
+                images.append(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid image data")
+
+        negative_images = []
+        for img_b64 in cls_data.get("negative_images", []):
+            try:
+                img_bytes = base64.b64decode(img_b64)
+                negative_images.append(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid negative image data")
+
+        dataset.append(ClassData(
+            class_id=cls_data["class_id"],
+            images=images,
+            texts=cls_data.get("texts", []),
+            negative_images=negative_images,
+            negative_texts=cls_data.get("negative_texts", []),
+        ))
+
+    classifier.index(dataset)
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/classification/infer")
+async def classification_infer(
+    request: Request,
+    body: ClassificationInferRequest,
+    classifier: ClassifierBase = Depends(get_vision_text_classifier),
+):
+    images = []
+    for img_b64 in body.images:
+        try:
+            img_bytes = base64.b64decode(img_b64)
+            images.append(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid image data")
+
+    req = ClassifierPredictRequest(
+        images=images,
+        texts=body.texts,
+        threshold=body.threshold,
+        topk=body.topk,
+    )
+
+    start = time.perf_counter()
+    preds = classifier.predict(req)
+    dt = (time.perf_counter() - start) * 1000
+
+    logger.info("Classification inference completed", extra={"inference_ms": round(dt, 2)})
+
+    return JSONResponse(content=jsonable_encoder([{"class_id": int(p.class_id), "score": float(p.score)} for p in preds]))
 
 
 @app.exception_handler(HTTPException)

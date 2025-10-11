@@ -11,47 +11,23 @@ class MaskClassifierKNN(ClassifierBase):
         self._encoder = encoder
         super().__init__(d=d, *args, **kwargs)
 
-    def _calculate_attention_weights_softmax(
-        self,
-        queries: np.ndarray,             # (Q, D)
-        example_embeddings: np.ndarray,  # (E, D)
-    ) -> np.ndarray:                     # (Q, E)
-        if queries.ndim == 1:
-            queries = queries.reshape(1, -1)
-
-        sims = cosine_similarity(queries, example_embeddings)  
-        
-        sims = sims - sims.max(axis=1, keepdims=True)
-        exps = np.exp(sims)
-        weights = exps / (exps.sum(axis=1, keepdims=True) + 1e-12)
-        return weights
-
+    def _calculate_attention_weights_softmax(self, query_embedding: np.ndarray, example_embeddings: np.ndarray) -> np.ndarray:
+        similarities = cosine_similarity(query_embedding.reshape(1, -1), example_embeddings).flatten()
+        exp_similarities = np.exp(similarities)
+        attention_weights = exp_similarities / np.sum(exp_similarities)
+        return attention_weights
     
-    def _adjust_embedding(
-        self,
-        query_embeddings: np.ndarray,     # (Q, D) 
-        positive_embeddings: np.ndarray,  # (P, D)
-        negative_embeddings: np.ndarray,  # (N, D)
-    ) -> np.ndarray:                      # (Q, D) 
-        single = False
-        if query_embeddings.ndim == 1:
-            query_embeddings = query_embeddings.reshape(1, -1)
-            single = True
-
-        w_pos = self._calculate_attention_weights_softmax(query_embeddings, positive_embeddings)  # (Q, P)
-        positive_adjustment = w_pos @ positive_embeddings                                         # (Q, D)
-
-
-        if negative_embeddings is not None and negative_embeddings.size > 0:
-            w_neg = self._calculate_attention_weights_softmax(query_embeddings, negative_embeddings)  # (Q, N)
-            negative_adjustment = w_neg @ negative_embeddings                                         # (Q, D)
-        else:
-            negative_adjustment = np.zeros_like(positive_adjustment)                                  # (Q, D)
-
-        combined_adjustment = positive_adjustment - negative_adjustment  # (Q, D)
-        return combined_adjustment[0] if single else combined_adjustment
-
-
+    def _adjust_embedding(self, query_embedding: np.ndarray, positive_embeddings: np.ndarray, negative_embeddings: np.ndarray) -> np.ndarray:
+        positive_weights = self._calculate_attention_weights_softmax(query_embedding, positive_embeddings)
+        negative_weights = self._calculate_attention_weights_softmax(query_embedding, negative_embeddings)
+    
+        # Compute weighted sums of positive and negative embeddings
+        positive_adjustment = np.sum(positive_weights[:, np.newaxis] * positive_embeddings, axis=0)
+        negative_adjustment = np.sum(negative_weights[:, np.newaxis] * negative_embeddings, axis=0)
+    
+        # Subtract negative adjustment from positive adjustment
+        combined_adjustment = positive_adjustment - negative_adjustment
+        return combined_adjustment
 
     #NOTE: (aod) Batching add
     def encode(self, req: ClassifierPredictRequest) -> np.ndarray:
@@ -70,19 +46,21 @@ class MaskClassifierKNN(ClassifierBase):
 
 
     def get_adjusted_embeddings(self, cls: ClassData) -> np.ndarray:
-        pos_t = self._encoder.encode(cls.images).cls          # (P, D)
-        positive_embeddings = pos_t.detach().cpu().numpy()    #(P, D)
+        positive_embeddings = [self._encoder.encode([img]).cls.cpu().numpy() for img in cls.images] # NOTE: (@gas) query images
+        positive_embeddings = np.concatenate(positive_embeddings, axis=0)
+    
+        negative_embeddings = np.zeros((1, self._d), dtype=np.float32)
         if cls.negative_images:
-            neg_t = self._encoder.encode(cls.negative_images).cls   #(N, D)
-            negative_embeddings = neg_t.detach().cpu().numpy()      #(N, D)
-        else:
-            negative_embeddings = np.empty((0, self._d), dtype=np.float32)
-        adjusted_query_vectors = self._adjust_embedding(
-            positive_embeddings,          # (P, D)
-            positive_embeddings,          # (P, D)
-            negative_embeddings,          # (N, D)
-        )  # (P, D)
+            negative_embeddings = [self._encoder.encode([img]).cls.cpu().numpy() for img in cls.negative_images]
+            negative_embeddings = np.concatenate(negative_embeddings, axis=0)
+    
+        # Adjust the query embedding for each query image
+        adjusted_query_vectors = np.array([
+            self._adjust_embedding(embedding, positive_embeddings, negative_embeddings)
+            for embedding in positive_embeddings
+        ])
         return adjusted_query_vectors
+
 
 
 

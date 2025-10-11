@@ -36,6 +36,7 @@ class DinoV3EncoderGaz:
         # NOTE: (@gas) for masks only
         self.patch_quant_filter = torch.nn.Conv2d(1, 1, PATCH_SIZE, stride=PATCH_SIZE, bias=False)
         self.patch_quant_filter.weight.data.fill_(1.0 / (PATCH_SIZE * PATCH_SIZE))
+        self.patch_quant_filter.cuda()
 
     def _compute_target_size(self, images: list[Image.Image]) -> tuple[int, int]:
         h_target = math.ceil(self.image_size / self.patch_size) * self.patch_size
@@ -94,25 +95,21 @@ class DinoV3EncoderGaz:
     ) -> torch.Tensor:
         if features is None and not images:
             raise ValueError("either features or images must be provided")
-
-        #NOTE: (aod) Тут приводим все маски к единому размеру, преобразуя их в патч-маску под
-        #разрешение энкодера и бинаризуем по порогу, получая батч из карт foreground/background патчей.
-        target_size = self._compute_target_size(masks)
-        resized = torch.stack([self.resize_transform(m, target_size) for m in masks])  # (B, 1, H, W)
-        mask_quantized = self.patch_quant_filter(resized)  # (B, 1, P_H, P_W)
-        mask_sel = (mask_quantized > mask_threshold).float()
-
         if features is None:
             features = self.encode(images)
+        target_size = self._compute_target_size(masks)
+        resized = torch.stack([self.resize_transform(m, target_size) for m in masks]).cuda(non_blocking=True)  
+        mask_quantized = self.patch_quant_filter(resized)
+        mask_sel = (mask_quantized > mask_threshold).to(dtype=features.patches.dtype)  # [cuda]
 
-        #NOTE: (aod) блокк ода вычисляет средний эмбеддинг объекта в каждомм изображении, используя векторизированные тензорные операции
-        #(это операции ,которые включают в себя умножение, суммирование, деление и выполняются над целым массивом)
-        patches = features.patches.float()  # (B, D, P_H, P_W)
-        weighted_sum = (patches * mask_sel).sum(dim=(2, 3))  # (B, D),тут получили взвешенную сумму фичей в выделенной области 
-        weights = mask_sel.sum(dim=(2, 3)).clamp_min(1e-6)  # (B, 1),считаем, сколько патчей попало в маску
-        mean_vec = weighted_sum / weights  # (B, D) ,делим взвешенную сумму на количество активных патчей=>получаем средний вектор признаков объекта для каждого изображения
+        patches = features.patches.float()  # (B,D,P_H,P_W) [cuda]
+
+        weighted_sum = (patches * mask_sel).sum(dim=(2, 3))   # (B, D) [cuda]
+        weights = mask_sel.sum(dim=(2, 3)).clamp_min(1e-6)    # (B, 1) [cuda]
+        mean_vec = weighted_sum / weights                      # (B, D) [cuda]
 
         return mean_vec.detach().float()
+
 
 
 

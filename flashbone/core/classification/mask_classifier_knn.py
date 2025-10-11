@@ -41,6 +41,7 @@ class MaskClassifierKNN(ClassifierBase):
         w_pos = self._calculate_attention_weights_softmax(query_embeddings, positive_embeddings)  # (Q, P)
         positive_adjustment = w_pos @ positive_embeddings                                         # (Q, D)
 
+
         if negative_embeddings is not None and negative_embeddings.size > 0:
             w_neg = self._calculate_attention_weights_softmax(query_embeddings, negative_embeddings)  # (Q, N)
             negative_adjustment = w_neg @ negative_embeddings                                         # (Q, D)
@@ -59,9 +60,9 @@ class MaskClassifierKNN(ClassifierBase):
                 masks=req.masks,
                 images=req.images,
                 mask_threshold=req.mask_threshold
-            )  # (B, D) torch
+            )  # (B, D) 
         else:
-            vecs_t = self._encoder.encode(req.images).cls  # (B, D) torch
+            vecs_t = self._encoder.encode(req.images).cls  # (B, D) 
 
         vecs = vecs_t.detach().cpu().numpy()
         vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-12
@@ -69,17 +70,17 @@ class MaskClassifierKNN(ClassifierBase):
 
 
     def get_adjusted_embeddings(self, cls: ClassData) -> np.ndarray:
-        pos_t = self._encoder.encode(cls.images).cls          # torch (P, D)
+        pos_t = self._encoder.encode(cls.images).cls          # (P, D)
         positive_embeddings = pos_t.detach().cpu().numpy()    #(P, D)
         if cls.negative_images:
-            neg_t = self._encoder.encode(cls.negative_images).cls   # torch (N, D)
+            neg_t = self._encoder.encode(cls.negative_images).cls   #(N, D)
             negative_embeddings = neg_t.detach().cpu().numpy()      #(N, D)
         else:
             negative_embeddings = np.empty((0, self._d), dtype=np.float32)
         adjusted_query_vectors = self._adjust_embedding(
-            positive_embeddings,          # queries: (P, D)
-            positive_embeddings,          # positives: (P, D)
-            negative_embeddings,          # negatives: (N, D) или (0, D)
+            positive_embeddings,          # (P, D)
+            positive_embeddings,          # (P, D)
+            negative_embeddings,          # (N, D)
         )  # (P, D)
         return adjusted_query_vectors
 

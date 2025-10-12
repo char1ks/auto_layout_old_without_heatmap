@@ -76,51 +76,60 @@ class SearchDetDetector(DetectorBase):
         self._heatmap_generator.init_pooled_features_train(
             positive_images=positives, negative_images=neg_imgs)
 
-    def detect(self, image: Image.Image, heatmap_threshold: float | None = None, class_threshold: float = 0.5, ctx: Context | None = None, *args, **kwargs) -> list[DetectionResult]:
+    def detect(self,image: Image.Image,heatmap_threshold: float | None = None,class_threshold: float = 0.5,ctx: Context | None = None,*args,**kwargs) -> list[DetectionResult]:
         callback = kwargs.get("callback")
         span = (lambda name, fn: ctx.span(name, fn)) if ctx is not None else (lambda name, fn: fn())
+
         resized_img, resize_ctx = span("resize", lambda: self._image_resizer.resize(np.array(image)))
         resized_img_pil = Image.fromarray(resized_img)
-        _, heatmap_resized = span("heatmap", lambda: self._heatmap_generator.generate_heatmap(resized_img_pil))
 
+        _, heatmap_resized = span("heatmap", lambda: self._heatmap_generator.generate_heatmap(resized_img_pil))
         heatmap_resized = span("threshold", lambda: self._heatmap_generator.apply_threshold(heatmap_resized, heatmap_threshold))
         heatmap_np = heatmap_resized.cpu().numpy()
         masks = span("segment", lambda: self._segmenter.segment(resized_img_pil, heatmap=heatmap_np))
 
-        dets = []
-        for mask in masks:
-            bbox = self._bbox_from_mask(mask)
-            cls_preds = span("classify", lambda: self._classifier.predict(
-                ClassifierPredictRequest(
-                    images=[resized_img_pil],
-                    masks=[Image.fromarray(mask)],
-                    threshold=class_threshold,
-                )
+        if not masks:
+            restored_dets = span("restore_dets", lambda: self._image_resizer.restore_dets([], resize_ctx))
+            if ctx is not None:
+                ctx.metrics = {"num_masks": 0, "num_dets": 0}
+                ctx.finish(success=True)
+                if callable(callback):
+                    callback(ctx)
+            return restored_dets
+
+        bboxes = [self._bbox_from_mask(m) for m in masks]
+        pil_masks = [Image.fromarray(m) for m in masks]
+        mask_threshold = 0.5
+
+        cls_preds = span("classify", lambda: self._classifier.predict(
+            ClassifierPredictRequest(
+                images=[resized_img_pil] * len(pil_masks),
+                masks=pil_masks,
+                threshold=class_threshold,
+                mask_threshold=mask_threshold,
+            )
+        ))
+
+        dets: list[DetectionResult] = []
+        for mask, bbox, pred in zip(masks, bboxes, cls_preds):
+            if pred.class_id < 0:
+                continue
+            dets.append(DetectionResult(
+                bbox=bbox,
+                area=int(mask.sum()),
+                polygons=self._mask_to_polygons(mask),
+                score=float(pred.score),
+                class_id=int(pred.class_id),
             ))
-            if len(cls_preds):
-                # NOTE: (@gas) [0] bc a batch of 1 used to process a single input image
-                cls_pred = cls_preds[0]
-                if cls_pred.class_id < 0: # NOTE: (@gas) skip no class results
-                    continue
-                det = DetectionResult(
-                    bbox=bbox,
-                    area=int(mask.sum()),
-                    polygons=self._mask_to_polygons(mask),
-                    score=float(cls_pred.score), 
-                    class_id=int(cls_pred.class_id),
-                )
-                dets.append(det)
-        
+
         restored_dets = span("restore_dets", lambda: self._image_resizer.restore_dets(dets, resize_ctx))
         if ctx is not None:
-            ctx.metrics = {
-                "num_masks": int(len(masks)),
-                "num_dets": int(len(restored_dets)),
-            }
+            ctx.metrics = {"num_masks": len(masks), "num_dets": len(restored_dets)}
             ctx.finish(success=True)
             if callable(callback):
                 callback(ctx)
         return restored_dets
+
 
 
 if __name__=="__main__":
